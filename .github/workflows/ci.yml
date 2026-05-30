@@ -24,7 +24,7 @@ jobs:
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Show toolchain
         shell: bash
@@ -68,7 +68,7 @@ jobs:
           ditto -c -k --sequesterRsrc --keepParent dist/OpenCue.app dist/OpenCue-ci-macos-arm64.zip
 
       - name: Store app bundle smoke artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: OpenCue-ci-macos-arm64
           path: dist/OpenCue-ci-macos-arm64.zip

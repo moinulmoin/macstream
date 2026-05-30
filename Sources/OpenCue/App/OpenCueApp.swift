@@ -22,6 +22,7 @@ struct OpenCueApp: App {
     @AppStorage("destinationName") private var destinationName = "Preview Session"
     @AppStorage("sourceConfiguration") private var sourceConfigurationJSON = ""
     @AppStorage("screenCaptureTargetPreference") private var screenCaptureTargetPreferenceJSON = ""
+    @AppStorage("cameraEnhancementSettings") private var cameraEnhancementSettingsJSON = ""
     @State private var store = StudioStore(
         mediaPipeline: SystemMediaPipeline(),
         intelligenceProvider: MLXLocalIntelligenceProvider(),
@@ -65,6 +66,9 @@ struct OpenCueApp: App {
                 }
                 .onChange(of: store.screenCaptureTargetPreference) { _, newTarget in
                     saveScreenCaptureTargetPreference(newTarget)
+                }
+                .onChange(of: store.preferences.cameraEnhancements) { _, newSettings in
+                    saveCameraEnhancementSettings(newSettings)
                 }
                 .onChange(of: scenePhase) { _, newScenePhase in
                     guard newScenePhase != .active else { return }
@@ -126,6 +130,9 @@ struct OpenCueApp: App {
                 }
                 .onChange(of: store.screenCaptureTargetPreference) { _, newTarget in
                     saveScreenCaptureTargetPreference(newTarget)
+                }
+                .onChange(of: store.preferences.cameraEnhancements) { _, newSettings in
+                    saveCameraEnhancementSettings(newSettings)
                 }
                 .onDisappear {
                     flushPendingPersistence()
@@ -258,6 +265,26 @@ struct OpenCueApp: App {
         screenCaptureTargetPreferenceJSON = json
     }
 
+    private func loadCameraEnhancementSettings() -> CameraEnhancementSettings {
+        guard let data = cameraEnhancementSettingsJSON.data(using: .utf8),
+              let settings = try? JSONDecoder().decode(CameraEnhancementSettings.self, from: data)
+        else {
+            return CameraEnhancementSettings()
+        }
+
+        return settings
+    }
+
+    private func saveCameraEnhancementSettings(_ settings: CameraEnhancementSettings) {
+        guard let data = try? JSONEncoder().encode(settings),
+              let json = String(data: data, encoding: .utf8)
+        else {
+            return
+        }
+
+        cameraEnhancementSettingsJSON = json
+    }
+
     private func syncPreferences() {
         let normalizedCountdown = StudioPreferences.normalizedDirectorCountdownSeconds(Int(directorCountdownSeconds))
         if directorCountdownSeconds != Double(normalizedCountdown) {
@@ -268,7 +295,8 @@ struct OpenCueApp: App {
             StudioPreferences(
                 recordWhileStreaming: recordWhileStreaming,
                 directorCountdownSeconds: normalizedCountdown,
-                performanceMode: StudioPerformanceMode(rawValue: performanceModeRaw) ?? .balanced
+                performanceMode: StudioPerformanceMode(rawValue: performanceModeRaw) ?? .balanced,
+                cameraEnhancements: loadCameraEnhancementSettings()
             )
         )
     }

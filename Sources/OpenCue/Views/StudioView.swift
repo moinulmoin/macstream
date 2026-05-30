@@ -36,6 +36,7 @@ private struct PreviewColumnView: View {
                 scene: store.selectedScene,
                 signals: store.latestSignals,
                 previewConfiguration: store.effectivePerformanceMode.previewCaptureConfiguration,
+                cameraEnhancements: store.preferences.cameraEnhancements,
                 isCameraEnabled: store.isSourceEnabled(.camera),
                 isCameraCaptureReady: store.captureReport.hasGrantedPermission(for: .camera),
                 isScreenEnabled: store.isSourceEnabled(.screen),

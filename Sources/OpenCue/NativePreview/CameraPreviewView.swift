@@ -1,24 +1,28 @@
 @preconcurrency import AVFoundation
 import AppKit
+import CoreImage
 import OpenCueCore
 import SwiftUI
 
 struct CameraPreviewView: NSViewRepresentable {
     var configuration = PreviewCaptureConfiguration()
+    var cameraEnhancements = CameraEnhancementSettings()
 
     func makeCoordinator() -> Coordinator {
-        Coordinator(configuration: configuration)
+        Coordinator(configuration: configuration, cameraEnhancements: cameraEnhancements)
     }
 
     func makeNSView(context: Context) -> CameraPreviewNSView {
         let view = CameraPreviewNSView()
+        view.update(cameraEnhancements: cameraEnhancements)
         view.previewLayer.session = context.coordinator.session
         context.coordinator.start()
         return view
     }
 
     func updateNSView(_ nsView: CameraPreviewNSView, context: Context) {
-        context.coordinator.update(configuration: configuration)
+        nsView.update(cameraEnhancements: cameraEnhancements)
+        context.coordinator.update(configuration: configuration, cameraEnhancements: cameraEnhancements)
         if nsView.previewLayer.session !== context.coordinator.session {
             nsView.previewLayer.session = context.coordinator.session
         }
@@ -36,11 +40,13 @@ struct CameraPreviewView: NSViewRepresentable {
         private var wantsRunning = false
         private var requestedPreset: AVCaptureSession.Preset
         private var requestedFramesPerSecond: Int
+        private var requestedCameraEnhancements: CameraEnhancementSettings
         private weak var videoDevice: AVCaptureDevice?
 
-        init(configuration: PreviewCaptureConfiguration) {
+        init(configuration: PreviewCaptureConfiguration, cameraEnhancements: CameraEnhancementSettings) {
             self.requestedPreset = Self.sessionPreset(for: configuration)
             self.requestedFramesPerSecond = Self.frameRateLimit(for: configuration)
+            self.requestedCameraEnhancements = cameraEnhancements
         }
 
         func start() {
@@ -58,23 +64,37 @@ struct CameraPreviewView: NSViewRepresentable {
             }
         }
 
-        func update(configuration: PreviewCaptureConfiguration) {
+        func update(configuration: PreviewCaptureConfiguration, cameraEnhancements: CameraEnhancementSettings) {
             let preset = Self.sessionPreset(for: configuration)
             let framesPerSecond = Self.frameRateLimit(for: configuration)
 
             queue.async { [weak self] in
                 guard let self else { return }
-                guard self.requestedPreset != preset || self.requestedFramesPerSecond != framesPerSecond else { return }
+                let shouldUpdateSession = self.requestedPreset != preset
+                    || self.requestedFramesPerSecond != framesPerSecond
+                let shouldUpdateCameraTuning = self.requestedCameraEnhancements != cameraEnhancements
+                guard shouldUpdateSession || shouldUpdateCameraTuning else { return }
+
                 self.requestedPreset = preset
                 self.requestedFramesPerSecond = framesPerSecond
+                self.requestedCameraEnhancements = cameraEnhancements
                 guard self.isConfigured else { return }
 
-                self.session.beginConfiguration()
-                self.applyRequestedPreset()
                 if let videoDevice = self.videoDevice {
-                    self.applyRequestedFrameRateLimit(to: videoDevice)
+                    if shouldUpdateSession {
+                        self.session.beginConfiguration()
+                        self.applyRequestedPreset()
+                        self.applyRequestedFrameRateLimit(to: videoDevice)
+                        self.session.commitConfiguration()
+                    }
+                    if shouldUpdateCameraTuning {
+                        self.applyRequestedCameraTuning(to: videoDevice)
+                    }
+                } else if shouldUpdateSession {
+                    self.session.beginConfiguration()
+                    self.applyRequestedPreset()
+                    self.session.commitConfiguration()
                 }
-                self.session.commitConfiguration()
 
                 if self.wantsRunning, !self.session.isRunning {
                     self.session.startRunning()
@@ -113,6 +133,7 @@ struct CameraPreviewView: NSViewRepresentable {
                     self.session.addInput(input)
                     self.videoDevice = device
                     self.applyRequestedFrameRateLimit(to: device)
+                    self.applyRequestedCameraTuning(to: device)
                     self.isConfigured = true
                 }
 
@@ -144,6 +165,29 @@ struct CameraPreviewView: NSViewRepresentable {
                 let frameDuration = CMTime(value: 1, timescale: CMTimeScale(supportedFrameRate))
                 device.activeVideoMinFrameDuration = frameDuration
                 device.activeVideoMaxFrameDuration = frameDuration
+            } catch {
+                return
+            }
+        }
+
+        private func applyRequestedCameraTuning(to device: AVCaptureDevice) {
+            guard requestedCameraEnhancements.usesAutoLight else { return }
+
+            do {
+                try device.lockForConfiguration()
+                defer { device.unlockForConfiguration() }
+
+                if device.isFocusModeSupported(.continuousAutoFocus) {
+                    device.focusMode = .continuousAutoFocus
+                }
+
+                if device.isExposureModeSupported(.continuousAutoExposure) {
+                    device.exposureMode = .continuousAutoExposure
+                }
+
+                if device.isWhiteBalanceModeSupported(.continuousAutoWhiteBalance) {
+                    device.whiteBalanceMode = .continuousAutoWhiteBalance
+                }
             } catch {
                 return
             }
@@ -187,6 +231,7 @@ struct CameraPreviewView: NSViewRepresentable {
 
 final class CameraPreviewNSView: NSView {
     let previewLayer = AVCaptureVideoPreviewLayer()
+    private var cameraEnhancements = CameraEnhancementSettings()
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
@@ -199,8 +244,42 @@ final class CameraPreviewNSView: NSView {
         nil
     }
 
+    func update(cameraEnhancements: CameraEnhancementSettings) {
+        guard self.cameraEnhancements != cameraEnhancements else { return }
+
+        self.cameraEnhancements = cameraEnhancements
+        applyPreviewFilters()
+        needsLayout = true
+    }
+
     override func layout() {
         super.layout()
-        previewLayer.frame = bounds
+        let layerSize = cameraEnhancements.rotation.isSideways
+            ? CGSize(width: bounds.height, height: bounds.width)
+            : bounds.size
+
+        previewLayer.bounds = CGRect(origin: .zero, size: layerSize)
+        previewLayer.position = CGPoint(x: bounds.midX, y: bounds.midY)
+
+        var transform = CGAffineTransform(rotationAngle: CGFloat(cameraEnhancements.rotation.radians))
+        if cameraEnhancements.mirrorsPreview {
+            transform = transform.scaledBy(x: -1, y: 1)
+        }
+        previewLayer.setAffineTransform(transform)
+    }
+
+    private func applyPreviewFilters() {
+        guard cameraEnhancements.usesAutoLight,
+              let filter = CIFilter(name: "CIColorControls")
+        else {
+            previewLayer.filters = nil
+            return
+        }
+
+        filter.setDefaults()
+        filter.setValue(cameraEnhancements.autoLightAmount * 0.18, forKey: kCIInputBrightnessKey)
+        filter.setValue(1 + cameraEnhancements.autoLightAmount * 0.08, forKey: kCIInputContrastKey)
+        filter.setValue(1 + cameraEnhancements.autoLightAmount * 0.10, forKey: kCIInputSaturationKey)
+        previewLayer.filters = [filter]
     }
 }

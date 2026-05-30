@@ -71,6 +71,15 @@ struct SourceRackView: View {
                     .disabled(!store.canAdjustSourceLevel(source))
                     .help(sourceLevelHelp(for: source))
                 }
+
+                if source.kind == .camera, source.isEnabled {
+                    CameraEnhancementControls(
+                        settings: Binding(
+                            get: { store.preferences.cameraEnhancements },
+                            set: { store.updateCameraEnhancements($0) }
+                        )
+                    )
+                }
             }
             .padding(.vertical, 4)
         }
@@ -94,5 +103,71 @@ struct SourceRackView: View {
         }
 
         return "Switch scenes or stop capture before adjusting a required source"
+    }
+}
+
+private struct CameraEnhancementControls: View {
+    @Binding var settings: CameraEnhancementSettings
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 8) {
+                Toggle("Mirror", isOn: mirrorBinding)
+                    .toggleStyle(.checkbox)
+                    .help("Mirror the local camera preview")
+
+                Toggle("Auto Light", isOn: autoLightBinding)
+                    .toggleStyle(.checkbox)
+                    .help("Use preview lighting plus camera auto exposure, focus, and white balance")
+            }
+            .font(.caption)
+
+            Picker("Rotation", selection: rotationBinding) {
+                ForEach(CameraPreviewRotation.allCases) { rotation in
+                    Text(rotation.title).tag(rotation)
+                }
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            .help("Rotate the local camera preview")
+
+            if settings.usesAutoLight {
+                HStack(spacing: 8) {
+                    Image(systemName: "sun.max")
+                        .foregroundStyle(.secondary)
+                    Slider(value: autoLightAmountBinding, in: 0...1, step: 0.01)
+                        .help("Adjust preview lighting strength")
+                }
+            }
+        }
+        .padding(.top, 2)
+    }
+
+    private var mirrorBinding: Binding<Bool> {
+        Binding(
+            get: { settings.mirrorsPreview },
+            set: { settings.mirrorsPreview = $0 }
+        )
+    }
+
+    private var autoLightBinding: Binding<Bool> {
+        Binding(
+            get: { settings.usesAutoLight },
+            set: { settings.usesAutoLight = $0 }
+        )
+    }
+
+    private var rotationBinding: Binding<CameraPreviewRotation> {
+        Binding(
+            get: { settings.rotation },
+            set: { settings.rotation = $0 }
+        )
+    }
+
+    private var autoLightAmountBinding: Binding<Double> {
+        Binding(
+            get: { settings.autoLightAmount },
+            set: { settings.autoLightAmount = $0 }
+        )
     }
 }

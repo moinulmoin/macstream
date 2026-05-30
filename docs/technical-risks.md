@@ -35,6 +35,14 @@ Adaptive performance must react to actual capture health, not only thermal state
 
 Screen/window selection must be shared across preview, signal sampling, recording, and publishing. If these paths capture different targets, the director will make decisions from one source while the stream shows another. Capture rescans should stay idle-only because enumerating shareable screen content or changing target metadata during active capture can add avoidable ScreenCaptureKit work and operator confusion.
 
+## Camera And Mic Enhancement Strategy
+
+Camera mirror, rotation, and light tuning belong with the camera source controls because operators may change them while setting up a session. The current camera path uses `AVCaptureVideoPreviewLayer`, so mirror and rotation can stay as local preview transforms. Auto Light currently combines a lightweight Core Image preview filter with AVFoundation auto exposure, focus, and white-balance hints. Shipping the same camera look into recording or RTMP output requires the later camera composition path, because the current real media pipeline records and publishes screen capture rather than a composited camera scene.
+
+JoyCast-style mic polish is a useful product reference, but it is not one feature. JoyCast appears as a selectable virtual microphone and promises local noise removal, subtle enhancement, consistent loudness, native 48 kHz audio, and low latency across other apps. OpenCue's MVP should first process microphone audio only inside its own recording and RTMP paths. A system-wide virtual microphone requires a separate Core Audio or DriverKit style distribution surface, installer/update handling, and much heavier reliability testing.
+
+OpenCue's current microphone path receives `CMSampleBuffer` values from `AVCaptureAudioDataOutput` and appends them directly to the recorder and RTMP publisher. Built-in Smooth Mic should replace that direct append path with an `AVAudioEngine` or Audio Unit graph that can apply voice processing, a dynamics processor or limiter, EQ, and a conservative noise gate before samples reach the writer and publisher. That work should be tested against A/V sync, latency, CPU pressure, and fallback behavior before exposing a main-window Smooth Mic toggle.
+
 ## Dependency Strategy
 
 Start dependency-free for the app spine. Add native media dependencies only at the boundary:

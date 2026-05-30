@@ -1177,6 +1177,14 @@ public final class StudioStore {
         }
     }
 
+    public func updateCameraEnhancements(_ cameraEnhancements: CameraEnhancementSettings) {
+        guard preferences.cameraEnhancements != cameraEnhancements else { return }
+
+        var nextPreferences = preferences
+        nextPreferences.cameraEnhancements = cameraEnhancements
+        updatePreferences(nextPreferences)
+    }
+
     private func finishCaptureScan(with report: CapturePreflightReport) {
         let shouldPublishReport = !hasRunInitialCaptureScan || report != captureReport
         if shouldPublishReport {

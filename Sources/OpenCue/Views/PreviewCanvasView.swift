@@ -5,6 +5,7 @@ struct PreviewCanvasView: View {
     var scene: StudioScene
     var signals: SignalSnapshot
     var previewConfiguration = PreviewCaptureConfiguration()
+    var cameraEnhancements = CameraEnhancementSettings()
     var isCameraEnabled = true
     var isCameraCaptureReady = true
     var isScreenEnabled = true
@@ -121,7 +122,10 @@ struct PreviewCanvasView: View {
                 cameraCaptureUnavailableLayer
             } else {
                 ZStack {
-                    CameraPreviewView(configuration: previewConfiguration)
+                    CameraPreviewView(
+                        configuration: previewConfiguration,
+                        cameraEnhancements: cameraEnhancements
+                    )
 
                     VStack {
                         Spacer()

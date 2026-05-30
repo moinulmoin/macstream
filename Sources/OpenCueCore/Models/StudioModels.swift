@@ -348,21 +348,25 @@ public struct StudioPreferences: Codable, Equatable, Sendable {
         }
     }
     public var performanceMode: StudioPerformanceMode
+    public var cameraEnhancements: CameraEnhancementSettings
 
     private enum CodingKeys: String, CodingKey {
         case recordWhileStreaming
         case directorCountdownSeconds
         case performanceMode
+        case cameraEnhancements
     }
 
     public init(
         recordWhileStreaming: Bool = false,
         directorCountdownSeconds: Int = 2,
-        performanceMode: StudioPerformanceMode = .balanced
+        performanceMode: StudioPerformanceMode = .balanced,
+        cameraEnhancements: CameraEnhancementSettings = CameraEnhancementSettings()
     ) {
         self.recordWhileStreaming = recordWhileStreaming
         self.directorCountdownSeconds = Self.normalizedDirectorCountdownSeconds(directorCountdownSeconds)
         self.performanceMode = performanceMode
+        self.cameraEnhancements = cameraEnhancements
     }
 
     public init(from decoder: any Decoder) throws {
@@ -375,10 +379,68 @@ public struct StudioPreferences: Codable, Equatable, Sendable {
             StudioPerformanceMode.self,
             forKey: .performanceMode
         ) ?? .balanced
+        cameraEnhancements = try container.decodeIfPresent(
+            CameraEnhancementSettings.self,
+            forKey: .cameraEnhancements
+        ) ?? CameraEnhancementSettings()
     }
 
     public static func normalizedDirectorCountdownSeconds(_ seconds: Int) -> Int {
         min(max(seconds, minimumDirectorCountdownSeconds), maximumDirectorCountdownSeconds)
+    }
+}
+
+public enum CameraPreviewRotation: Int, CaseIterable, Codable, Identifiable, Sendable {
+    case degrees0 = 0
+    case degrees90 = 90
+    case degrees180 = 180
+    case degrees270 = 270
+
+    public var id: Int { rawValue }
+
+    public var title: String {
+        switch self {
+        case .degrees0: "0"
+        case .degrees90: "90"
+        case .degrees180: "180"
+        case .degrees270: "270"
+        }
+    }
+
+    public var radians: Double {
+        Double(rawValue) * .pi / 180
+    }
+
+    public var isSideways: Bool {
+        self == .degrees90 || self == .degrees270
+    }
+}
+
+public struct CameraEnhancementSettings: Codable, Equatable, Sendable {
+    public var mirrorsPreview: Bool
+    public var rotation: CameraPreviewRotation
+    public var usesAutoLight: Bool
+    public var autoLightAmount: Double {
+        didSet {
+            autoLightAmount = Self.normalizedAutoLightAmount(autoLightAmount)
+        }
+    }
+
+    public init(
+        mirrorsPreview: Bool = true,
+        rotation: CameraPreviewRotation = .degrees0,
+        usesAutoLight: Bool = false,
+        autoLightAmount: Double = 0.35
+    ) {
+        self.mirrorsPreview = mirrorsPreview
+        self.rotation = rotation
+        self.usesAutoLight = usesAutoLight
+        self.autoLightAmount = Self.normalizedAutoLightAmount(autoLightAmount)
+    }
+
+    public static func normalizedAutoLightAmount(_ amount: Double) -> Double {
+        let clamped = min(max(amount, 0), 1)
+        return (clamped * 100).rounded() / 100
     }
 }
 

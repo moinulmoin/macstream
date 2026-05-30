@@ -472,6 +472,51 @@ func cameraPreviewDoesNotRequestCameraPermissionPassively() throws {
 }
 
 @Test
+func cameraEnhancementControlsStayWithCameraSourceAndPreviewOnly() throws {
+    let root = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+    let modelsSource = try String(contentsOf: root.appendingPathComponent("Sources/OpenCueCore/Models/StudioModels.swift"), encoding: .utf8)
+    let storeSource = try String(contentsOf: root.appendingPathComponent("Sources/OpenCueCore/Stores/StudioStore.swift"), encoding: .utf8)
+    let appSource = try String(contentsOf: root.appendingPathComponent("Sources/OpenCue/App/OpenCueApp.swift"), encoding: .utf8)
+    let previewSource = try String(contentsOf: root.appendingPathComponent("Sources/OpenCue/NativePreview/CameraPreviewView.swift"), encoding: .utf8)
+    let canvasSource = try String(contentsOf: root.appendingPathComponent("Sources/OpenCue/Views/PreviewCanvasView.swift"), encoding: .utf8)
+    let studioSource = try String(contentsOf: root.appendingPathComponent("Sources/OpenCue/Views/StudioView.swift"), encoding: .utf8)
+    let sourceRackSource = try String(contentsOf: root.appendingPathComponent("Sources/OpenCue/Views/SourceRackView.swift"), encoding: .utf8)
+
+    #expect(modelsSource.contains("public struct CameraEnhancementSettings"))
+    #expect(modelsSource.contains("public enum CameraPreviewRotation"))
+    #expect(modelsSource.contains("cameraEnhancements: CameraEnhancementSettings = CameraEnhancementSettings()"))
+    #expect(storeSource.contains("public func updateCameraEnhancements"))
+    #expect(appSource.contains("@AppStorage(\"cameraEnhancementSettings\")"))
+    #expect(appSource.contains("loadCameraEnhancementSettings()"))
+    #expect(appSource.contains("saveCameraEnhancementSettings(newSettings)"))
+    #expect(previewSource.contains("var cameraEnhancements = CameraEnhancementSettings()"))
+    #expect(previewSource.contains("CIFilter(name: \"CIColorControls\")"))
+    #expect(previewSource.contains("device.exposureMode = .continuousAutoExposure"))
+    #expect(previewSource.contains("device.focusMode = .continuousAutoFocus"))
+    #expect(previewSource.contains("device.whiteBalanceMode = .continuousAutoWhiteBalance"))
+    #expect(previewSource.contains("previewLayer.setAffineTransform(transform)"))
+    #expect(canvasSource.contains("cameraEnhancements: cameraEnhancements"))
+    #expect(studioSource.contains("cameraEnhancements: store.preferences.cameraEnhancements"))
+    #expect(sourceRackSource.contains("CameraEnhancementControls("))
+    #expect(sourceRackSource.contains("Toggle(\"Mirror\""))
+    #expect(sourceRackSource.contains("Toggle(\"Auto Light\""))
+    #expect(sourceRackSource.contains("Picker(\"Rotation\""))
+}
+
+@Test
+func technicalRisksSeparateSmoothMicFromVirtualMicrophoneReleasePath() throws {
+    let docsURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+        .appendingPathComponent("docs/technical-risks.md")
+    let docs = try String(contentsOf: docsURL, encoding: .utf8)
+
+    #expect(docs.contains("JoyCast-style mic polish"))
+    #expect(docs.contains("selectable virtual microphone"))
+    #expect(docs.contains("OpenCue's MVP should first process microphone audio only inside its own recording and RTMP paths."))
+    #expect(docs.contains("`AVAudioEngine` or Audio Unit graph"))
+    #expect(docs.contains("before exposing a main-window Smooth Mic toggle"))
+}
+
+@Test
 func packageManifestKeepsHeavyAIAndRTMPDependenciesOptIn() throws {
     let manifestURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
         .appendingPathComponent("Package.swift")
@@ -1353,6 +1398,25 @@ func studioPreferencesClampCountdownSeconds() throws {
     #expect(decoded.recordWhileStreaming)
     #expect(decoded.directorCountdownSeconds == 5)
     #expect(decoded.performanceMode == .responsive)
+    #expect(decoded.cameraEnhancements == CameraEnhancementSettings())
+}
+
+@Test
+func cameraEnhancementSettingsNormalizeAndPersist() throws {
+    let settings = CameraEnhancementSettings(
+        mirrorsPreview: false,
+        rotation: .degrees90,
+        usesAutoLight: true,
+        autoLightAmount: 1.7
+    )
+    let encoded = try JSONEncoder().encode(settings)
+    let decoded = try JSONDecoder().decode(CameraEnhancementSettings.self, from: encoded)
+
+    #expect(settings.autoLightAmount == 1)
+    #expect(decoded == settings)
+    #expect(CameraPreviewRotation.degrees90.isSideways)
+    #expect(CameraPreviewRotation.degrees270.isSideways)
+    #expect(!CameraPreviewRotation.degrees0.isSideways)
 }
 
 @Test

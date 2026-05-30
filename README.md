@@ -73,11 +73,15 @@ Both optional paths are intentionally opt-in so the default MVP stays fast and d
 
 ## Release Artifact
 
-The first GitHub release is:
+The first GitHub release is a signed MVP artifact:
 
 - `v0.1.0`
 - `OpenCue-v0.1.0-macos-arm64.zip`
 - https://github.com/moinulmoin/opencue/releases/tag/v0.1.0
+
+New tagged releases are built through GitHub Actions with Developer ID signing, hardened runtime, notarization, stapling, checksum generation, and GitHub Release upload once the required Apple signing secrets are configured. See [Release process](docs/releasing.md).
+
+OpenCue does not have an in-app auto-updater yet. The current distribution channel is GitHub Releases.
 
 ## QA Checklist
 

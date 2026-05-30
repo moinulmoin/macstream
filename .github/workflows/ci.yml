@@ -1,0 +1,72 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  macos:
+    name: Swift and bundle checks
+    runs-on: macos-26
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Show toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+          sw_vers
+          xcodebuild -version
+          xcrun --sdk macosx --show-sdk-version
+          swift --version
+
+      - name: Run tests
+        shell: bash
+        run: swift test
+
+      - name: Build default app
+        shell: bash
+        run: swift build -c release --arch arm64
+
+      - name: Build optional feature configurations
+        shell: bash
+        run: |
+          set -euo pipefail
+          OPEN_CUE_ENABLE_HAISHINKIT=1 swift build -c release --arch arm64
+          OPEN_CUE_ENABLE_MLX=1 swift build -c release --arch arm64
+
+      - name: Package ad-hoc app bundle smoke
+        shell: bash
+        env:
+          OPEN_CUE_VERSION: 0.1.0
+          OPEN_CUE_BUILD_NUMBER: ${{ github.run_number }}
+          OPEN_CUE_BUILD_CONFIGURATION: release
+          OPEN_CUE_BUILD_ARCH: arm64
+          OPEN_CUE_CODESIGN_IDENTITY: "-"
+          OPEN_CUE_REQUIRE_HARDENED_RUNTIME: "1"
+        run: ./script/package_macos_app.sh
+
+      - name: Upload app bundle smoke artifact
+        shell: bash
+        run: |
+          set -euo pipefail
+          ditto -c -k --sequesterRsrc --keepParent dist/OpenCue.app dist/OpenCue-ci-macos-arm64.zip
+
+      - name: Store app bundle smoke artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: OpenCue-ci-macos-arm64
+          path: dist/OpenCue-ci-macos-arm64.zip
+          if-no-files-found: error

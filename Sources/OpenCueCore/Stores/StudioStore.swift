@@ -1,0 +1,2083 @@
+import Foundation
+import Observation
+
+@MainActor
+@Observable
+public final class StudioStore {
+    public static let defaultSetupPrompt = "I do coding streams with camera and screen."
+
+    public private(set) var scenes: [StudioScene]
+    public private(set) var sources: [StudioSource]
+    public private(set) var selectedSceneID: StudioScene.ID
+    public var directorMode: DirectorMode = .suggest {
+        didSet {
+            guard directorMode != oldValue else { return }
+            directorModeDidChange()
+        }
+    }
+    public private(set) var streamState: StreamState = .offline
+    public private(set) var streamTransport: StreamTransportKind
+    public private(set) var recordingState: RecordingState = .stopped
+    public private(set) var lastRecordingURL: URL?
+    public private(set) var health = StreamHealth()
+    public private(set) var systemPressure = SystemPressureSnapshot()
+    public private(set) var latestSignals = SignalSnapshot()
+    public private(set) var recommendation: DirectorRecommendation?
+    public private(set) var autoCueRemainingSeconds: Int?
+    public private(set) var events: [StudioEvent] = []
+    public private(set) var clipMarkers: [ClipMarker] = []
+    public private(set) var latestClipExportURL: URL?
+    public private(set) var latestSessionReportURL: URL?
+    public var destination = StreamDestination() {
+        didSet {
+            guard !isRevertingDestinationChange else { return }
+            guard destination != oldValue else { return }
+
+            guard canEditDestination else {
+                isRevertingDestinationChange = true
+                destination = oldValue
+                isRevertingDestinationChange = false
+                return
+            }
+
+            destinationDidChange(from: oldValue)
+        }
+    }
+    public var setupPrompt = StudioStore.defaultSetupPrompt
+    public private(set) var setupSummary = "Talking + Screen preset ready."
+    public private(set) var isGeneratingSetupPlan = false
+    public private(set) var localIntelligenceStatus: LocalIntelligenceStatus
+    public private(set) var directorProfile: DirectorProfile = .balanced
+    public private(set) var preferences: StudioPreferences
+    public private(set) var effectivePerformanceMode: StudioPerformanceMode
+    public private(set) var captureReport = CapturePreflightReport()
+    public private(set) var isScanningCapture = false
+    public private(set) var hasRunInitialCaptureScan = false
+    public private(set) var selectedScreenCaptureTarget: ScreenCaptureTarget?
+    public private(set) var screenCaptureTargetPreference: ScreenCaptureTarget?
+    public private(set) var streamStartAttempt = 0
+    public private(set) var streamStartMaxAttempts = 1
+    public private(set) var isStreamStopping = false
+    public private(set) var isRecordingStopping = false
+
+    private var director = DirectorEngine()
+    private let mediaPipeline: any MediaPipeline
+    private let intelligenceProvider: any LocalIntelligenceProvider
+    private let captureDeviceProvider: any CaptureDeviceProvider
+    private let signalProvider: any SignalProvider
+    private let performanceMonitor: any SystemPerformanceMonitor
+    private let streamStartRetryPolicy: StreamStartRetryPolicy
+    @ObservationIgnored private var directorLoopTask: Task<Void, Never>?
+    @ObservationIgnored private var mediaHealthLoopTask: Task<Void, Never>?
+    @ObservationIgnored private var streamStartTask: Task<Void, Never>?
+    @ObservationIgnored private var streamStartID: UUID?
+    @ObservationIgnored private var setupGenerationTask: Task<Void, Never>?
+    @ObservationIgnored private var setupGenerationID: UUID?
+    @ObservationIgnored private var autoCueTask: Task<Void, Never>?
+    @ObservationIgnored private var pendingAutoRecommendation: DirectorRecommendation?
+    @ObservationIgnored private var recordingStartTask: Task<Void, Never>?
+    @ObservationIgnored private var recordingStartID: UUID?
+    @ObservationIgnored private var recordingOwnedByStream = false
+    @ObservationIgnored private var lastAutomaticClipMarkerAt: Date?
+    @ObservationIgnored private var lastPerformanceWarningAt: Date?
+    @ObservationIgnored private var isCaptureUnderPressure = false
+    @ObservationIgnored private var activeHealthDegradationReason: String?
+    @ObservationIgnored private var lastObservedDroppedFrames = 0
+    @ObservationIgnored private var captureHealthRecoverySampleCount = 0
+    @ObservationIgnored private var hasOpenCaptureSession = false
+    @ObservationIgnored private var lastAppliedSignalConfiguration: SignalSamplingConfiguration?
+    @ObservationIgnored private var lastAppliedMediaConfiguration: MediaPipelineConfiguration?
+    @ObservationIgnored private var isSignalProviderActive = false
+    @ObservationIgnored private var isRevertingDestinationChange = false
+    private static let requiredCaptureHealthRecoverySamples = 2
+    private static let maxRetainedEvents = 40
+    private static let maxClipMarkerReasonCharacters = 240
+
+    public init(
+        mediaPipeline: any MediaPipeline = PreviewMediaPipeline(),
+        intelligenceProvider: any LocalIntelligenceProvider = StubLocalIntelligenceProvider(),
+        captureDeviceProvider: any CaptureDeviceProvider = SystemCaptureDeviceProvider(),
+        signalProvider: any SignalProvider = PreviewSignalProvider(),
+        performanceMonitor: any SystemPerformanceMonitor = PreviewSystemPerformanceMonitor(),
+        preferences: StudioPreferences = StudioPreferences(),
+        streamStartRetryPolicy: StreamStartRetryPolicy = .rtmpStartup
+    ) {
+        let initialPressure = SystemPressureSnapshot()
+        let initialEffectivePerformanceMode = preferences.performanceMode.effectiveMode(for: initialPressure)
+
+        self.mediaPipeline = mediaPipeline
+        self.intelligenceProvider = intelligenceProvider
+        self.captureDeviceProvider = captureDeviceProvider
+        self.signalProvider = signalProvider
+        self.performanceMonitor = performanceMonitor
+        self.preferences = preferences
+        self.streamStartRetryPolicy = streamStartRetryPolicy
+        self.effectivePerformanceMode = initialEffectivePerformanceMode
+        self.localIntelligenceStatus = intelligenceProvider.status
+        self.streamTransport = Self.streamTransport(for: StreamDestination(), pipelineTransport: mediaPipeline.streamTransport)
+
+        let initialScenes = [
+            StudioScene(kind: .face, subtitle: "Camera-led explanation"),
+            StudioScene(kind: .screenAndFace, subtitle: "Screen share with camera"),
+            StudioScene(kind: .screenOnly, subtitle: "Full focus on the work"),
+            StudioScene(kind: .brb, subtitle: "Quiet idle fallback")
+        ]
+        let initialSources = [
+            StudioSource(kind: .camera, title: "FaceTime Camera"),
+            StudioSource(kind: .screen, title: "Main Display"),
+            StudioSource(kind: .microphone, title: "Studio Mic"),
+            StudioSource(kind: .systemAudio, title: "Mac Audio", isEnabled: false, level: 0.72)
+        ]
+
+        self.scenes = initialScenes
+        self.sources = initialSources
+        self.selectedSceneID = initialScenes[3].id
+        addEvent(kind: .director, title: "Director armed", detail: "Suggest mode is ready.")
+        applyPerformanceConfiguration()
+    }
+
+    public var selectedScene: StudioScene {
+        scenes.first { $0.id == selectedSceneID } ?? scenes[0]
+    }
+
+    public var selectedSceneKind: SceneKind {
+        selectedScene.kind
+    }
+
+    public var sourceConfiguration: [StudioSourceConfiguration] {
+        sources.map(StudioSourceConfiguration.init(source:))
+    }
+
+    public static func boundedSetupPrompt(_ prompt: String) -> String {
+        guard prompt.count > SetupPlanPromptBuilder.maxStreamDescriptionCharacters else { return prompt }
+        return String(prompt.prefix(SetupPlanPromptBuilder.maxStreamDescriptionCharacters))
+    }
+
+    public var isLive: Bool {
+        streamState.isLive
+    }
+
+    public var isStreamConnecting: Bool {
+        if case .connecting = streamState { return true }
+        return false
+    }
+
+    public var canStartStream: Bool {
+        !streamState.isLive
+            && !isStreamConnecting
+            && !isStreamStopping
+            && !isRecordingStarting
+            && !isRecordingStopping
+            && destination.isReadyToStart
+            && streamStartBlockedReason == nil
+    }
+
+    public var canStopStream: Bool {
+        (streamState.isLive || isStreamConnecting) && !isStreamStopping
+    }
+
+    public var canEditDestination: Bool {
+        !streamState.isLive && !isStreamConnecting && !isStreamStopping
+    }
+
+    public var isRecordingStarting: Bool {
+        recordingState == .starting
+    }
+
+    public var canStartRecording: Bool {
+        recordingState != .recording
+            && recordingState != .starting
+            && !isRecordingStopping
+            && !isStreamConnecting
+            && !isStreamStopping
+            && recordingStartBlockedReason == nil
+    }
+
+    public var canStopRecording: Bool {
+        (recordingState == .recording || recordingState == .starting) && !isRecordingStopping
+    }
+
+    public var canGenerateSetupPlan: Bool {
+        !isGeneratingSetupPlan && setupGenerationBlockedReason == nil
+    }
+
+    public var startBlockedReason: String? {
+        streamStartBlockedReason
+    }
+
+    public var streamStartBlockedReason: String? {
+        guard mediaPipeline.requiresCaptureReadinessForStart else { return nil }
+
+        guard selectedSceneKind != .brb else {
+            return "Choose Face, Screen + Face, or Screen before starting."
+        }
+
+        if !destination.isPreviewSession,
+           !mediaPipeline.supportedSceneKindsForStream.contains(selectedSceneKind) {
+            return Self.screenOnlyRealCaptureRequiredReason
+        }
+
+        if mediaPipeline.requiresScreenCaptureVideoForStream,
+           !destination.isPreviewSession,
+           !selectedSceneUsesScreenCaptureVideo {
+            return Self.screenOnlyRealCaptureRequiredReason
+        }
+
+        return captureStartBlockedReason
+    }
+
+    public var recordingStartBlockedReason: String? {
+        guard mediaPipeline.requiresCaptureReadinessForStart else { return nil }
+
+        guard selectedSceneKind != .brb else {
+            return "Choose Face, Screen + Face, or Screen before starting."
+        }
+
+        if !mediaPipeline.supportedSceneKindsForRecording.contains(selectedSceneKind) {
+            return Self.screenOnlyRealCaptureRequiredReason
+        }
+
+        if mediaPipeline.requiresScreenCaptureVideoForRecording,
+           !selectedSceneUsesScreenCaptureVideo {
+            return Self.screenOnlyRealCaptureRequiredReason
+        }
+
+        return captureStartBlockedReason
+    }
+
+    public var captureStartBlockedReason: String? {
+        guard mediaPipeline.requiresCaptureReadinessForStart else { return nil }
+
+        let missingSceneSourceKinds = missingSelectedSceneSourceKinds
+        guard missingSceneSourceKinds.isEmpty else {
+            return "\(sourceRecoveryActionTitle(for: missingSceneSourceKinds)) \(Self.sourceListTitle(for: missingSceneSourceKinds)) for \(selectedScene.title) before starting."
+        }
+
+        let enabledSourceCount = sources.filter(\.isEnabled).count
+        guard enabledSourceCount > 0 else {
+            return "Enable at least one source before starting."
+        }
+
+        let readiness = captureReadiness
+        switch readiness.state {
+        case .ready:
+            return nil
+        case .unchecked:
+            return "Check capture permissions before starting."
+        case .checking:
+            return "Finish checking capture permissions before starting."
+        case .needsAccess, .needsRelaunch:
+            return readiness.detail
+        }
+    }
+
+    public var availableScreenCaptureTargets: [ScreenCaptureTarget] {
+        captureReport.screenCaptureTargets
+    }
+
+    public var missingRequiredCapturePermissionKinds: [CaptureDeviceKind] {
+        guard hasRunInitialCaptureScan, !isScanningCapture else { return [] }
+        return captureReport.missingPermissionKinds(
+            requiredKinds: requiredCapturePermissionKinds
+        )
+    }
+
+    public var promptableRequiredCapturePermissionKinds: [CaptureDeviceKind] {
+        missingRequiredCapturePermissionKinds.filter { kind in
+            !kind.requiresRestartAfterPermissionGrant
+                && captureReport.permissionState(for: kind) == .notDetermined
+        }
+    }
+
+    public var blockedRequiredCapturePermissionKinds: [CaptureDeviceKind] {
+        missingRequiredCapturePermissionKinds.filter { kind in
+            !kind.requiresRestartAfterPermissionGrant
+                && captureReport.permissionState(for: kind) != nil
+                && captureReport.permissionState(for: kind) != .notDetermined
+        }
+    }
+
+    public var missingRequiredCaptureDeviceKinds: [CaptureDeviceKind] {
+        missingRequiredCapturePermissionKinds.filter { kind in
+            captureReport.permissionState(for: kind) == nil
+        }
+    }
+
+    public var requiresRelaunchForRequiredCapturePermission: Bool {
+        missingRequiredCapturePermissionKinds.contains { $0.requiresRestartAfterPermissionGrant }
+    }
+
+    public var canScanCaptureDevices: Bool {
+        captureScanBlockedReason == nil
+    }
+
+    public var captureScanBlockedReason: String? {
+        if isScanningCapture {
+            return "Capture check is already running."
+        }
+
+        if isCaptureConfigurationLocked {
+            return "Stop preview, stream, or recording before checking capture devices."
+        }
+
+        return nil
+    }
+
+    public var captureReadiness: CaptureReadiness {
+        if isScanningCapture {
+            return CaptureReadiness(
+                state: .checking,
+                title: "Checking",
+                detail: captureReport.summary
+            )
+        }
+
+        guard hasRunInitialCaptureScan else {
+            return CaptureReadiness(
+                state: .unchecked,
+                title: "Not checked",
+                detail: captureReport.summary
+            )
+        }
+
+        let missingKinds = missingRequiredCapturePermissionKinds
+        guard !missingKinds.isEmpty else {
+            return CaptureReadiness(
+                state: .ready,
+                title: "Ready",
+                detail: "Required capture sources are ready."
+            )
+        }
+
+        if missingKinds.contains(where: \.requiresRestartAfterPermissionGrant) {
+            let otherKinds = missingKinds.filter { !$0.requiresRestartAfterPermissionGrant }
+            let suffix = otherKinds.isEmpty
+                ? ""
+                : " \(Self.permissionListTitle(for: otherKinds)) also \(otherKinds.count == 1 ? "needs" : "need") access."
+            return CaptureReadiness(
+                state: .needsRelaunch,
+                title: "Screen access",
+                detail: "Grant Screen Recording, then reopen OpenCue.\(suffix)"
+            )
+        }
+
+        return CaptureReadiness(
+            state: .needsAccess,
+            title: "Needs access",
+            detail: "\(Self.permissionListTitle(for: missingKinds)) \(missingKinds.count == 1 ? "needs" : "need") access."
+        )
+    }
+
+    public var missingSelectedSceneSourceKinds: [SourceKind] {
+        selectedSceneRequiredSourceKinds.filter { !isSourceReadyForSelectedScene($0) }
+    }
+
+    public var isSourceSetupReady: Bool {
+        missingSelectedSceneSourceKinds.isEmpty && sources.contains(where: \.isEnabled)
+    }
+
+    public var sourceSetupTitle: String {
+        let requiredKinds = selectedSceneRequiredSourceKinds
+        let readyRequiredCount = requiredKinds.filter { isSourceReadyForSelectedScene($0) }.count
+        if readyRequiredCount < requiredKinds.count {
+            return "\(readyRequiredCount)/\(requiredKinds.count) ready"
+        }
+
+        return "\(sources.filter(\.isEnabled).count)/\(sources.count) on"
+    }
+
+    public var sourceSetupDetail: String {
+        let missingSceneSourceKinds = missingSelectedSceneSourceKinds
+        if !missingSceneSourceKinds.isEmpty {
+            return "\(sourceRecoveryActionTitle(for: missingSceneSourceKinds)) \(Self.sourceListTitle(for: missingSceneSourceKinds)) for \(selectedScene.title)."
+        }
+
+        let enabledSources = sources
+            .filter(\.isEnabled)
+            .map(\.title)
+            .joined(separator: ", ")
+        return enabledSources.isEmpty ? "Enable at least one source." : enabledSources
+    }
+
+    public func setupRole(for sourceKind: SourceKind) -> SourceSetupRole {
+        if selectedSceneRequiredSourceKinds.contains(sourceKind) {
+            return .required
+        }
+
+        if selectedSceneKind != .brb, sourceKind == .microphone {
+            return .recommended
+        }
+
+        if selectedSceneKind != .brb, sourceKind == .systemAudio {
+            return .optional
+        }
+
+        return .unused
+    }
+
+    public var setupChecklistItems: [SetupChecklistItem] {
+        [
+            sceneSetupChecklistItem,
+            captureSetupChecklistItem,
+            destinationSetupChecklistItem,
+            sourcesSetupChecklistItem
+        ]
+    }
+
+    public var completedSetupItemCount: Int {
+        setupChecklistItems.filter(\.isComplete).count
+    }
+
+    public var totalSetupItemCount: Int {
+        setupChecklistItems.count
+    }
+
+    public var setupProgressFraction: Double {
+        let total = totalSetupItemCount
+        guard total > 0 else { return 1 }
+        return Double(completedSetupItemCount) / Double(total)
+    }
+
+    public var nextSetupChecklistItem: SetupChecklistItem? {
+        setupChecklistItems.first { !$0.isComplete }
+    }
+
+    public var shouldShowSetupChecklist: Bool {
+        guard !streamState.isLive,
+              !isStreamConnecting,
+              recordingState != .recording,
+              !isRecordingStarting
+        else {
+            return false
+        }
+
+        return setupChecklistItems.contains { !$0.isComplete }
+    }
+
+    public var canEditScreenCaptureTarget: Bool {
+        !streamState.isLive
+            && !isStreamConnecting
+            && !isStreamStopping
+            && recordingState != .recording
+            && !isRecordingStarting
+            && !isRecordingStopping
+    }
+
+    public var canMarkClip: Bool {
+        (streamState.isLive || recordingState == .recording) && !isStreamStopping && !isRecordingStopping
+    }
+
+    public var canApplyRecommendation: Bool {
+        guard let recommendation,
+              recommendation.target != selectedSceneKind,
+              let scene = scenes.first(where: { $0.kind == recommendation.target })
+        else {
+            return false
+        }
+
+        return canSelectScene(scene)
+    }
+
+    public var recommendationActionBlockedReason: String? {
+        guard let recommendation,
+              recommendation.target != selectedSceneKind
+        else {
+            return nil
+        }
+
+        guard let scene = scenes.first(where: { $0.kind == recommendation.target }) else {
+            return "Cue scene is not available."
+        }
+
+        return sceneSelectionBlockedReason(for: scene)
+    }
+
+    public func canToggleSource(_ source: StudioSource) -> Bool {
+        guard let currentSource = sources.first(where: { $0.id == source.id }) else { return false }
+        guard currentSource.isEnabled,
+              isCaptureConfigurationLocked,
+              selectedSceneRequiredSourceKinds.contains(currentSource.kind)
+        else {
+            return true
+        }
+
+        return false
+    }
+
+    public func canAdjustSourceLevel(_ source: StudioSource) -> Bool {
+        guard let currentSource = sources.first(where: { $0.id == source.id }),
+              currentSource.kind.supportsLevelControl,
+              currentSource.isEnabled
+        else {
+            return false
+        }
+
+        guard isCaptureConfigurationLocked,
+              selectedSceneRequiredSourceKinds.contains(currentSource.kind)
+        else {
+            return true
+        }
+
+        return false
+    }
+
+    public func canSelectScene(_ scene: StudioScene) -> Bool {
+        sceneSelectionBlockedReason(for: scene) == nil
+    }
+
+    public func sceneSelectionBlockedReason(for scene: StudioScene) -> String? {
+        guard let scene = scenes.first(where: { $0.id == scene.id }) else {
+            return "Scene is not available."
+        }
+
+        guard scene.id != selectedSceneID else { return nil }
+        guard isCaptureConfigurationLocked else { return nil }
+
+        if streamTransport != .preview,
+           (streamState.isLive || isStreamConnecting || isStreamStopping),
+           !mediaPipeline.supportedSceneKindsForStream.contains(scene.kind) {
+            return "Stop real capture before choosing \(scene.title)."
+        }
+
+        if (recordingState == .recording || recordingState == .starting || isRecordingStopping),
+           !mediaPipeline.supportedSceneKindsForRecording.contains(scene.kind) {
+            return "Stop recording before choosing \(scene.title)."
+        }
+
+        if mediaPipeline.requiresScreenCaptureVideoForStream,
+           streamTransport != .preview,
+           (streamState.isLive || isStreamConnecting || isStreamStopping),
+           !Self.sceneUsesScreenCaptureVideo(scene.kind) {
+            return "Stop real capture before choosing Face or BRB."
+        }
+
+        if mediaPipeline.requiresScreenCaptureVideoForRecording,
+           (recordingState == .recording || recordingState == .starting || isRecordingStopping),
+           !Self.sceneUsesScreenCaptureVideo(scene.kind) {
+            return "Stop recording before choosing Face or BRB."
+        }
+
+        let missingRequiredKinds = Self.requiredSourceKinds(for: scene.kind).filter { !isSourceEnabled($0) }
+        guard missingRequiredKinds.isEmpty else {
+            return "Enable \(Self.sourceListTitle(for: missingRequiredKinds)) before switching to \(scene.title)."
+        }
+
+        return nil
+    }
+
+    public var canExportClipMarkers: Bool {
+        !clipMarkers.isEmpty
+    }
+
+    public var setupGenerationStatusDetail: String {
+        if isGeneratingSetupPlan {
+            return "Generating setup rules..."
+        }
+
+        return setupGenerationBlockedReason ?? localIntelligenceStatus.detail
+    }
+
+    public var recordingStatusDetail: String {
+        if isRecordingStopping {
+            return "Stopping local archive"
+        }
+
+        return recordingState.detail
+    }
+
+    public var streamStatusDetail: String {
+        if isStreamStopping {
+            return "Stopping stream"
+        }
+
+        return switch streamState {
+        case .offline:
+            destination.validationError ?? "Ready"
+        case .connecting:
+            switch streamTransport {
+            case .preview:
+                "Starting local preview session"
+            case .endpointValidation:
+                "Validating RTMP endpoint\(streamStartAttemptSuffix)"
+            case .rtmpPublish:
+                "Connecting RTMP publisher\(streamStartAttemptSuffix)"
+            }
+        case .live:
+            switch streamTransport {
+            case .preview:
+                "Local preview running"
+            case .endpointValidation:
+                "Endpoint reachable"
+            case .rtmpPublish:
+                "Publishing media"
+            }
+        case let .degraded(reason):
+            reason
+        case let .failed(reason):
+            reason
+        }
+    }
+
+    public func selectScene(_ scene: StudioScene) {
+        guard let scene = scenes.first(where: { $0.id == scene.id }) else { return }
+        guard scene.id != selectedSceneID else { return }
+        guard canSelectScene(scene) else { return }
+
+        cancelPendingAutoCue()
+        selectedSceneID = scene.id
+        director.markSwitchAccepted()
+        recommendation = nil
+        addEvent(kind: .director, title: "Scene changed", detail: scene.title)
+    }
+
+    public func selectRecommendedStartingScene() {
+        guard let scene = scenes.first(where: { $0.kind == .screenAndFace }) else { return }
+        selectScene(scene)
+    }
+
+    public func applyLaunchSetupDefaults(defaultSceneKind: SceneKind?, setupPrompt: String) {
+        applySavedSetupPrompt(setupPrompt)
+
+        guard let defaultSceneKind,
+              let scene = scenes.first(where: { $0.kind == defaultSceneKind })
+        else {
+            return
+        }
+
+        selectScene(scene)
+    }
+
+    public func applySavedDestination(_ savedDestination: StreamDestination) {
+        guard canEditDestination, destination != savedDestination else { return }
+
+        destination = savedDestination
+    }
+
+    public func applySavedSourceConfiguration(_ savedConfiguration: [StudioSourceConfiguration]) {
+        guard !isCaptureConfigurationLocked, !savedConfiguration.isEmpty else { return }
+
+        var nextSources = sources
+        var didChange = false
+        let configurationByKind = Dictionary(
+            savedConfiguration.map { ($0.kind, $0) },
+            uniquingKeysWith: { _, newest in newest }
+        )
+
+        for index in nextSources.indices {
+            guard let configuration = configurationByKind[nextSources[index].kind] else { continue }
+
+            let normalizedLevel = StudioSource.normalizedLevel(configuration.level)
+            if nextSources[index].isEnabled != configuration.isEnabled {
+                nextSources[index].isEnabled = configuration.isEnabled
+                didChange = true
+            }
+            if nextSources[index].kind.supportsLevelControl,
+               nextSources[index].level != normalizedLevel {
+                nextSources[index].level = normalizedLevel
+                didChange = true
+            }
+        }
+
+        guard didChange else { return }
+
+        sources = nextSources
+        applyPerformanceConfiguration()
+    }
+
+    public func applySavedScreenCaptureTargetPreference(_ target: ScreenCaptureTarget?) {
+        guard canEditScreenCaptureTarget, screenCaptureTargetPreference != target else { return }
+
+        screenCaptureTargetPreference = target
+        guard let target else { return }
+
+        let availableTarget = availableScreenCaptureTargets.first { $0.id == target.id && $0.kind == target.kind }
+        guard let availableTarget, selectedScreenCaptureTarget != availableTarget else { return }
+
+        selectedScreenCaptureTarget = availableTarget
+        applyPerformanceConfiguration()
+    }
+
+    public func applySavedSetupPrompt(_ prompt: String) {
+        let boundedPrompt = Self.boundedSetupPrompt(prompt)
+        guard setupPrompt != boundedPrompt else { return }
+
+        setupPrompt = boundedPrompt
+    }
+
+    public func startStream() {
+        guard canStartStream else { return }
+        let startID = UUID()
+        let startDestination = destination
+        let retryPolicy = startDestination.isPreviewSession ? .none : streamStartRetryPolicy
+        streamStartTask?.cancel()
+        streamStartID = startID
+        streamStartAttempt = 1
+        streamStartMaxAttempts = retryPolicy.maxAttempts
+        prepareCaptureSessionIfIdle()
+        sampleSystemPressure()
+        applyPerformanceConfiguration()
+        streamTransport = Self.streamTransport(for: startDestination, pipelineTransport: mediaPipeline.streamTransport)
+        streamState = .connecting
+        cancelSetupGenerationIfNeeded(
+            reason: startDestination.isPreviewSession
+                ? "Stop preview before generating local setup rules."
+                : "Stop streaming before generating local setup rules."
+        )
+        addEvent(kind: .stream, title: "Starting \(streamTransport.title)", detail: startDestination.safeDisplayDetail)
+
+        streamStartTask = Task {
+            do {
+                try await startStreamWithRetry(
+                    destination: startDestination,
+                    policy: retryPolicy,
+                    startID: startID
+                )
+                guard isCurrentStreamStart(startID) else {
+                    await mediaPipeline.stopStream()
+                    return
+                }
+                streamStartTask = nil
+                streamStartID = nil
+                streamState = .live
+                beginCaptureSession(
+                    title: "Session started",
+                    detail: startDestination.safeDisplayDetail
+                )
+                health = mediaPipeline.currentHealth ?? StreamHealth(
+                    bitrateKbps: effectivePerformanceMode.mediaConfiguration.videoBitrate / 1_000,
+                    captureFPS: effectivePerformanceMode.mediaConfiguration.framesPerSecond,
+                    audioLevel: 0.42,
+                    roundTripMs: 42
+                )
+                streamTransport = Self.streamTransport(for: startDestination, pipelineTransport: mediaPipeline.streamTransport)
+                addEvent(kind: .stream, title: "\(streamTransport.title) ready", detail: streamTransport.detail)
+                startDirectorLoop()
+                syncMediaHealthLoop()
+                if preferences.recordWhileStreaming {
+                    startRecording(ownedByStream: true)
+                }
+            } catch {
+                guard isCurrentStreamStart(startID) else { return }
+                streamStartTask = nil
+                streamStartID = nil
+                streamState = .failed(error.localizedDescription)
+                health = StreamHealth()
+                resetCaptureHealthPressure()
+                cancelPendingAutoCue()
+                stopDirectorLoop()
+                syncMediaHealthLoop()
+                addEvent(kind: .warning, title: "Stream failed", detail: error.localizedDescription)
+            }
+        }
+    }
+
+    public func stopStream() {
+        guard canStopStream else { return }
+        let shouldStopOwnedRecording = recordingOwnedByStream
+        streamStartTask?.cancel()
+        streamStartTask = nil
+        streamStartID = nil
+        streamStartAttempt = 0
+        streamStartMaxAttempts = 1
+        isStreamStopping = true
+        recommendation = nil
+        cancelPendingAutoCue()
+        stopDirectorLoop()
+        Task {
+            await mediaPipeline.stopStream()
+            isStreamStopping = false
+            streamState = .offline
+            health = StreamHealth()
+            resetCaptureHealthPressure()
+            syncMediaHealthLoop()
+            if shouldStopOwnedRecording {
+                stopRecording()
+            }
+            addEvent(kind: .stream, title: "Offline", detail: "Stream stopped.")
+            endCaptureSessionIfIdle()
+        }
+    }
+
+    public func startRecording() {
+        startRecording(ownedByStream: false)
+    }
+
+    private func startRecording(ownedByStream: Bool) {
+        guard canStartRecording else { return }
+        let startID = UUID()
+        recordingStartTask?.cancel()
+        recordingStartID = startID
+        recordingOwnedByStream = ownedByStream
+        prepareCaptureSessionIfIdle()
+        sampleSystemPressure()
+        applyPerformanceConfiguration()
+        recordingState = .starting
+        cancelSetupGenerationIfNeeded(reason: "Stop recording before generating local setup rules.")
+        addEvent(kind: .stream, title: "Recording", detail: "Preparing local archive.")
+
+        recordingStartTask = Task {
+            do {
+                let url = try await mediaPipeline.startRecording()
+                guard isCurrentRecordingStart(startID) else {
+                    await mediaPipeline.stopRecording()
+                    return
+                }
+                recordingStartTask = nil
+                recordingStartID = nil
+                recordingState = .recording
+                beginCaptureSession(
+                    title: "Recording session started",
+                    detail: url.lastPathComponent,
+                    recordingURL: url
+                )
+                health = mediaPipeline.currentHealth ?? health
+                addEvent(kind: .stream, title: "Recording", detail: url.lastPathComponent)
+                syncMediaHealthLoop()
+            } catch {
+                guard isCurrentRecordingStart(startID) else { return }
+                recordingStartTask = nil
+                recordingStartID = nil
+                recordingOwnedByStream = false
+                recordingState = .failed(error.localizedDescription)
+                syncMediaHealthLoop()
+                if !streamState.isLive {
+                    resetCaptureHealthPressure()
+                }
+                addEvent(kind: .warning, title: "Recording failed", detail: error.localizedDescription)
+            }
+        }
+    }
+
+    public func stopRecording() {
+        guard canStopRecording else { return }
+        recordingStartTask?.cancel()
+        recordingStartTask = nil
+        recordingStartID = nil
+        recordingOwnedByStream = false
+        isRecordingStopping = true
+        Task {
+            await mediaPipeline.stopRecording()
+            isRecordingStopping = false
+            recordingState = .stopped
+            if !streamState.isLive {
+                resetCaptureHealthPressure()
+            }
+            syncMediaHealthLoop()
+            addEvent(kind: .stream, title: "Recording stopped", detail: "Local archive closed.")
+            endCaptureSessionIfIdle()
+        }
+    }
+
+    public func toggleSource(_ source: StudioSource) {
+        guard let index = sources.firstIndex(where: { $0.id == source.id }) else { return }
+        guard canToggleSource(sources[index]) else { return }
+        sources[index].isEnabled.toggle()
+        applyPerformanceConfiguration()
+        let state = sources[index].isEnabled ? "enabled" : "muted"
+        addEvent(kind: .source, title: sources[index].title, detail: state)
+    }
+
+    public func enableRecommendedSources() {
+        let recommendedKinds = recommendedSourceKindsForSelectedScene
+        let repairableIndices = sources.indices.filter { index in
+            guard recommendedKinds.contains(sources[index].kind) else { return false }
+            return !sources[index].isEnabled
+                || (sources[index].kind.supportsLevelControl && sources[index].level <= 0)
+        }
+        guard !repairableIndices.isEmpty else { return }
+
+        for index in repairableIndices {
+            sources[index].isEnabled = true
+            if sources[index].kind.supportsLevelControl, sources[index].level <= 0 {
+                sources[index].level = 1
+            }
+        }
+        applyPerformanceConfiguration()
+        addEvent(kind: .source, title: "Sources ready", detail: "Needed sources ready for \(selectedScene.title).")
+    }
+
+    public func updateLevel(for source: StudioSource, level: Double) {
+        guard let index = sources.firstIndex(where: { $0.id == source.id }),
+              sources[index].kind.supportsLevelControl,
+              canAdjustSourceLevel(sources[index])
+        else { return }
+        let normalizedLevel = StudioSource.normalizedLevel(level)
+        guard sources[index].level != normalizedLevel else { return }
+        sources[index].level = normalizedLevel
+        applyPerformanceConfiguration()
+    }
+
+    public func isSourceEnabled(_ kind: SourceKind) -> Bool {
+        sources.first(where: { $0.kind == kind })?.isEnabled ?? false
+    }
+
+    public func sourceLevel(_ kind: SourceKind) -> Double {
+        sources.first(where: { $0.kind == kind })?.level ?? 0
+    }
+
+    public func setDestinationMode(_ mode: StreamDestinationMode) {
+        guard canEditDestination, destination.mode != mode else { return }
+
+        var nextDestination = destination
+        nextDestination.mode = mode
+        switch mode {
+        case .preview:
+            if nextDestination.name.isEmpty || nextDestination.name == "RTMP Destination" {
+                nextDestination.name = "Preview Session"
+            }
+        case .rtmp:
+            if nextDestination.name.isEmpty || nextDestination.name == "Preview Session" {
+                nextDestination.name = "RTMP Destination"
+            }
+            if nextDestination.usesPreviewSentinelURL {
+                nextDestination.rtmpURL = ""
+            }
+        }
+        destination = nextDestination
+    }
+
+    public func selectScreenCaptureTarget(_ target: ScreenCaptureTarget) {
+        guard canEditScreenCaptureTarget else { return }
+        guard selectedScreenCaptureTarget != target else {
+            screenCaptureTargetPreference = target
+            return
+        }
+
+        screenCaptureTargetPreference = target
+        selectedScreenCaptureTarget = target
+        applyPerformanceConfiguration()
+        addEvent(kind: .source, title: "Screen target", detail: target.title)
+    }
+
+    public func advanceDirector() {
+        sampleSystemPressure()
+        latestSignals = signalSnapshotApplyingSourceState(signalProvider.snapshot())
+        refreshStreamHealth()
+
+        let previousRecommendation = recommendation
+        var nextRecommendation = director.evaluate(
+            snapshot: latestSignals,
+            currentScene: selectedSceneKind,
+            mode: directorMode
+        )
+        nextRecommendation = recommendationApplyingPreferences(nextRecommendation)
+        nextRecommendation = recommendationRespectingSceneAvailability(nextRecommendation)
+
+        recommendation = nextRecommendation
+
+        if let nextRecommendation {
+            if !nextRecommendation.hasSameCue(as: previousRecommendation) {
+                addEvent(
+                    kind: nextRecommendation.urgency == .immediate ? .warning : .director,
+                    title: nextRecommendation.target == selectedSceneKind ? "Check stream" : "Cue \(nextRecommendation.target.title)",
+                    detail: nextRecommendation.reason
+                )
+                maybeAddAutomaticClipMarker(for: nextRecommendation, snapshot: latestSignals)
+            }
+
+            if directorMode == .auto && nextRecommendation.target != selectedSceneKind {
+                scheduleAutoCue(for: nextRecommendation)
+            } else {
+                cancelPendingAutoCue()
+            }
+        } else {
+            cancelPendingAutoCue()
+        }
+    }
+
+    public func applyRecommendation() {
+        cancelPendingAutoCue()
+        guard let recommendation,
+              let scene = scenes.first(where: { $0.kind == recommendation.target }),
+              scene.kind != selectedSceneKind
+        else {
+            self.recommendation = nil
+            return
+        }
+        guard canSelectScene(scene) else {
+            if let blockedReason = sceneSelectionBlockedReason(for: scene) {
+                addWarningEventIfNeeded(title: "Cue unavailable", detail: blockedReason)
+            }
+            self.recommendation = nil
+            return
+        }
+
+        selectedSceneID = scene.id
+        director.markSwitchAccepted()
+        addEvent(kind: .director, title: "Accepted cue", detail: scene.title)
+        self.recommendation = nil
+    }
+
+    public func dismissRecommendation() {
+        guard let recommendation else {
+            cancelPendingAutoCue()
+            return
+        }
+
+        director.markCueHeld(
+            recommendation,
+            duration: max(TimeInterval(preferences.directorCountdownSeconds), directorProfile.minimumSwitchInterval)
+        )
+        cancelPendingAutoCue()
+        self.recommendation = nil
+        addEvent(kind: .director, title: "Cue held", detail: "Staying on \(selectedScene.title).")
+    }
+
+    public func markClip(reason: String = "Marked by operator.") {
+        guard canMarkClip else {
+            addWarningEventIfNeeded(
+                title: "Clip unavailable",
+                detail: "Start streaming or recording before marking a clip."
+            )
+            return
+        }
+
+        addClipMarker(
+            title: "Clip \(selectedScene.title)",
+            reason: reason,
+            scene: selectedSceneKind,
+            source: .manual,
+            timestamp: Date()
+        )
+    }
+
+    @discardableResult
+    public func exportClipMarkers(to directory: URL? = nil) -> URL? {
+        guard canExportClipMarkers else {
+            addWarningEventIfNeeded(title: "No clips", detail: "Mark a moment before exporting.")
+            return nil
+        }
+
+        do {
+            let url = try ClipMarkerExporter().export(clipMarkers, to: directory)
+            latestClipExportURL = url
+            addEvent(kind: .clip, title: "Clips exported", detail: url.lastPathComponent)
+            return url
+        } catch {
+            addEvent(kind: .warning, title: "Clip export failed", detail: error.localizedDescription)
+            return nil
+        }
+    }
+
+    @discardableResult
+    public func exportSessionReport(to directory: URL? = nil) -> URL? {
+        let report = SessionReportPayload(
+            exportedAt: Date(),
+            destinationName: destination.name,
+            streamTransport: streamTransport,
+            recordingPath: lastRecordingURL?.path,
+            sourceStates: sources.map(SessionSourceState.init(source:)),
+            screenCaptureTarget: selectedScreenCaptureTarget,
+            preferences: preferences,
+            effectivePerformanceMode: effectivePerformanceMode,
+            health: health,
+            systemPressure: systemPressure,
+            latestSignals: latestSignals,
+            clipMarkers: clipMarkers,
+            events: events
+        )
+
+        do {
+            let url = try SessionReportExporter().export(report, to: directory)
+            latestSessionReportURL = url
+            addEvent(kind: .stream, title: "Report exported", detail: url.lastPathComponent)
+            return url
+        } catch {
+            addEvent(kind: .warning, title: "Report export failed", detail: error.localizedDescription)
+            return nil
+        }
+    }
+
+    public func reportPersistenceFailure(_ detail: String) {
+        addWarningEventIfNeeded(title: "Settings not saved", detail: detail)
+    }
+
+    public func generateSetupPlan() {
+        guard canGenerateSetupPlan else {
+            if let setupGenerationBlockedReason {
+                setupSummary = setupGenerationBlockedReason
+                addWarningEventIfNeeded(title: "Setup paused", detail: setupGenerationBlockedReason)
+            }
+            return
+        }
+
+        let prompt = SetupPlanPromptBuilder.boundedStreamDescription(setupPrompt)
+        let generationID = UUID()
+        setupGenerationID = generationID
+        isGeneratingSetupPlan = true
+        localIntelligenceStatus = intelligenceProvider.status
+        setupSummary = "Generating setup rules..."
+
+        setupGenerationTask = Task {
+            defer {
+                if isCurrentSetupGeneration(generationID) {
+                    isGeneratingSetupPlan = false
+                    setupGenerationTask = nil
+                    setupGenerationID = nil
+                }
+            }
+
+            do {
+                let plan = try await intelligenceProvider.generateSetupPlan(for: prompt)
+                guard isCurrentSetupGeneration(generationID) else { return }
+                localIntelligenceStatus = intelligenceProvider.status
+                let currentPrompt = SetupPlanPromptBuilder.boundedStreamDescription(setupPrompt)
+                if currentPrompt != prompt {
+                    setupSummary = "Setup prompt changed; generate rules again."
+                    addEvent(kind: .warning, title: "Setup changed", detail: setupSummary)
+                    return
+                }
+                if let setupGenerationBlockedReason {
+                    setupSummary = setupGenerationBlockedReason
+                    addWarningEventIfNeeded(title: "Setup paused", detail: setupGenerationBlockedReason)
+                    return
+                }
+                directorProfile = plan.directorProfile
+                director.apply(profile: plan.directorProfile)
+                recommendation = nil
+                cancelPendingAutoCue()
+                setupSummary = plan.directorRuleSummary
+                addEvent(kind: .director, title: plan.title, detail: "\(plan.directorProfile.kind.title) profile applied.")
+            } catch is CancellationError {
+                return
+            } catch {
+                guard isCurrentSetupGeneration(generationID) else { return }
+                setupSummary = "Setup failed."
+                addEvent(kind: .warning, title: "Setup failed", detail: error.localizedDescription)
+            }
+        }
+    }
+
+    public func scanCaptureDevices() {
+        guard canScanCaptureDevices else { return }
+        isScanningCapture = true
+        let captureDeviceProvider = captureDeviceProvider
+
+        Task.detached(priority: .userInitiated) { [weak self] in
+            let report = await captureDeviceProvider.scan()
+            await self?.finishCaptureScan(with: report)
+        }
+    }
+
+    public func scanCaptureDevicesIfNeeded() {
+        guard !hasRunInitialCaptureScan, captureReport.devices.isEmpty else { return }
+        scanCaptureDevices()
+    }
+
+    public func updatePreferences(_ preferences: StudioPreferences) {
+        self.preferences = preferences
+        updateEffectivePerformanceMode()
+        applyPerformanceConfiguration()
+        recommendation = recommendationApplyingPreferences(recommendation)
+        recommendation = recommendationRespectingSceneAvailability(recommendation)
+        if let recommendation, directorMode == .auto {
+            scheduleAutoCue(for: recommendation)
+        } else {
+            cancelPendingAutoCue()
+        }
+    }
+
+    private func finishCaptureScan(with report: CapturePreflightReport) {
+        let shouldPublishReport = !hasRunInitialCaptureScan || report != captureReport
+        if shouldPublishReport {
+            captureReport = report
+            updateSelectedScreenCaptureTarget(from: report)
+        }
+        isScanningCapture = false
+        hasRunInitialCaptureScan = true
+        guard shouldPublishReport else { return }
+        addEvent(kind: .source, title: "Capture scan", detail: report.summary)
+    }
+
+    public func startDirectorLoop() {
+        guard streamState.isLive else {
+            cancelPendingAutoCue()
+            return
+        }
+        guard directorMode != .paused else {
+            cancelPendingAutoCue()
+            return
+        }
+        guard directorLoopTask == nil else { return }
+        applyPerformanceConfiguration()
+        startSignalProviderIfNeeded()
+        directorLoopTask = Task { [weak self] in
+            while !Task.isCancelled {
+                self?.advanceDirectorIfLive()
+                guard !Task.isCancelled else { break }
+
+                let sleepMilliseconds = self?.effectivePerformanceMode.directorSampleIntervalMilliseconds ?? 1_000
+                try? await Task.sleep(for: .milliseconds(sleepMilliseconds))
+            }
+        }
+    }
+
+    public func stopDirectorLoop() {
+        directorLoopTask?.cancel()
+        directorLoopTask = nil
+        cancelPendingAutoCue()
+        stopSignalProviderIfNeeded()
+    }
+
+    private func directorModeDidChange() {
+        switch directorMode {
+        case .paused:
+            recommendation = nil
+            stopDirectorLoop()
+            syncMediaHealthLoop()
+        case .suggest:
+            cancelPendingAutoCue()
+            if streamState.isLive {
+                startDirectorLoop()
+            }
+            syncMediaHealthLoop()
+        case .auto:
+            if streamState.isLive {
+                startDirectorLoop()
+            }
+            syncMediaHealthLoop()
+            if let recommendation {
+                scheduleAutoCue(for: recommendation)
+            } else {
+                cancelPendingAutoCue()
+            }
+        }
+    }
+
+    private func advanceDirectorIfLive() {
+        guard streamState.isLive, directorMode != .paused else {
+            stopDirectorLoop()
+            return
+        }
+
+        advanceDirector()
+    }
+
+    private func startSignalProviderIfNeeded() {
+        guard !isSignalProviderActive else { return }
+        signalProvider.start()
+        isSignalProviderActive = true
+    }
+
+    private func stopSignalProviderIfNeeded() {
+        guard isSignalProviderActive else { return }
+        signalProvider.stop()
+        isSignalProviderActive = false
+    }
+
+    private var shouldRunMediaHealthLoop: Bool {
+        (streamState.isLive && directorMode == .paused)
+            || (recordingState == .recording && !streamState.isLive)
+    }
+
+    private var hasActiveMediaCapture: Bool {
+        streamState.isLive || recordingState == .recording
+    }
+
+    private func syncMediaHealthLoop() {
+        if shouldRunMediaHealthLoop {
+            startMediaHealthLoopIfNeeded()
+        } else {
+            stopMediaHealthLoopIfNeeded()
+        }
+    }
+
+    private func startMediaHealthLoopIfNeeded() {
+        guard shouldRunMediaHealthLoop else { return }
+        guard mediaHealthLoopTask == nil else { return }
+
+        mediaHealthLoopTask = Task { [weak self] in
+            while !Task.isCancelled {
+                self?.advanceMediaHealthIfNeeded()
+                guard !Task.isCancelled else { break }
+
+                let sleepMilliseconds = self?.effectivePerformanceMode.directorSampleIntervalMilliseconds ?? 1_000
+                try? await Task.sleep(for: .milliseconds(sleepMilliseconds))
+            }
+        }
+    }
+
+    private func stopMediaHealthLoopIfNeeded() {
+        mediaHealthLoopTask?.cancel()
+        mediaHealthLoopTask = nil
+    }
+
+    private func advanceMediaHealthIfNeeded() {
+        guard shouldRunMediaHealthLoop else {
+            stopMediaHealthLoopIfNeeded()
+            return
+        }
+
+        sampleSystemPressure()
+        refreshStreamHealth()
+    }
+
+    private func addEvent(kind: StudioEventKind, title: String, detail: String) {
+        events.insert(StudioEvent(kind: kind, title: title, detail: detail), at: 0)
+        if events.count > Self.maxRetainedEvents {
+            events.removeLast(events.count - Self.maxRetainedEvents)
+        }
+    }
+
+    private func addWarningEventIfNeeded(title: String, detail: String) {
+        guard events.first?.kind != .warning
+            || events.first?.title != title
+            || events.first?.detail != detail
+        else {
+            return
+        }
+
+        addEvent(kind: .warning, title: title, detail: detail)
+    }
+
+    private func prepareCaptureSessionIfIdle() {
+        guard !hasOpenCaptureSession, !canMarkClip else { return }
+
+        recommendation = nil
+        cancelPendingAutoCue()
+        clipMarkers.removeAll()
+        latestClipExportURL = nil
+        latestSessionReportURL = nil
+        lastAutomaticClipMarkerAt = nil
+        lastRecordingURL = nil
+        events.removeAll()
+    }
+
+    private func beginCaptureSession(title: String, detail: String, recordingURL: URL? = nil) {
+        if let recordingURL {
+            lastRecordingURL = recordingURL
+        }
+
+        guard !hasOpenCaptureSession else { return }
+
+        hasOpenCaptureSession = true
+        addEvent(kind: .stream, title: title, detail: detail)
+    }
+
+    private func endCaptureSessionIfIdle() {
+        guard !streamState.isLive,
+              !isStreamStopping,
+              recordingState != .recording,
+              recordingState != .starting,
+              !isRecordingStopping
+        else {
+            return
+        }
+
+        hasOpenCaptureSession = false
+    }
+
+    private func sampleSystemPressure() {
+        systemPressure = performanceMonitor.snapshot()
+        let previousMode = effectivePerformanceMode
+        updateEffectivePerformanceMode()
+        if previousMode != effectivePerformanceMode {
+            applyPerformanceConfiguration()
+            if preferences.performanceMode == .adaptive, streamState.isLive || recordingState == .recording {
+                addEvent(
+                    kind: .warning,
+                    title: "Adaptive performance",
+                    detail: "\(effectivePerformanceMode.title) profile active."
+                )
+            }
+        }
+
+        guard streamState.isLive || recordingState == .recording else { return }
+        guard systemPressure.shouldPreferEfficiency else { return }
+
+        let now = systemPressure.timestamp
+        if let lastPerformanceWarningAt,
+           now.timeIntervalSince(lastPerformanceWarningAt) < 45 {
+            return
+        }
+
+        lastPerformanceWarningAt = now
+        addEvent(
+            kind: .warning,
+            title: "Performance pressure",
+            detail: performancePressureDetail(for: systemPressure)
+        )
+    }
+
+    private func performancePressureDetail(for pressure: SystemPressureSnapshot) -> String {
+        pressure.efficiencyPressureDetail ?? "Efficiency mode is safer."
+    }
+
+    private func updateEffectivePerformanceMode() {
+        effectivePerformanceMode = preferences.performanceMode.effectiveMode(
+            for: systemPressure,
+            isCaptureConstrained: isCaptureUnderPressure
+        )
+    }
+
+    private func applyPerformanceConfiguration() {
+        var signalConfiguration = effectivePerformanceMode.signalSamplingConfiguration
+        signalConfiguration.isMicrophoneEnabled = isSourceEnabled(.microphone)
+        signalConfiguration.isScreenMotionEnabled = isSourceEnabled(.screen) && sourceLevel(.screen) > 0
+        signalConfiguration.screenCaptureTarget = selectedScreenCaptureTarget
+        if signalConfiguration != lastAppliedSignalConfiguration {
+            signalProvider.update(configuration: signalConfiguration)
+            lastAppliedSignalConfiguration = signalConfiguration
+        }
+
+        var mediaConfiguration = effectivePerformanceMode.mediaConfiguration
+        let systemAudioLevel = sourceLevel(.systemAudio)
+        let microphoneLevel = sourceLevel(.microphone)
+        mediaConfiguration.systemAudioLevel = systemAudioLevel
+        mediaConfiguration.microphoneLevel = microphoneLevel
+        mediaConfiguration.capturesSystemAudio = isSourceEnabled(.systemAudio) && systemAudioLevel > 0
+        mediaConfiguration.capturesMicrophone = isSourceEnabled(.microphone) && microphoneLevel > 0
+        mediaConfiguration.screenCaptureTarget = selectedScreenCaptureTarget
+        if mediaConfiguration != lastAppliedMediaConfiguration {
+            mediaPipeline.update(configuration: mediaConfiguration)
+            lastAppliedMediaConfiguration = mediaConfiguration
+        }
+    }
+
+    private func updateSelectedScreenCaptureTarget(from report: CapturePreflightReport) {
+        guard canEditScreenCaptureTarget else { return }
+
+        let targets = report.screenCaptureTargets
+        guard !targets.isEmpty else {
+            guard selectedScreenCaptureTarget != nil else { return }
+            selectedScreenCaptureTarget = nil
+            applyPerformanceConfiguration()
+            return
+        }
+
+        if let targetPreference = screenCaptureTargetPreference,
+           let preferredTarget = targets.first(where: { $0.id == targetPreference.id && $0.kind == targetPreference.kind }) {
+            guard selectedScreenCaptureTarget != preferredTarget else { return }
+            selectedScreenCaptureTarget = preferredTarget
+            applyPerformanceConfiguration()
+            return
+        }
+
+        if let selectedScreenCaptureTarget,
+           let refreshedTarget = targets.first(where: { $0.id == selectedScreenCaptureTarget.id && $0.kind == selectedScreenCaptureTarget.kind }) {
+            guard selectedScreenCaptureTarget != refreshedTarget else { return }
+            self.selectedScreenCaptureTarget = refreshedTarget
+            applyPerformanceConfiguration()
+            return
+        }
+
+        selectedScreenCaptureTarget = targets.first { $0.kind == .display } ?? targets.first
+        applyPerformanceConfiguration()
+    }
+
+    private func destinationDidChange(from previousDestination: StreamDestination) {
+        guard canEditDestination else { return }
+
+        streamTransport = Self.streamTransport(for: destination, pipelineTransport: mediaPipeline.streamTransport)
+
+        guard case .failed = streamState else { return }
+        guard previousDestination.mode != destination.mode || previousDestination.rtmpURL != destination.rtmpURL else {
+            return
+        }
+
+        streamState = .offline
+        health = StreamHealth()
+        resetCaptureHealthPressure()
+    }
+
+    private static func streamTransport(
+        for destination: StreamDestination,
+        pipelineTransport: @autoclosure () -> StreamTransportKind
+    ) -> StreamTransportKind {
+        destination.isPreviewSession ? .preview : pipelineTransport()
+    }
+
+    private var sceneSetupChecklistItem: SetupChecklistItem {
+        if selectedSceneKind == .brb {
+            return SetupChecklistItem(
+                id: .scene,
+                title: "Scene",
+                detail: "Choose Face, Screen + Face, or Screen.",
+                isComplete: false
+            )
+        }
+
+        return SetupChecklistItem(
+            id: .scene,
+            title: "Scene",
+            detail: "\(selectedScene.title) selected.",
+            isComplete: true
+        )
+    }
+
+    private var captureSetupChecklistItem: SetupChecklistItem {
+        let readiness = captureReadiness
+        return SetupChecklistItem(
+            id: .capture,
+            title: "Capture",
+            detail: readiness.detail,
+            isComplete: readiness.state == .ready
+        )
+    }
+
+    private var destinationSetupChecklistItem: SetupChecklistItem {
+        SetupChecklistItem(
+            id: .destination,
+            title: "Destination",
+            detail: destination.isReadyToStart
+                ? (destination.isPreviewSession ? "Preview session ready." : destination.safeDisplayDetail)
+                : (destination.validationError ?? "Destination needs attention."),
+            isComplete: destination.isReadyToStart
+        )
+    }
+
+    private var sourcesSetupChecklistItem: SetupChecklistItem {
+        return SetupChecklistItem(
+            id: .sources,
+            title: "Sources",
+            detail: sourceSetupDetail,
+            isComplete: isSourceSetupReady
+        )
+    }
+
+    private var selectedSceneRequiredSourceKinds: [SourceKind] {
+        Self.requiredSourceKinds(for: selectedSceneKind)
+    }
+
+    private static func requiredSourceKinds(for sceneKind: SceneKind) -> [SourceKind] {
+        switch sceneKind {
+        case .face:
+            [.camera]
+        case .screenAndFace:
+            [.screen, .camera]
+        case .screenOnly:
+            [.screen]
+        case .brb:
+            []
+        }
+    }
+
+    private var selectedSceneUsesScreenCaptureVideo: Bool {
+        Self.sceneUsesScreenCaptureVideo(selectedSceneKind)
+    }
+
+    private static func sceneUsesScreenCaptureVideo(_ sceneKind: SceneKind) -> Bool {
+        sceneKind == .screenAndFace || sceneKind == .screenOnly
+    }
+
+    private func isSourceReadyForSelectedScene(_ sourceKind: SourceKind) -> Bool {
+        guard let source = sources.first(where: { $0.kind == sourceKind }),
+              source.isEnabled
+        else {
+            return false
+        }
+
+        guard source.kind.supportsLevelControl else { return true }
+        return source.level > 0
+    }
+
+    private func sourceRecoveryActionTitle(for sourceKinds: [SourceKind]) -> String {
+        let hasMutedRequiredSource = sourceKinds.contains { sourceKind in
+            guard let source = sources.first(where: { $0.kind == sourceKind }),
+                  source.isEnabled,
+                  source.kind.supportsLevelControl
+            else {
+                return false
+            }
+
+            return source.level <= 0
+        }
+
+        return hasMutedRequiredSource ? "Enable or raise" : "Enable"
+    }
+
+    private var isCaptureConfigurationLocked: Bool {
+        streamState.isLive
+            || isStreamConnecting
+            || isStreamStopping
+            || recordingState == .recording
+            || recordingState == .starting
+            || isRecordingStopping
+    }
+
+    private var recommendedSourceKindsForSelectedScene: [SourceKind] {
+        var kinds = selectedSceneRequiredSourceKinds
+        if selectedSceneKind != .brb {
+            kinds.append(.microphone)
+        }
+        return kinds.reduce(into: []) { uniqueKinds, kind in
+            guard !uniqueKinds.contains(kind) else { return }
+            uniqueKinds.append(kind)
+        }
+    }
+
+    private var requiredCapturePermissionKinds: [CaptureDeviceKind] {
+        var kinds: [CaptureDeviceKind] = []
+
+        switch selectedSceneKind {
+        case .face:
+            if isSourceEnabled(.camera) {
+                kinds.append(.camera)
+            }
+        case .screenAndFace:
+            if isSourceEnabled(.screen) {
+                kinds.append(.display)
+            }
+            if isSourceEnabled(.camera) {
+                kinds.append(.camera)
+            }
+        case .screenOnly:
+            if isSourceEnabled(.screen) {
+                kinds.append(.display)
+            }
+        case .brb:
+            break
+        }
+
+        if selectedSceneKind != .brb, isSourceEnabled(.microphone) {
+            kinds.append(.microphone)
+        }
+
+        return kinds
+    }
+
+    private static func sourceListTitle(for kinds: [SourceKind]) -> String {
+        let titles = kinds.map(\.title)
+
+        guard let first = titles.first else { return "Sources" }
+        guard titles.count > 1 else { return first }
+        guard titles.count > 2 else { return "\(first) and \(titles[1])" }
+
+        return titles.dropLast().joined(separator: ", ") + ", and " + titles.last!
+    }
+
+    private static var screenOnlyRealCaptureRequiredReason: String {
+        "Choose Screen before starting real capture. Screen + Face output is not available yet."
+    }
+
+    private static func permissionListTitle(for kinds: [CaptureDeviceKind]) -> String {
+        let titles = kinds.map { kind in
+            switch kind {
+            case .display, .window:
+                "Screen Recording"
+            case .camera:
+                "Camera"
+            case .microphone:
+                "Microphone"
+            }
+        }
+
+        guard let first = titles.first else { return "Capture" }
+        guard titles.count > 1 else { return first }
+        guard titles.count > 2 else { return "\(first) and \(titles[1])" }
+
+        return titles.dropLast().joined(separator: ", ") + ", and " + titles.last!
+    }
+
+    private func maybeAddAutomaticClipMarker(for recommendation: DirectorRecommendation, snapshot: SignalSnapshot) {
+        guard streamState.isLive else { return }
+        guard recommendation.urgency == .immediate || recommendation.confidence >= 0.82 else { return }
+
+        let now = snapshot.timestamp
+        if let lastAutomaticClipMarkerAt,
+           now.timeIntervalSince(lastAutomaticClipMarkerAt) < 30 {
+            return
+        }
+
+        lastAutomaticClipMarkerAt = now
+        addClipMarker(
+            title: "Clip \(recommendation.target.title)",
+            reason: recommendation.reason,
+            scene: recommendation.target,
+            source: .director,
+            timestamp: now
+        )
+    }
+
+    private func addClipMarker(
+        title: String,
+        reason: String,
+        scene: SceneKind,
+        source: ClipMarkerSource,
+        timestamp: Date
+    ) {
+        let normalizedReason = normalizedClipMarkerReason(reason, source: source)
+        clipMarkers.insert(
+            ClipMarker(
+                title: title,
+                reason: normalizedReason,
+                scene: scene,
+                source: source,
+                timestamp: timestamp
+            ),
+            at: 0
+        )
+        if clipMarkers.count > 12 {
+            clipMarkers.removeLast(clipMarkers.count - 12)
+        }
+        addEvent(kind: .clip, title: title, detail: normalizedReason)
+    }
+
+    private func normalizedClipMarkerReason(_ reason: String, source: ClipMarkerSource) -> String {
+        let trimmedReason = reason.trimmingCharacters(in: .whitespacesAndNewlines)
+        let fallbackReason = source == .manual ? "Marked by operator." : "Director cue."
+        let effectiveReason = trimmedReason.isEmpty ? fallbackReason : trimmedReason
+
+        guard effectiveReason.count > Self.maxClipMarkerReasonCharacters else {
+            return effectiveReason
+        }
+
+        return String(effectiveReason.prefix(Self.maxClipMarkerReasonCharacters))
+    }
+
+    private func signalSnapshotApplyingSourceState(_ snapshot: SignalSnapshot) -> SignalSnapshot {
+        var snapshot = snapshot
+        let microphoneLevel = sourceLevel(.microphone)
+        let screenLevel = sourceLevel(.screen)
+
+        if !isSourceEnabled(.microphone) {
+            snapshot.isSpeaking = false
+            snapshot.speechLevel = 0
+            snapshot.isMicMuted = true
+        } else {
+            snapshot.speechLevel = min(max(snapshot.speechLevel * microphoneLevel, 0), 1)
+            snapshot.isSpeaking = snapshot.isSpeaking && snapshot.speechLevel > 0.18
+            if microphoneLevel == 0 {
+                snapshot.isMicMuted = true
+            }
+        }
+
+        if !isSourceEnabled(.screen) {
+            snapshot.screenMotion = 0
+            snapshot.isScreenFrozen = false
+        } else {
+            snapshot.screenMotion = min(max(snapshot.screenMotion * screenLevel, 0), 1)
+            if screenLevel == 0 {
+                snapshot.isScreenFrozen = false
+            }
+        }
+
+        if !isSourceEnabled(.camera) {
+            snapshot.hasFace = false
+        }
+
+        return snapshot
+    }
+
+    private func recommendationApplyingPreferences(_ recommendation: DirectorRecommendation?) -> DirectorRecommendation? {
+        guard var recommendation else { return nil }
+        guard recommendation.urgency != .immediate else { return recommendation }
+
+        recommendation.delaySeconds = max(1, preferences.directorCountdownSeconds)
+        return recommendation
+    }
+
+    private func recommendationRespectingSceneAvailability(_ recommendation: DirectorRecommendation?) -> DirectorRecommendation? {
+        guard var recommendation else { return nil }
+        guard recommendation.target != selectedSceneKind else { return recommendation }
+        guard let scene = scenes.first(where: { $0.kind == recommendation.target }) else { return nil }
+        guard !canSelectScene(scene) else { return recommendation }
+        guard recommendation.urgency == .immediate else { return nil }
+
+        let blockedReason = sceneSelectionBlockedReason(for: scene) ?? "Scene is not available right now."
+        recommendation.target = selectedSceneKind
+        recommendation.delaySeconds = 0
+        recommendation.reason = "\(recommendation.reason) \(blockedReason)"
+        return recommendation
+    }
+
+    private func scheduleAutoCue(for recommendation: DirectorRecommendation) {
+        guard directorMode == .auto, recommendation.target != selectedSceneKind else {
+            cancelPendingAutoCue()
+            return
+        }
+
+        guard let scene = scenes.first(where: { $0.kind == recommendation.target }),
+              canSelectScene(scene)
+        else {
+            cancelPendingAutoCue()
+            return
+        }
+
+        guard recommendation.delaySeconds > 0 else {
+            applyRecommendation()
+            return
+        }
+
+        if recommendation.hasSameCue(as: pendingAutoRecommendation) {
+            return
+        }
+
+        cancelPendingAutoCue()
+        pendingAutoRecommendation = recommendation
+        autoCueRemainingSeconds = recommendation.delaySeconds
+        autoCueTask = Task { [weak self] in
+            await self?.runAutoCueCountdown(for: recommendation)
+        }
+    }
+
+    private func runAutoCueCountdown(for recommendation: DirectorRecommendation) async {
+        var remainingSeconds = recommendation.delaySeconds
+        while remainingSeconds > 0 {
+            try? await Task.sleep(for: .seconds(1))
+            guard !Task.isCancelled else { return }
+            guard isCurrentAutoCue(recommendation) else {
+                cancelPendingAutoCue()
+                return
+            }
+
+            remainingSeconds -= 1
+            autoCueRemainingSeconds = remainingSeconds
+        }
+
+        guard isCurrentAutoCue(recommendation) else {
+            cancelPendingAutoCue()
+            return
+        }
+
+        applyRecommendation()
+    }
+
+    private func isCurrentAutoCue(_ recommendation: DirectorRecommendation) -> Bool {
+        guard let scene = scenes.first(where: { $0.kind == recommendation.target }) else { return false }
+
+        return directorMode == .auto
+            && selectedSceneKind != recommendation.target
+            && canSelectScene(scene)
+            && self.recommendation?.hasSameCue(as: recommendation) == true
+            && pendingAutoRecommendation?.hasSameCue(as: recommendation) == true
+    }
+
+    private func cancelPendingAutoCue() {
+        autoCueTask?.cancel()
+        autoCueTask = nil
+        pendingAutoRecommendation = nil
+        autoCueRemainingSeconds = nil
+    }
+
+    private func cancelSetupGenerationIfNeeded(reason: String) {
+        guard isGeneratingSetupPlan else { return }
+
+        setupGenerationTask?.cancel()
+        setupGenerationTask = nil
+        setupGenerationID = nil
+        isGeneratingSetupPlan = false
+        setupSummary = reason
+        addWarningEventIfNeeded(title: "Setup paused", detail: reason)
+    }
+
+    private func isCurrentSetupGeneration(_ id: UUID) -> Bool {
+        setupGenerationID == id && isGeneratingSetupPlan
+    }
+
+    private func isCurrentStreamStart(_ id: UUID) -> Bool {
+        streamStartID == id && isStreamConnecting
+    }
+
+    private func isCurrentRecordingStart(_ id: UUID) -> Bool {
+        recordingStartID == id && recordingState == .starting
+    }
+
+    private var setupGenerationBlockedReason: String? {
+        if isStreamConnecting {
+            return "Finish connecting before generating setup rules."
+        }
+
+        if streamState.isLive {
+            return streamTransport == .preview
+                ? "Stop preview before generating local setup rules."
+                : "Stop streaming before generating local setup rules."
+        }
+
+        if isRecordingStarting {
+            return "Finish recording startup before generating setup rules."
+        }
+
+        if isRecordingStopping {
+            return "Finish recording stop before generating setup rules."
+        }
+
+        if recordingState == .recording {
+            return "Stop recording before generating local setup rules."
+        }
+
+        if SetupPlanPromptBuilder.boundedStreamDescription(setupPrompt).isEmpty {
+            return "Describe the stream before generating setup rules."
+        }
+
+        return nil
+    }
+
+    private var streamStartAttemptSuffix: String {
+        guard streamStartMaxAttempts > 1 else { return "" }
+        return " (attempt \(streamStartAttempt)/\(streamStartMaxAttempts))"
+    }
+
+    private func startStreamWithRetry(
+        destination: StreamDestination,
+        policy: StreamStartRetryPolicy,
+        startID: UUID
+    ) async throws {
+        var attempt = 1
+        var lastError: (any Error)?
+
+        while attempt <= policy.maxAttempts {
+            try Task.checkCancellation()
+            streamStartAttempt = attempt
+
+            do {
+                try await mediaPipeline.startStream(destination: destination)
+                return
+            } catch {
+                lastError = error
+                if error is CancellationError {
+                    throw error
+                }
+                guard isCurrentStreamStart(startID),
+                      let delay = policy.delayBeforeRetry(afterFailedAttempt: attempt)
+                else {
+                    throw error
+                }
+
+                addEvent(kind: .warning, title: "Retrying \(streamTransport.title)", detail: error.localizedDescription)
+                try await Task.sleep(for: delay)
+                attempt += 1
+            }
+        }
+
+        throw lastError ?? MediaPipelineError.unavailable("Stream start failed.")
+    }
+
+    private func refreshStreamHealth() {
+        if var pipelineHealth = mediaPipeline.currentHealth {
+            pipelineHealth.audioLevel = latestSignals.speechLevel
+            if pipelineHealth.captureFPS == 0 {
+                pipelineHealth.captureFPS = effectivePerformanceMode.mediaConfiguration.framesPerSecond
+            }
+            health = pipelineHealth
+            applyCaptureHealthPressure()
+            return
+        }
+
+        health.audioLevel = latestSignals.speechLevel
+        health.bitrateKbps = streamState.isLive
+            ? (effectivePerformanceMode.mediaConfiguration.videoBitrate / 1_000) + Int(latestSignals.screenMotion * 350)
+            : 0
+        health.captureFPS = effectivePerformanceMode.mediaConfiguration.framesPerSecond
+        health.droppedFrames = latestSignals.isScreenFrozen ? health.droppedFrames + 12 : max(health.droppedFrames - 1, 0)
+        applyCaptureHealthPressure()
+    }
+
+    private func applyCaptureHealthPressure() {
+        guard hasActiveMediaCapture else {
+            lastObservedDroppedFrames = health.droppedFrames
+            return
+        }
+
+        let droppedFramesSinceLastSample = max(0, health.droppedFrames - lastObservedDroppedFrames)
+        lastObservedDroppedFrames = health.droppedFrames
+
+        let targetFPS = captureHealthTargetFPS
+        let droppedFrameLimit = max(3, targetFPS / 10)
+        let lowFPSLimit = max(10, Int((Double(targetFPS) * 0.67).rounded(.down)))
+        let recoveredFPSLimit = max(10, Int((Double(targetFPS) * 0.8).rounded(.down)))
+
+        let droppedFramePressure = droppedFramesSinceLastSample >= droppedFrameLimit
+        let lowFPSPressure = health.captureFPS > 0 && health.captureFPS < lowFPSLimit
+        let recoveredSample = droppedFramesSinceLastSample == 0
+            && (health.captureFPS == 0 || health.captureFPS >= recoveredFPSLimit)
+
+        let nextCaptureUnderPressure: Bool
+        if isCaptureUnderPressure {
+            if recoveredSample {
+                captureHealthRecoverySampleCount += 1
+            } else {
+                captureHealthRecoverySampleCount = 0
+            }
+            nextCaptureUnderPressure = captureHealthRecoverySampleCount < Self.requiredCaptureHealthRecoverySamples
+        } else {
+            captureHealthRecoverySampleCount = 0
+            nextCaptureUnderPressure = droppedFramePressure || lowFPSPressure
+        }
+
+        if nextCaptureUnderPressure != isCaptureUnderPressure {
+            isCaptureUnderPressure = nextCaptureUnderPressure
+            let previousMode = effectivePerformanceMode
+            updateEffectivePerformanceMode()
+            if preferences.performanceMode == .adaptive, previousMode != effectivePerformanceMode {
+                applyPerformanceConfiguration()
+                addEvent(
+                    kind: .warning,
+                    title: "Adaptive performance",
+                    detail: "\(effectivePerformanceMode.title) profile active."
+                )
+            }
+        }
+
+        if nextCaptureUnderPressure {
+            let reason: String
+            if droppedFramePressure {
+                reason = "Dropped frames detected; reducing capture cost."
+            } else if lowFPSPressure {
+                reason = "Capture FPS below target; reducing capture cost."
+            } else {
+                reason = activeHealthDegradationReason ?? "Capture health is stabilizing; keeping capture cost reduced."
+            }
+            setHealthDegradation(reason)
+        } else {
+            clearHealthDegradationIfNeeded()
+        }
+    }
+
+    private var captureHealthTargetFPS: Int {
+        if preferences.performanceMode == .adaptive {
+            return StudioPerformanceMode.balanced.mediaConfiguration.framesPerSecond
+        }
+
+        return effectivePerformanceMode.mediaConfiguration.framesPerSecond
+    }
+
+    private func setHealthDegradation(_ reason: String) {
+        if activeHealthDegradationReason == reason,
+           case let .degraded(currentReason) = streamState,
+           currentReason == reason {
+            return
+        }
+        if activeHealthDegradationReason == reason, !streamState.isLive {
+            return
+        }
+
+        activeHealthDegradationReason = reason
+        if streamState.isLive {
+            streamState = .degraded(reason)
+        }
+        addEvent(kind: .warning, title: streamState.isLive ? "Stream health" : "Capture health", detail: reason)
+    }
+
+    private func clearHealthDegradationIfNeeded() {
+        guard let activeHealthDegradationReason else { return }
+
+        self.activeHealthDegradationReason = nil
+        if case let .degraded(reason) = streamState,
+           reason == activeHealthDegradationReason {
+            streamState = .live
+            addEvent(kind: .stream, title: "Stream recovered", detail: "Capture health returned to target.")
+        } else if recordingState == .recording {
+            addEvent(kind: .stream, title: "Capture recovered", detail: "Capture health returned to target.")
+        }
+    }
+
+    private func resetCaptureHealthPressure() {
+        isCaptureUnderPressure = false
+        activeHealthDegradationReason = nil
+        lastObservedDroppedFrames = 0
+        captureHealthRecoverySampleCount = 0
+        updateEffectivePerformanceMode()
+    }
+}
+
+private extension DirectorRecommendation {
+    func hasSameCue(as other: DirectorRecommendation?) -> Bool {
+        guard let other else { return false }
+
+        return target == other.target
+            && reason == other.reason
+            && urgency == other.urgency
+            && delaySeconds == other.delaySeconds
+    }
+}

@@ -106,4 +106,8 @@ Before promoting a release:
 - [MVP scope](docs/mvp-scope.md)
 - [Architecture](docs/architecture.md)
 - [Technical risks](docs/technical-risks.md)
+- [OBS core feature map](docs/obs-core-feature-map.md)
+- [QA checklist](docs/qa-checklist.md)
+- [Benchmark plan](docs/benchmark-plan.md)
+- [Core app audit - 2026-05-31](docs/audits/core-app-audit-2026-05-31.md)
 - [Release process](docs/releasing.md)

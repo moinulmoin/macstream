@@ -3,96 +3,14 @@ import OpenCueCore
 
 struct StudioControlPanelView: View {
     @Bindable var store: StudioStore
-    var onCollapse: (() -> Void)? = nil
     @AppStorage("performanceMode") private var performanceModeRaw = StudioPerformanceMode.balanced.rawValue
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack {
-                Label("Studio Control", systemImage: "dial.high")
-                    .font(.headline)
-                Spacer()
-                if let onCollapse {
-                    Button {
-                        onCollapse()
-                    } label: {
-                        Image(systemName: "sidebar.right")
-                    }
-                    .buttonStyle(.borderless)
-                    .help("Hide controls")
-                }
-                Text(liveStateTitle)
-                    .font(.caption.weight(.semibold))
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 4)
-                    .background(liveStateTint.opacity(0.14), in: Capsule())
-                    .foregroundStyle(liveStateTint)
+        VStack(alignment: .leading, spacing: 8) {
+            ViewThatFits(in: .horizontal) {
+                horizontalControls
+                wrappedControls
             }
-
-            Picker("Director Mode", selection: $store.directorMode) {
-                ForEach(DirectorMode.allCases) { mode in
-                    Text(mode.title).tag(mode)
-                }
-            }
-            .pickerStyle(.segmented)
-            .labelsHidden()
-            .help("Choose how OpenCue handles director cues")
-
-            VStack(alignment: .leading, spacing: 6) {
-                HStack {
-                    Label("Performance", systemImage: "speedometer")
-                        .font(.caption.weight(.semibold))
-                    Spacer()
-                    Text(performanceStatusTitle)
-                        .font(.caption)
-                        .foregroundStyle(performanceStatusTint)
-                }
-
-                Picker("Performance", selection: performanceModeBinding) {
-                    ForEach(StudioPerformanceMode.allCases) { mode in
-                        Text(mode.title).tag(mode.rawValue)
-                    }
-                }
-                .pickerStyle(.segmented)
-                .labelsHidden()
-                .help("Adjust capture cost for this session")
-            }
-
-            HStack(spacing: 8) {
-                Button {
-                    if store.canStopStream {
-                        store.stopStream()
-                    } else {
-                        store.startStream()
-                    }
-                } label: {
-                    Label(streamActionTitle, systemImage: streamActionSymbol)
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.82)
-                        .frame(maxWidth: .infinity)
-                }
-                .buttonStyle(.borderedProminent)
-                .tint(streamActionTint)
-                .disabled(!store.canStartStream && !store.canStopStream)
-                .help(streamActionHelp)
-
-                Button {
-                    if store.canStopRecording {
-                        store.stopRecording()
-                    } else {
-                        store.startRecording()
-                    }
-                } label: {
-                    Label(recordingActionTitle, systemImage: recordingActionSymbol)
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.82)
-                        .frame(maxWidth: .infinity)
-                }
-                .buttonStyle(.bordered)
-                .disabled(!store.canStartRecording && !store.canStopRecording)
-                .help(recordingActionHelp)
-            }
-            .controlSize(.large)
 
             if let primaryActionBlockerDetail {
                 Label(primaryActionBlockerDetail, systemImage: "exclamationmark.triangle.fill")
@@ -102,62 +20,170 @@ struct StudioControlPanelView: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
-        .padding(14)
+        .padding(10)
+        .frame(maxWidth: .infinity, alignment: .leading)
         .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 8))
     }
 
-    private var liveStateTitle: String {
-        if store.isLive { return "Live" }
-        if store.isStreamConnecting { return "Starting" }
-        if isStreamFailed { return "Failed" }
-        if store.recordingState == .recording { return "Recording" }
-        if store.isRecordingStarting { return "Recording" }
-        if store.isRecordingStopping { return "Stopping" }
-        if store.shouldShowSetupChecklist { return "Setup" }
-        return "Ready"
+    private var horizontalControls: some View {
+        HStack(spacing: 10) {
+            sceneControls
+                .frame(width: 228)
+
+            directorControls
+                .frame(width: 140)
+
+            outputControls
+                .frame(width: 220)
+
+            Spacer(minLength: 0)
+
+            performanceControls
+                .frame(width: 104)
+        }
     }
 
-    private var liveStateTint: Color {
-        if store.isLive { return .red }
-        if store.isStreamConnecting { return .orange }
-        if isStreamFailed { return .red }
-        if store.recordingState == .recording { return .red }
-        if store.isRecordingStarting || store.isRecordingStopping { return .orange }
-        if store.shouldShowSetupChecklist { return .orange }
-        return .green
+    private var wrappedControls: some View {
+        VStack(spacing: 8) {
+            HStack(spacing: 10) {
+                sceneControls
+                directorControls
+            }
+
+            HStack(spacing: 10) {
+                outputControls
+                performanceControls
+            }
+        }
     }
 
-    private var isStreamFailed: Bool {
-        if case .failed = store.streamState { return true }
-        return false
+    private var sceneControls: some View {
+        Picker("Scene", selection: sceneSelectionBinding) {
+            ForEach(store.scenes) { scene in
+                Label(sceneDeckTitle(for: scene), systemImage: scene.kind.symbolName)
+                    .tag(scene.id)
+                    .disabled(!store.canSelectScene(scene))
+                    .help(store.sceneSelectionBlockedReason(for: scene) ?? scene.subtitle)
+                    .accessibilityLabel(Text(scene.title))
+            }
+        }
+        .pickerStyle(.segmented)
+        .labelsHidden()
+        .controlSize(.small)
+        .help(store.selectedScene.subtitle)
     }
 
-    private var performanceStatusTitle: String {
+    private var directorControls: some View {
+        Picker("Director Mode", selection: $store.directorMode) {
+            ForEach(DirectorMode.allCases) { mode in
+                Text(mode.title).tag(mode)
+            }
+        }
+        .pickerStyle(.segmented)
+        .labelsHidden()
+        .controlSize(.small)
+        .help("Choose how OpenCue handles director cues")
+    }
+
+    private var outputControls: some View {
+        HStack(spacing: 8) {
+            Button {
+                if store.canStopStream {
+                    store.stopStream()
+                } else {
+                    store.startStream()
+                }
+            } label: {
+                Label(streamActionTitle, systemImage: streamActionSymbol)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.76)
+                    .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(.borderedProminent)
+            .tint(streamActionTint)
+            .disabled(!store.canStartStream && !store.canStopStream)
+            .help(streamActionHelp)
+
+            Button {
+                if store.canStopRecording {
+                    store.stopRecording()
+                } else {
+                    store.startRecording()
+                }
+            } label: {
+                Label(recordingActionTitle, systemImage: recordingActionSymbol)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.76)
+                    .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(.bordered)
+            .disabled(!store.canStartRecording && !store.canStopRecording)
+            .help(recordingActionHelp)
+        }
+        .controlSize(.small)
+    }
+
+    private var performanceControls: some View {
+        Menu {
+            Picker("Performance", selection: performanceModeBinding) {
+                ForEach(StudioPerformanceMode.allCases) { mode in
+                    Text(mode.title).tag(mode.rawValue)
+                }
+            }
+        } label: {
+            Label(performanceMenuTitle, systemImage: "speedometer")
+                .lineLimit(1)
+                .minimumScaleFactor(0.76)
+        }
+        .menuStyle(.button)
+        .buttonStyle(.bordered)
+        .controlSize(.small)
+        .help("Adjust capture cost for this session")
+    }
+
+    private var sceneSelectionBinding: Binding<StudioScene.ID> {
+        Binding(
+            get: { store.selectedSceneID },
+            set: { newSceneID in
+                guard let scene = store.scenes.first(where: { $0.id == newSceneID }) else { return }
+                store.selectScene(scene)
+            }
+        )
+    }
+
+    private func sceneDeckTitle(for scene: StudioScene) -> String {
+        switch scene.kind {
+        case .face: "Face"
+        case .screenAndFace: "S+F"
+        case .screenOnly: "Screen"
+        case .brb: "BRB"
+        }
+    }
+
+    private var performanceMenuTitle: String {
         if store.preferences.performanceMode == .adaptive {
-            return "Using \(store.effectivePerformanceMode.title)"
+            return store.effectivePerformanceMode.title
         }
 
         return store.preferences.performanceMode.title
     }
 
-    private var performanceStatusTint: Color {
-        if store.effectivePerformanceMode == .efficiency { return .orange }
-        if store.preferences.performanceMode == .responsive { return .blue }
-        return .secondary
-    }
-
     private var performanceModeBinding: Binding<String> {
         Binding(
-            get: { performanceModeRaw },
+            get: { store.preferences.performanceMode.rawValue },
             set: { newValue in
+                guard let newMode = StudioPerformanceMode(rawValue: newValue) else { return }
                 performanceModeRaw = newValue
-                guard let mode = StudioPerformanceMode(rawValue: newValue) else { return }
-
                 var preferences = store.preferences
-                preferences.performanceMode = mode
+                preferences.performanceMode = newMode
                 store.updatePreferences(preferences)
             }
         )
+    }
+
+    private var isStreamFailed: Bool {
+        if case .failed = store.streamState { return true }
+        return false
     }
 
     private var streamActionTitle: String {
@@ -186,6 +212,7 @@ struct StudioControlPanelView: View {
     private var streamActionTint: Color {
         if store.isLive { return .red }
         if store.isStreamConnecting { return .orange }
+        if isStreamFailed { return .red }
         return .accentColor
     }
 
@@ -202,9 +229,9 @@ struct StudioControlPanelView: View {
     }
 
     private var recordingActionTitle: String {
-        if store.isRecordingStopping { return "Stopping Recording" }
-        if store.recordingState == .recording { return "Stop Recording" }
-        if store.isRecordingStarting { return "Cancel Recording" }
+        if store.isRecordingStopping { return "Stopping" }
+        if store.recordingState == .recording { return "Stop Rec" }
+        if store.isRecordingStarting { return "Cancel Rec" }
         return "Record"
     }
 

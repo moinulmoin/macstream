@@ -13,13 +13,23 @@ struct StudioView: View {
             Divider()
 
             if isInspectorCollapsed {
-                InspectorRailView(store: store, isInspectorCollapsed: $isInspectorCollapsed)
-                    .frame(width: 54)
+                InspectorRailView(store: store)
+                    .frame(width: 38)
                     .transition(.move(edge: .trailing).combined(with: .opacity))
             } else {
-                InspectorView(store: store, isInspectorCollapsed: $isInspectorCollapsed)
+                InspectorView(store: store)
                     .frame(width: 340)
                     .transition(.move(edge: .trailing).combined(with: .opacity))
+            }
+        }
+        .toolbar {
+            ToolbarItem(placement: .primaryAction) {
+                Button {
+                    isInspectorCollapsed.toggle()
+                } label: {
+                    Image(systemName: "sidebar.right")
+                }
+                .help(isInspectorCollapsed ? "Show sidebar" : "Hide sidebar")
             }
         }
         .animation(.snappy(duration: 0.18), value: isInspectorCollapsed)
@@ -43,27 +53,21 @@ private struct PreviewColumnView: View {
                 isScreenCaptureReady: store.captureReport.isScreenCapturePermissionGranted,
                 screenCaptureTarget: store.selectedScreenCaptureTarget
             )
-            .frame(maxWidth: .infinity)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
             .aspectRatio(16 / 9, contentMode: .fit)
 
-            if !store.shouldShowSetupChecklist {
-                DirectorPanelView(store: store)
-            }
+            StudioControlPanelView(store: store)
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 }
 
 private struct InspectorView: View {
     @Bindable var store: StudioStore
-    @Binding var isInspectorCollapsed: Bool
 
     var body: some View {
         VStack(spacing: 14) {
-            StudioNavigationPanelView(store: store)
-
-            StudioControlPanelView(store: store) {
-                isInspectorCollapsed = true
-            }
+            InspectorHeaderView(isSetupFocused: store.shouldShowSetupChecklist)
 
             ScrollViewReader { scrollProxy in
                 ScrollView {
@@ -108,6 +112,7 @@ private struct InspectorView: View {
 
     @ViewBuilder
     private var operatingPanels: some View {
+        DirectorPanelView(store: store)
         StreamHealthView(store: store)
         DestinationView(store: store)
         CapturePreflightView(store: store)
@@ -129,25 +134,37 @@ private enum InspectorPanelID: Hashable {
     case detailTop
 }
 
+private struct InspectorHeaderView: View {
+    var isSetupFocused: Bool
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Label(isSetupFocused ? "Setup" : "Details", systemImage: "sidebar.right")
+                .font(.headline)
+
+            Spacer()
+
+            Text(isSetupFocused ? "Setup" : "Ready")
+                .font(.caption.weight(.semibold))
+                .padding(.horizontal, 8)
+                .padding(.vertical, 4)
+                .background(statusTint.opacity(0.14), in: Capsule())
+                .foregroundStyle(statusTint)
+        }
+        .padding(14)
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 8))
+    }
+
+    private var statusTint: Color {
+        isSetupFocused ? .orange : .green
+    }
+}
+
 private struct InspectorRailView: View {
     @Bindable var store: StudioStore
-    @Binding var isInspectorCollapsed: Bool
 
     var body: some View {
         VStack(spacing: 14) {
-            Button {
-                isInspectorCollapsed = false
-            } label: {
-                Image(systemName: "sidebar.right")
-                    .font(.system(size: 16, weight: .semibold))
-                    .frame(width: 28, height: 28)
-            }
-            .buttonStyle(.borderless)
-            .help("Show controls")
-
-            Divider()
-                .frame(width: 28)
-
             Image(systemName: statusSymbol)
                 .font(.system(size: 15, weight: .semibold))
                 .foregroundStyle(statusTint)

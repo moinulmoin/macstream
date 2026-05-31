@@ -22,7 +22,6 @@ struct StudioView: View {
                     .transition(.move(edge: .trailing).combined(with: .opacity))
             }
         }
-        .navigationTitle(store.selectedScene.title)
         .animation(.snappy(duration: 0.18), value: isInspectorCollapsed)
     }
 }
@@ -59,29 +58,36 @@ private struct InspectorView: View {
     @Binding var isInspectorCollapsed: Bool
 
     var body: some View {
-        ScrollViewReader { scrollProxy in
-            ScrollView {
-                LazyVStack(alignment: .leading, spacing: 18) {
-                    StudioControlPanelView(store: store) {
-                        isInspectorCollapsed = true
-                    }
-                    .id(InspectorPanelID.studioControl)
+        VStack(spacing: 14) {
+            StudioNavigationPanelView(store: store)
 
-                    if store.shouldShowSetupChecklist {
-                        setupDetailPanels
-                    } else {
-                        operatingPanels
-                    }
-                }
-                .padding(18)
+            StudioControlPanelView(store: store) {
+                isInspectorCollapsed = true
             }
-            .onChange(of: store.shouldShowSetupChecklist) { _, shouldShowSetupChecklist in
-                guard !shouldShowSetupChecklist else { return }
-                withAnimation(.snappy(duration: 0.18)) {
-                    scrollProxy.scrollTo(InspectorPanelID.studioControl, anchor: .top)
+
+            ScrollViewReader { scrollProxy in
+                ScrollView {
+                    LazyVStack(alignment: .leading, spacing: 18) {
+                        Color.clear
+                            .frame(height: 0)
+                            .id(InspectorPanelID.detailTop)
+
+                        if store.shouldShowSetupChecklist {
+                            setupDetailPanels
+                        } else {
+                            operatingPanels
+                        }
+                    }
+                    .padding(.bottom, 18)
+                }
+                .onChange(of: store.shouldShowSetupChecklist) { _, _ in
+                    withAnimation(.snappy(duration: 0.18)) {
+                        scrollProxy.scrollTo(InspectorPanelID.detailTop, anchor: .top)
+                    }
                 }
             }
         }
+        .padding(18)
     }
 
     @ViewBuilder
@@ -120,7 +126,7 @@ private struct InspectorView: View {
 }
 
 private enum InspectorPanelID: Hashable {
-    case studioControl
+    case detailTop
 }
 
 private struct InspectorRailView: View {

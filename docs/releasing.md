@@ -156,10 +156,11 @@ OPEN_CUE_BUILD_NUMBER=1 \
 7. Start and stop Preview mode.
 8. In the default build, verify RTMP wording says endpoint check, not Go Live.
 9. Start and stop local Screen recording, then verify the `.mov`.
-10. Confirm real Screen + Face recording/publishing is blocked until compositor support exists.
-11. Verify adaptive mode lowers capture cost under capture pressure.
-12. Verify RTMP destination persistence and redaction in events/exports.
-13. Export clip markers and session report twice in quick succession; confirm filenames do not collide.
+10. Start and stop local Screen + Face recording, then verify the camera PiP is baked into the `.mov`.
+11. Confirm full RTMP publishing still blocks Screen + Face until publish composition exists.
+12. Verify adaptive mode lowers capture cost under capture pressure.
+13. Verify RTMP destination persistence and redaction in events/exports.
+14. Export clip markers and session report twice in quick succession; confirm filenames do not collide.
 
 ## Rollback
 

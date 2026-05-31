@@ -214,13 +214,13 @@ public final class StudioStore {
 
         if !destination.isPreviewSession,
            !mediaPipeline.supportedSceneKindsForStream.contains(selectedSceneKind) {
-            return Self.screenOnlyRealCaptureRequiredReason
+            return Self.screenOnlyStreamRequiredReason
         }
 
         if mediaPipeline.requiresScreenCaptureVideoForStream,
            !destination.isPreviewSession,
            !selectedSceneUsesScreenCaptureVideo {
-            return Self.screenOnlyRealCaptureRequiredReason
+            return Self.screenOnlyStreamRequiredReason
         }
 
         return captureStartBlockedReason
@@ -234,12 +234,12 @@ public final class StudioStore {
         }
 
         if !mediaPipeline.supportedSceneKindsForRecording.contains(selectedSceneKind) {
-            return Self.screenOnlyRealCaptureRequiredReason
+            return Self.recordableSceneRequiredReason
         }
 
         if mediaPipeline.requiresScreenCaptureVideoForRecording,
            !selectedSceneUsesScreenCaptureVideo {
-            return Self.screenOnlyRealCaptureRequiredReason
+            return Self.recordableSceneRequiredReason
         }
 
         return captureStartBlockedReason
@@ -544,6 +544,11 @@ public final class StudioStore {
             return "Stop recording before choosing \(scene.title)."
         }
 
+        if (recordingState == .recording || recordingState == .starting || isRecordingStopping),
+           scene.kind != selectedSceneKind {
+            return "Stop recording before switching recorded scenes."
+        }
+
         if mediaPipeline.requiresScreenCaptureVideoForStream,
            streamTransport != .preview,
            (streamState.isLive || isStreamConnecting || isStreamStopping),
@@ -627,6 +632,7 @@ public final class StudioStore {
         selectedSceneID = scene.id
         director.markSwitchAccepted()
         recommendation = nil
+        applyPerformanceConfiguration()
         addEvent(kind: .director, title: "Scene changed", detail: scene.title)
     }
 
@@ -1435,7 +1441,9 @@ public final class StudioStore {
         mediaConfiguration.microphoneLevel = microphoneLevel
         mediaConfiguration.capturesSystemAudio = isSourceEnabled(.systemAudio) && systemAudioLevel > 0
         mediaConfiguration.capturesMicrophone = isSourceEnabled(.microphone) && microphoneLevel > 0
+        mediaConfiguration.sceneKind = selectedSceneKind
         mediaConfiguration.screenCaptureTarget = selectedScreenCaptureTarget
+        mediaConfiguration.cameraEnhancements = preferences.cameraEnhancements
         if mediaConfiguration != lastAppliedMediaConfiguration {
             mediaPipeline.update(configuration: mediaConfiguration)
             lastAppliedMediaConfiguration = mediaConfiguration
@@ -1654,8 +1662,12 @@ public final class StudioStore {
         return titles.dropLast().joined(separator: ", ") + ", and " + titles.last!
     }
 
-    private static var screenOnlyRealCaptureRequiredReason: String {
-        "Choose Screen before starting real capture. Screen + Face output is not available yet."
+    private static var screenOnlyStreamRequiredReason: String {
+        "Choose Screen before starting real capture. Screen + Face streaming is not available yet."
+    }
+
+    private static var recordableSceneRequiredReason: String {
+        "Choose Screen or Screen + Face before starting a local recording."
     }
 
     private static func permissionListTitle(for kinds: [CaptureDeviceKind]) -> String {

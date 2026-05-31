@@ -1,6 +1,7 @@
 import Foundation
 @preconcurrency import AVFoundation
 import CoreGraphics
+import CoreImage
 @preconcurrency import CoreMedia
 import Network
 @preconcurrency import ScreenCaptureKit
@@ -241,7 +242,7 @@ public struct PreviewMediaPipeline: MediaPipeline {
     }
 }
 
-public final class SystemMediaPipeline: NSObject, MediaPipeline, SCStreamOutput, AVCaptureAudioDataOutputSampleBufferDelegate, @unchecked Sendable {
+public final class SystemMediaPipeline: NSObject, MediaPipeline, SCStreamOutput, AVCaptureAudioDataOutputSampleBufferDelegate, AVCaptureVideoDataOutputSampleBufferDelegate, @unchecked Sendable {
     private let queue = DispatchQueue(label: "com.opencue.media.recording", qos: .userInitiated)
     private let rtmpPublisherFactory: @Sendable (RTMPPublishTarget) -> any RTMPPublisher
     private var mediaConfiguration = MediaPipelineConfiguration()
@@ -250,14 +251,19 @@ public final class SystemMediaPipeline: NSObject, MediaPipeline, SCStreamOutput,
     private var recordingCaptureGeometry: MediaCaptureGeometry?
     private var publishingCaptureGeometry: MediaCaptureGeometry?
     private var microphoneSession: AVCaptureSession?
+    private var recordingCameraSession: AVCaptureSession?
     private var publishingMicrophoneSession: AVCaptureSession?
     private var microphoneOutput: AVCaptureAudioDataOutput?
+    private var recordingCameraOutput: AVCaptureVideoDataOutput?
     private var publishingMicrophoneOutput: AVCaptureAudioDataOutput?
     private var writer: AVAssetWriter?
     private var videoInput: AVAssetWriterInput?
+    private var videoPixelBufferAdaptor: AVAssetWriterInputPixelBufferAdaptor?
     private var audioInput: AVAssetWriterInput?
     private var microphoneInput: AVAssetWriterInput?
     private var rtmpPublisher: RTMPPublisher?
+    private var videoCompositor: RecordingVideoCompositor?
+    private var latestCameraPixelBuffer: CVPixelBuffer?
     private var didStartSession = false
     private var currentURL: URL?
     private var publishingOwnsMicrophoneSession = false
@@ -307,7 +313,7 @@ public final class SystemMediaPipeline: NSObject, MediaPipeline, SCStreamOutput,
     }
 
     public var supportedSceneKindsForRecording: Set<SceneKind> {
-        [.screenOnly]
+        [.screenOnly, .screenAndFace]
     }
 
     static var capturesMediaForStreamTransport: Bool {
@@ -432,13 +438,15 @@ public final class SystemMediaPipeline: NSObject, MediaPipeline, SCStreamOutput,
         try Task.checkCancellation()
 
         let outputURL = try makeRecordingURL()
+        let outputWidth = selection.geometry.width(for: mediaConfiguration.maxVideoWidth)
+        let outputHeight = selection.geometry.height(for: mediaConfiguration.maxVideoWidth)
         let writer = try AVAssetWriter(outputURL: outputURL, fileType: .mov)
         let videoInput = AVAssetWriterInput(
             mediaType: .video,
             outputSettings: [
                 AVVideoCodecKey: AVVideoCodecType.h264,
-                AVVideoWidthKey: selection.geometry.width(for: mediaConfiguration.maxVideoWidth),
-                AVVideoHeightKey: selection.geometry.height(for: mediaConfiguration.maxVideoWidth),
+                AVVideoWidthKey: outputWidth,
+                AVVideoHeightKey: outputHeight,
                 AVVideoCompressionPropertiesKey: [
                     AVVideoAverageBitRateKey: mediaConfiguration.videoBitrate,
                     AVVideoExpectedSourceFrameRateKey: mediaConfiguration.framesPerSecond,
@@ -452,6 +460,28 @@ public final class SystemMediaPipeline: NSObject, MediaPipeline, SCStreamOutput,
             throw MediaPipelineError.unavailable("Cannot add video input to local recorder.")
         }
         writer.add(videoInput)
+
+        let videoPixelBufferAdaptor: AVAssetWriterInputPixelBufferAdaptor?
+        let videoCompositor: RecordingVideoCompositor?
+        if mediaConfiguration.sceneKind == .screenAndFace {
+            videoPixelBufferAdaptor = AVAssetWriterInputPixelBufferAdaptor(
+                assetWriterInput: videoInput,
+                sourcePixelBufferAttributes: [
+                    kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA,
+                    kCVPixelBufferWidthKey as String: outputWidth,
+                    kCVPixelBufferHeightKey as String: outputHeight,
+                    kCVPixelBufferIOSurfacePropertiesKey as String: [:]
+                ]
+            )
+            videoCompositor = RecordingVideoCompositor(
+                outputWidth: outputWidth,
+                outputHeight: outputHeight,
+                cameraEnhancements: mediaConfiguration.cameraEnhancements
+            )
+        } else {
+            videoPixelBufferAdaptor = nil
+            videoCompositor = nil
+        }
 
         let audioInput: AVAssetWriterInput?
         if mediaConfiguration.capturesSystemAudio {
@@ -505,6 +535,14 @@ public final class SystemMediaPipeline: NSObject, MediaPipeline, SCStreamOutput,
             microphoneInput = nil
         }
 
+        let cameraCapture = mediaConfiguration.sceneKind == .screenAndFace
+            ? await makeCameraCaptureIfAvailable(configuration: mediaConfiguration)
+            : nil
+        if mediaConfiguration.sceneKind == .screenAndFace, cameraCapture == nil {
+            writer.cancelWriting()
+            throw MediaPipelineError.unavailable("Camera capture is required for Screen + Face recording.")
+        }
+
         do {
             try Task.checkCancellation()
         } catch {
@@ -537,17 +575,25 @@ public final class SystemMediaPipeline: NSObject, MediaPipeline, SCStreamOutput,
             self.recordingCaptureGeometry = selection.geometry
             self.writer = writer
             self.videoInput = videoInput
+            self.videoPixelBufferAdaptor = videoPixelBufferAdaptor
             self.audioInput = audioInput
             self.microphoneInput = microphoneInput
             self.microphoneSession = microphoneCapture?.session
             self.microphoneOutput = microphoneCapture?.output
+            self.recordingCameraSession = cameraCapture?.session
+            self.recordingCameraOutput = cameraCapture?.output
             self.recordingUsesPublishingMicrophoneSession = usesPublishingMicrophoneSession
+            self.videoCompositor = videoCompositor
+            self.latestCameraPixelBuffer = nil
             self.didStartSession = false
             self.currentURL = outputURL
             self.resetHealth(using: mediaConfiguration)
         }
 
         do {
+            if let cameraCapture {
+                startCameraSession(cameraCapture.session)
+            }
             try await stream.startCapture()
             try Task.checkCancellation()
             if let microphoneCapture {
@@ -564,6 +610,7 @@ public final class SystemMediaPipeline: NSObject, MediaPipeline, SCStreamOutput,
         let state = queue.sync {
             let stream = stream
             let microphoneSession = microphoneSession
+            let recordingCameraSession = recordingCameraSession
             let writer = writer
             let videoInput = videoInput
             let audioInput = audioInput
@@ -573,11 +620,16 @@ public final class SystemMediaPipeline: NSObject, MediaPipeline, SCStreamOutput,
             self.recordingCaptureGeometry = nil
             self.microphoneSession = nil
             self.microphoneOutput = nil
+            self.recordingCameraSession = nil
+            self.recordingCameraOutput = nil
             self.writer = nil
             self.videoInput = nil
+            self.videoPixelBufferAdaptor = nil
             self.audioInput = nil
             self.microphoneInput = nil
             recordingUsesPublishingMicrophoneSession = false
+            videoCompositor = nil
+            latestCameraPixelBuffer = nil
             if publishingUsesRecordingMicrophone {
                 publishingOwnsMicrophoneSession = true
             }
@@ -589,6 +641,7 @@ public final class SystemMediaPipeline: NSObject, MediaPipeline, SCStreamOutput,
             return RecordingWriterState(
                 stream: stream,
                 microphoneSession: microphoneSession,
+                recordingCameraSession: recordingCameraSession,
                 writer: writer,
                 videoInput: videoInput,
                 audioInput: audioInput,
@@ -602,6 +655,9 @@ public final class SystemMediaPipeline: NSObject, MediaPipeline, SCStreamOutput,
         await withCheckedContinuation { continuation in
             if state.shouldStopMicrophoneSession, state.microphoneSession?.isRunning == true {
                 state.microphoneSession?.stopRunning()
+            }
+            if state.recordingCameraSession?.isRunning == true {
+                state.recordingCameraSession?.stopRunning()
             }
             state.videoInput?.markAsFinished()
             state.audioInput?.markAsFinished()
@@ -687,6 +743,57 @@ public final class SystemMediaPipeline: NSObject, MediaPipeline, SCStreamOutput,
         return session.inputs.isEmpty || session.outputs.isEmpty
             ? nil
             : MicrophoneCapture(session: session, output: output)
+    }
+
+    private func makeCameraCaptureIfAvailable(configuration: MediaPipelineConfiguration) async -> CameraCapture? {
+        let status = AVCaptureDevice.authorizationStatus(for: .video)
+        let isAllowed: Bool
+
+        switch status {
+        case .authorized:
+            isAllowed = true
+        case .notDetermined:
+            isAllowed = await AVCaptureDevice.requestAccess(for: .video)
+        case .denied, .restricted:
+            isAllowed = false
+        @unknown default:
+            isAllowed = false
+        }
+
+        guard isAllowed,
+              let device = AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: .unspecified)
+                ?? AVCaptureDevice.default(for: .video),
+              let input = try? AVCaptureDeviceInput(device: device)
+        else {
+            return nil
+        }
+
+        let session = AVCaptureSession()
+        let output = AVCaptureVideoDataOutput()
+        output.videoSettings = [
+            kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA
+        ]
+        output.alwaysDiscardsLateVideoFrames = true
+        output.setSampleBufferDelegate(self, queue: queue)
+
+        session.beginConfiguration()
+        let preset = Self.cameraSessionPreset(for: configuration)
+        if session.canSetSessionPreset(preset) {
+            session.sessionPreset = preset
+        }
+        if session.canAddInput(input) {
+            session.addInput(input)
+        }
+        if session.canAddOutput(output) {
+            session.addOutput(output)
+        }
+        session.commitConfiguration()
+
+        applyCameraTuning(to: device, configuration: configuration)
+
+        return session.inputs.isEmpty || session.outputs.isEmpty
+            ? nil
+            : CameraCapture(session: session, output: output)
     }
 
     private func startPublishingCapture() async throws {
@@ -781,6 +888,12 @@ public final class SystemMediaPipeline: NSObject, MediaPipeline, SCStreamOutput,
         }
     }
 
+    private func startCameraSession(_ session: AVCaptureSession?) {
+        queue.async {
+            self.startCameraSessionIfNeeded(session)
+        }
+    }
+
     private func applyActiveMicrophoneCaptureState() {
         let shouldRun = Self.shouldProcessMicrophoneAudioSample(configuration: mediaConfiguration)
         for session in activeMicrophoneSessions() {
@@ -845,9 +958,24 @@ public final class SystemMediaPipeline: NSObject, MediaPipeline, SCStreamOutput,
         publishingMicrophoneOutput === output
     }
 
+    private func isRecordingCameraOutput(_ output: AVCaptureOutput) -> Bool {
+        recordingCameraOutput === output
+    }
+
     private func startMicrophoneSessionIfNeeded(_ session: AVCaptureSession?) {
         guard let session,
               Self.shouldProcessMicrophoneAudioSample(configuration: mediaConfiguration),
+              !session.isRunning
+        else {
+            return
+        }
+
+        session.startRunning()
+    }
+
+    private func startCameraSessionIfNeeded(_ session: AVCaptureSession?) {
+        guard let session,
+              mediaConfiguration.sceneKind == .screenAndFace,
               !session.isRunning
         else {
             return
@@ -920,6 +1048,13 @@ public final class SystemMediaPipeline: NSObject, MediaPipeline, SCStreamOutput,
                 recordDroppedFrameIfNeeded(outputType)
                 return
             }
+            if mediaConfiguration.sceneKind == .screenAndFace {
+                guard appendCompositedVideoSample(sampleBuffer, presentationTime: presentationTime) else {
+                    recordDroppedFrameIfNeeded(outputType)
+                    return
+                }
+                return
+            }
             videoInput.append(sampleBuffer)
         case .audio:
             guard Self.shouldProcessSystemAudioSample(configuration: mediaConfiguration) else {
@@ -940,6 +1075,40 @@ public final class SystemMediaPipeline: NSObject, MediaPipeline, SCStreamOutput,
 
     private func publish(_ sampleBuffer: CMSampleBuffer) -> Bool {
         rtmpPublisher?.append(sampleBuffer) ?? true
+    }
+
+    private func appendCompositedVideoSample(
+        _ sampleBuffer: CMSampleBuffer,
+        presentationTime: CMTime
+    ) -> Bool {
+        guard let screenPixelBuffer = sampleBuffer.imageBuffer,
+              let videoInput,
+              videoInput.isReadyForMoreMediaData,
+              let videoPixelBufferAdaptor,
+              let pixelBufferPool = videoPixelBufferAdaptor.pixelBufferPool,
+              let videoCompositor
+        else {
+            return false
+        }
+
+        var outputPixelBuffer: CVPixelBuffer?
+        let creationStatus = CVPixelBufferPoolCreatePixelBuffer(
+            nil,
+            pixelBufferPool,
+            &outputPixelBuffer
+        )
+        guard creationStatus == kCVReturnSuccess,
+              let outputPixelBuffer
+        else {
+            return false
+        }
+
+        videoCompositor.render(
+            screenPixelBuffer: screenPixelBuffer,
+            cameraPixelBuffer: latestCameraPixelBuffer,
+            to: outputPixelBuffer
+        )
+        return videoPixelBufferAdaptor.append(outputPixelBuffer, withPresentationTime: presentationTime)
     }
 
     private func resetHealth(using configuration: MediaPipelineConfiguration) {
@@ -1059,6 +1228,35 @@ public final class SystemMediaPipeline: NSObject, MediaPipeline, SCStreamOutput,
         configuration.channelCount = 2
     }
 
+    private static func cameraSessionPreset(for configuration: MediaPipelineConfiguration) -> AVCaptureSession.Preset {
+        if configuration.framesPerSecond <= 24 || configuration.maxVideoWidth <= 1_280 {
+            return .medium
+        }
+
+        return .high
+    }
+
+    private func applyCameraTuning(to device: AVCaptureDevice, configuration: MediaPipelineConfiguration) {
+        guard configuration.cameraEnhancements.usesAutoLight else { return }
+
+        do {
+            try device.lockForConfiguration()
+            defer { device.unlockForConfiguration() }
+
+            if device.isFocusModeSupported(.continuousAutoFocus) {
+                device.focusMode = .continuousAutoFocus
+            }
+            if device.isExposureModeSupported(.continuousAutoExposure) {
+                device.exposureMode = .continuousAutoExposure
+            }
+            if device.isWhiteBalanceModeSupported(.continuousAutoWhiteBalance) {
+                device.whiteBalanceMode = .continuousAutoWhiteBalance
+            }
+        } catch {
+            return
+        }
+    }
+
     private static var preferredStreamTransport: StreamTransportKind {
         #if OPEN_CUE_HAS_HAISHINKIT
         .rtmpPublish
@@ -1081,6 +1279,11 @@ public final class SystemMediaPipeline: NSObject, MediaPipeline, SCStreamOutput,
         from connection: AVCaptureConnection
     ) {
         guard sampleBuffer.isValid else { return }
+        if isRecordingCameraOutput(output) {
+            latestCameraPixelBuffer = sampleBuffer.imageBuffer
+            return
+        }
+
         guard Self.shouldProcessMicrophoneOutputSample(
             isActiveOutput: isActiveMicrophoneOutput(output),
             configuration: mediaConfiguration
@@ -1139,7 +1342,9 @@ public final class SystemMediaPipeline: NSObject, MediaPipeline, SCStreamOutput,
         previous.maxVideoWidth != next.maxVideoWidth
             || previous.framesPerSecond != next.framesPerSecond
             || previous.queueDepth != next.queueDepth
+            || previous.sceneKind != next.sceneKind
             || previous.capturesSystemAudio != next.capturesSystemAudio
+            || previous.cameraEnhancements != next.cameraEnhancements
             || previous.screenCaptureTarget != next.screenCaptureTarget
     }
 }
@@ -1154,6 +1359,7 @@ private struct PublishingCaptureState {
 private struct RecordingWriterState {
     var stream: SCStream?
     var microphoneSession: AVCaptureSession?
+    var recordingCameraSession: AVCaptureSession?
     var writer: AVAssetWriter?
     var videoInput: AVAssetWriterInput?
     var audioInput: AVAssetWriterInput?
@@ -1164,6 +1370,124 @@ private struct RecordingWriterState {
 private struct MicrophoneCapture {
     var session: AVCaptureSession
     var output: AVCaptureAudioDataOutput
+}
+
+private struct CameraCapture {
+    var session: AVCaptureSession
+    var output: AVCaptureVideoDataOutput
+}
+
+private final class RecordingVideoCompositor {
+    private let context = CIContext()
+    private let outputRect: CGRect
+    private let cameraEnhancements: CameraEnhancementSettings
+    private let colorSpace = CGColorSpaceCreateDeviceRGB()
+
+    init(outputWidth: Int, outputHeight: Int, cameraEnhancements: CameraEnhancementSettings) {
+        self.outputRect = CGRect(x: 0, y: 0, width: outputWidth, height: outputHeight)
+        self.cameraEnhancements = cameraEnhancements
+    }
+
+    func render(
+        screenPixelBuffer: CVPixelBuffer,
+        cameraPixelBuffer: CVPixelBuffer?,
+        to outputPixelBuffer: CVPixelBuffer
+    ) {
+        let background = CIImage(color: CIColor(red: 0, green: 0, blue: 0))
+            .cropped(to: outputRect)
+        let screen = aspectFill(
+            normalized(CIImage(cvPixelBuffer: screenPixelBuffer)),
+            in: outputRect
+        )
+        var composed = screen.composited(over: background)
+
+        let pictureInPictureRect = self.pictureInPictureRect()
+        if let cameraPixelBuffer {
+            let camera = aspectFill(
+                enhancedCameraImage(from: cameraPixelBuffer),
+                in: pictureInPictureRect
+            )
+            composed = camera.composited(over: composed)
+        } else {
+            let placeholder = CIImage(color: CIColor(red: 0.02, green: 0.02, blue: 0.02))
+                .cropped(to: pictureInPictureRect)
+            composed = placeholder.composited(over: composed)
+        }
+
+        context.render(
+            composed.cropped(to: outputRect),
+            to: outputPixelBuffer,
+            bounds: outputRect,
+            colorSpace: colorSpace
+        )
+    }
+
+    private func enhancedCameraImage(from pixelBuffer: CVPixelBuffer) -> CIImage {
+        var image = normalized(CIImage(cvPixelBuffer: pixelBuffer))
+
+        if cameraEnhancements.mirrorsPreview {
+            image = image.transformed(by: CGAffineTransform(scaleX: -1, y: 1))
+            image = normalized(image)
+        }
+
+        if cameraEnhancements.rotation != .degrees0 {
+            image = image.transformed(by: CGAffineTransform(rotationAngle: cameraEnhancements.rotation.radians))
+            image = normalized(image)
+        }
+
+        guard cameraEnhancements.usesAutoLight,
+              let filter = CIFilter(name: "CIColorControls")
+        else {
+            return image
+        }
+
+        filter.setValue(image, forKey: kCIInputImageKey)
+        filter.setValue(cameraEnhancements.autoLightAmount * 0.18, forKey: kCIInputBrightnessKey)
+        filter.setValue(1 + cameraEnhancements.autoLightAmount * 0.08, forKey: kCIInputContrastKey)
+        filter.setValue(1 + cameraEnhancements.autoLightAmount * 0.10, forKey: kCIInputSaturationKey)
+        return filter.outputImage.map(normalized) ?? image
+    }
+
+    private func aspectFill(_ image: CIImage, in targetRect: CGRect) -> CIImage {
+        guard !image.extent.isEmpty,
+              targetRect.width > 0,
+              targetRect.height > 0
+        else {
+            return CIImage(color: CIColor(red: 0, green: 0, blue: 0)).cropped(to: targetRect)
+        }
+
+        let scale = max(
+            targetRect.width / image.extent.width,
+            targetRect.height / image.extent.height
+        )
+        let scaled = image.transformed(by: CGAffineTransform(scaleX: scale, y: scale))
+        let translation = CGAffineTransform(
+            translationX: targetRect.midX - scaled.extent.midX,
+            y: targetRect.midY - scaled.extent.midY
+        )
+        return scaled
+            .transformed(by: translation)
+            .cropped(to: targetRect)
+    }
+
+    private func normalized(_ image: CIImage) -> CIImage {
+        image.transformed(by: CGAffineTransform(
+            translationX: -image.extent.minX,
+            y: -image.extent.minY
+        ))
+    }
+
+    private func pictureInPictureRect() -> CGRect {
+        let margin = max(18, outputRect.width * 0.018)
+        let width = min(outputRect.width * 0.28, 360)
+        let height = width * 9 / 16
+        return CGRect(
+            x: outputRect.maxX - width - margin,
+            y: margin,
+            width: width,
+            height: height
+        ).integral
+    }
 }
 
 private struct ActiveStreamConfigurationUpdate {

@@ -6,7 +6,7 @@ OpenCue is a native macOS streaming director for solo creators who stream screen
 
 This repository contains the `v0.1.0` MVP.
 
-The current real media capture path records and publishes raw screen video only. `Screen + Face` is available for local preview and director planning, but real recording/full RTMP publishing is blocked for that scene until camera compositing lands.
+The current real media capture path records raw `Screen` video and local composited `Screen + Face` video. Full RTMP publishing is still screen-only until the publish path uses the compositor.
 
 ## Features
 
@@ -15,7 +15,7 @@ The current real media capture path records and publishes raw screen video only.
 - Camera preview through AVFoundation.
 - Screen/window preview and recording through ScreenCaptureKit.
 - Capture preflight for camera, microphone, display/window, and permission state.
-- Local `.mov` screen recording with system audio and best-effort microphone audio.
+- Local `.mov` recording for `Screen` and composited `Screen + Face`, with system audio and best-effort microphone audio.
 - RTMP/RTMPS endpoint validation in the default dependency-light build.
 - Optional HaishinKit RTMP publish build path.
 - Deterministic director engine with `Suggest`, `Auto`, and `Paused` modes.
@@ -95,10 +95,11 @@ Before promoting a release:
 6. Start and stop a Preview session.
 7. In the default build, confirm RTMP mode says endpoint check, not Go Live.
 8. Start and stop local `Screen` recording and verify the `.mov` output.
-9. Confirm real `Screen + Face` recording/publishing is blocked until compositor support exists.
-10. Verify adaptive mode lowers capture cost under dropped frames or low FPS.
-11. Verify destination/source/settings persistence across relaunch.
-12. Export clip markers and session report, then confirm RTMP secrets are redacted.
+9. Start and stop local `Screen + Face` recording and verify the camera PiP is baked into the `.mov`.
+10. Confirm full RTMP publishing still blocks `Screen + Face` until publish composition exists.
+11. Verify adaptive mode lowers capture cost under dropped frames or low FPS.
+12. Verify destination/source/settings persistence across relaunch.
+13. Export clip markers and session report, then confirm RTMP secrets are redacted.
 
 ## Docs
 

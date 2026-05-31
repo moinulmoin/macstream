@@ -43,6 +43,6 @@ OpenCue should learn from OBS without becoming an OBS clone. The V1 goal is a sm
 
 ## Current OpenCue Gap Against This Map
 
-The store, source controls, setup flow, preview, recording boundary, and release automation are already in place. The missing core is media output composition: the app can preview the creator's intended `Screen + Face` scene, but cannot yet record or publish that scene.
+The store, source controls, setup flow, preview, recording boundary, and release automation are already in place. Local recording can now compose the creator's intended `Screen + Face` scene, but the RTMP publish path still needs to use that compositor before OpenCue can claim real screen + camera streaming.
 
-That is the next foundation feature.
+That is the next foundation feature for streaming.

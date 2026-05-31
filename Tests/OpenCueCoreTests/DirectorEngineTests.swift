@@ -1065,10 +1065,18 @@ func systemMediaPipelineUpdatesStreamConfigurationForCaptureCostChanges() {
         capturesSystemAudio: true,
         screenCaptureTarget: ScreenCaptureTarget(id: "window-42", kind: .window, name: "Slides", detail: "Keynote")
     )
+    let sceneChanged = MediaPipelineConfiguration(
+        maxVideoWidth: 1_920,
+        framesPerSecond: 30,
+        queueDepth: 5,
+        sceneKind: .screenAndFace,
+        capturesSystemAudio: true
+    )
 
     #expect(SystemMediaPipeline.shouldUpdateActiveStreamConfiguration(from: baseline, to: lowerVideoCost))
     #expect(SystemMediaPipeline.shouldUpdateActiveStreamConfiguration(from: baseline, to: withoutSystemAudio))
     #expect(SystemMediaPipeline.shouldUpdateActiveStreamConfiguration(from: baseline, to: targetChanged))
+    #expect(SystemMediaPipeline.shouldUpdateActiveStreamConfiguration(from: baseline, to: sceneChanged))
 }
 
 @Test
@@ -1178,7 +1186,7 @@ func systemMediaPipelineOnlyCapturesPublishMediaForFullRTMPTransport() {
     #expect(pipeline.supportedSceneKindsForStream == Set(SceneKind.allCases))
     #endif
     #expect(pipeline.requiresScreenCaptureVideoForRecording)
-    #expect(pipeline.supportedSceneKindsForRecording == [.screenOnly])
+    #expect(pipeline.supportedSceneKindsForRecording == [.screenOnly, .screenAndFace])
 }
 
 @Test
@@ -2228,9 +2236,39 @@ func sourceTogglesPreserveMediaPerformanceProfile() {
     store.toggleSource(systemAudio)
 
     var expected = StudioPerformanceMode.efficiency.mediaConfiguration
+    expected.sceneKind = .brb
     expected.systemAudioLevel = 0.72
     expected.capturesSystemAudio = true
     #expect(pipeline.lastConfiguration == expected)
+}
+
+@Test
+@MainActor
+func selectedSceneUpdatesMediaPipelineConfiguration() throws {
+    let pipeline = ConfigurableMediaPipeline()
+    let store = StudioStore(mediaPipeline: pipeline)
+    let screenAndFaceScene = try #require(store.scenes.first { $0.kind == .screenAndFace })
+
+    store.selectScene(screenAndFaceScene)
+
+    #expect(pipeline.lastConfiguration?.sceneKind == .screenAndFace)
+}
+
+@Test
+@MainActor
+func cameraEnhancementsUpdateMediaPipelineConfiguration() {
+    let pipeline = ConfigurableMediaPipeline()
+    let store = StudioStore(mediaPipeline: pipeline)
+    let enhancements = CameraEnhancementSettings(
+        mirrorsPreview: false,
+        rotation: .degrees90,
+        usesAutoLight: true,
+        autoLightAmount: 0.68
+    )
+
+    store.updateCameraEnhancements(enhancements)
+
+    #expect(pipeline.lastConfiguration?.cameraEnhancements == enhancements)
 }
 
 @Test
@@ -2897,20 +2935,20 @@ func realCaptureVideoStartRequiresScreenSceneWhenPipelineUsesScreenCaptureKit() 
 
     #expect(store.captureReadiness.state == .ready)
     #expect(store.streamStartBlockedReason == nil)
-    #expect(store.recordingStartBlockedReason == "Choose Screen before starting real capture. Screen + Face output is not available yet.")
+    #expect(store.recordingStartBlockedReason == "Choose Screen or Screen + Face before starting a local recording.")
     #expect(store.canStartStream)
     #expect(!store.canStartRecording)
 
     store.destination = StreamDestination(name: "RTMP", rtmpURL: "rtmp://127.0.0.1/live/stream")
 
     #expect(!store.canStartStream)
-    #expect(store.streamStartBlockedReason == "Choose Screen before starting real capture. Screen + Face output is not available yet.")
-    #expect(store.startBlockedReason == "Choose Screen before starting real capture. Screen + Face output is not available yet.")
+    #expect(store.streamStartBlockedReason == "Choose Screen before starting real capture. Screen + Face streaming is not available yet.")
+    #expect(store.startBlockedReason == "Choose Screen before starting real capture. Screen + Face streaming is not available yet.")
 }
 
 @Test
 @MainActor
-func realMediaPipelineBlocksScreenAndFaceUntilCompositionExists() async throws {
+func realMediaPipelineAllowsScreenAndFaceRecordingButBlocksStreamingUntilPublishCompositionExists() async throws {
     let report = CapturePreflightReport(
         devices: [
             CaptureDeviceInfo(id: "display-7", kind: .display, name: "Studio Display", detail: "3024x1964", permission: .granted),
@@ -2932,9 +2970,9 @@ func realMediaPipelineBlocksScreenAndFaceUntilCompositionExists() async throws {
 
     #expect(store.captureReadiness.state == .ready)
     #expect(!store.canStartStream)
-    #expect(!store.canStartRecording)
-    #expect(store.streamStartBlockedReason == "Choose Screen before starting real capture. Screen + Face output is not available yet.")
-    #expect(store.recordingStartBlockedReason == "Choose Screen before starting real capture. Screen + Face output is not available yet.")
+    #expect(store.canStartRecording)
+    #expect(store.streamStartBlockedReason == "Choose Screen before starting real capture. Screen + Face streaming is not available yet.")
+    #expect(store.recordingStartBlockedReason == nil)
 }
 
 @Test
@@ -5058,7 +5096,7 @@ private final class ScreenVideoGatedMediaPipeline: MediaPipeline, @unchecked Sen
     }
 
     var supportedSceneKindsForRecording: Set<SceneKind> {
-        [.screenOnly]
+        [.screenOnly, .screenAndFace]
     }
 
     func startStream(destination: StreamDestination) async throws {}
@@ -5431,6 +5469,7 @@ private actor CancellableDelayedSetupProvider: LocalIntelligenceProvider {
 
 private func expectedMediaConfiguration(
     _ mode: StudioPerformanceMode,
+    sceneKind: SceneKind = .brb,
     capturesSystemAudio: Bool = false,
     capturesMicrophone: Bool = true,
     systemAudioLevel: Double = 0.72,
@@ -5438,6 +5477,7 @@ private func expectedMediaConfiguration(
     screenCaptureTarget: ScreenCaptureTarget? = nil
 ) -> MediaPipelineConfiguration {
     var configuration = mode.mediaConfiguration
+    configuration.sceneKind = sceneKind
     configuration.capturesSystemAudio = capturesSystemAudio
     configuration.capturesMicrophone = capturesMicrophone
     configuration.systemAudioLevel = systemAudioLevel

@@ -542,32 +542,38 @@ public struct MediaPipelineConfiguration: Equatable, Sendable {
     public var framesPerSecond: Int
     public var videoBitrate: Int
     public var queueDepth: Int
+    public var sceneKind: SceneKind
     public var capturesSystemAudio: Bool
     public var capturesMicrophone: Bool
     public var systemAudioLevel: Double
     public var microphoneLevel: Double
     public var screenCaptureTarget: ScreenCaptureTarget?
+    public var cameraEnhancements: CameraEnhancementSettings
 
     public init(
         maxVideoWidth: Int = 1_920,
         framesPerSecond: Int = 30,
         videoBitrate: Int = 8_000_000,
         queueDepth: Int = 5,
+        sceneKind: SceneKind = .screenOnly,
         capturesSystemAudio: Bool = true,
         capturesMicrophone: Bool = true,
         systemAudioLevel: Double = 1,
         microphoneLevel: Double = 1,
-        screenCaptureTarget: ScreenCaptureTarget? = nil
+        screenCaptureTarget: ScreenCaptureTarget? = nil,
+        cameraEnhancements: CameraEnhancementSettings = CameraEnhancementSettings()
     ) {
         self.maxVideoWidth = max(320, maxVideoWidth)
         self.framesPerSecond = min(max(framesPerSecond, 10), 60)
         self.videoBitrate = max(1_000_000, videoBitrate)
         self.queueDepth = min(max(queueDepth, 2), 8)
+        self.sceneKind = sceneKind
         self.capturesSystemAudio = capturesSystemAudio
         self.capturesMicrophone = capturesMicrophone
         self.systemAudioLevel = min(max(systemAudioLevel, 0), 1)
         self.microphoneLevel = min(max(microphoneLevel, 0), 1)
         self.screenCaptureTarget = screenCaptureTarget
+        self.cameraEnhancements = cameraEnhancements
     }
 }
 

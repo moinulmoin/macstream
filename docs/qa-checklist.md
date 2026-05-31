@@ -50,7 +50,8 @@ Use this checklist before release promotion and after any media-pipeline change.
 - Verify microphone audio is present when mic is enabled.
 - Verify system audio is present only when system audio is enabled.
 - Verify A/V sync at 5, 10, and 30 minutes.
-- Attempt recording from `Screen + Face` and confirm the app blocks it honestly until compositor support exists.
+- Start local recording from `Screen + Face` and confirm the camera PiP is baked into the `.mov`.
+- While recording from `Screen + Face`, confirm the camera mirror/rotation/light settings match the selected camera settings.
 - Start recording, then try to change required scene/source/target; confirm unsafe changes are blocked.
 - Cancel a pending recording start and confirm no corrupt session remains.
 
@@ -65,8 +66,8 @@ Use this checklist before release promotion and after any media-pipeline change.
 
 ## Health And Performance
 
-- Run 30 minute preview-only test for `Screen + Face`.
-- Run 30 minute screen recording with mic and system audio.
+- Run 30 minute `Screen + Face` recording with mic and optional system audio.
+- Run 30 minute screen-only recording with mic and system audio.
 - Track capture FPS, dropped frames, memory, CPU, and thermal pressure.
 - Trigger Low Power Mode or thermal pressure where possible; confirm Adaptive mode lowers capture cost.
 - Confirm dropped frames or low FPS move capture to degraded state and later recover.

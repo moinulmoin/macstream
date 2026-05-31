@@ -55,7 +55,7 @@
 - Live controls include performance modes, including Adaptive mode that tunes director cadence, screen-motion sampling, display and camera preview capture, and active ScreenCaptureKit preview, motion, recording, and publishing stream configuration from system pressure and runtime capture health.
 - Adaptive runtime health monitoring continues while the director is paused during a live stream and while local recording is running without a live stream.
 - The MVP uses a single main studio window so duplicate windows do not create duplicate preview and capture stacks.
-- Until a real compositor exists, system recording and full RTMP publish only allow the Screen scene. Screen + Face remains available for local preview and director planning, but real media capture is blocked from starting or switching into it so OpenCue does not silently output screen-only media while claiming camera PiP.
+- Local recording supports Screen and composited Screen + Face output. Full RTMP publish remains Screen-only until the publish path uses the same compositor, so OpenCue does not silently stream screen-only media while claiming camera PiP.
 - Runtime capture pressure from dropped frames or low capture FPS degrades the running stream, lowers Adaptive mode to Efficiency, and recovers when capture health stabilizes. System pressure from thermal state, Low Power Mode, or high OpenCue memory use also lowers Adaptive mode to Efficiency with the matching reason shown in the inspector.
 
 ## Out

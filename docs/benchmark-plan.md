@@ -42,7 +42,7 @@ Store results under `benchmarks/` when this harness exists:
    - Record 30 minutes of screen + mic + system audio.
    - Measure A/V drift, dropped frames, file validity, file size, CPU/memory/thermal pressure.
 
-5. Screen + Face compositor once implemented.
+5. Screen + Face local compositor.
    - Record 10, 30, and 60 minute sessions.
    - Verify camera PiP is present in output, not only preview.
    - Measure sync between camera, screen, mic, and system audio.

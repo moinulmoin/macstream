@@ -17,29 +17,29 @@ OpenCue has a solid native app spine:
 - Default RTMP endpoint validation and optional HaishinKit full RTMP build path.
 - Deterministic director rules, adaptive performance, clip markers, session reports, and signed/notarized release automation.
 
-The central product gap is also clear:
+The central product gap at the time of this audit was also clear:
 
-- The current real media output is screen-only.
-- `Screen + Face` is available in preview and director planning, but local recording and full RTMP publishing block it until camera/screen composition exists.
+- The real media output was screen-only.
+- `Screen + Face` was available in preview and director planning, but local recording and full RTMP publishing blocked it until camera/screen composition existed.
 - `Face` and `BRB` are not real media output scenes yet for recording/publishing.
 
-This means OpenCue is currently a good native prototype and screen recorder, but not yet a reliable "solo screen + face streamer."
+After the first compositor pass, local `Screen + Face` recording is the first proof target; full RTMP publishing still needs the same composed output path before OpenCue is a reliable "solo screen + face streamer."
 
 ## User Scene Audit
 
 | User scene | Current fit | Main blockers | Next proof |
 | --- | --- | --- | --- |
-| Solo product demo / screen + face | Preview can show screen with camera PiP. Setup flow guides toward `Screen + Face`. | Real recording/full RTMP cannot output camera PiP. Camera controls are preview-only. | Record a 10 minute `Screen + Face` `.mov` with camera PiP, mic, optional system audio, no drift. |
-| Coding/tutorial stream | Screen target, screen motion, coding profile, and screen recording exist. | No recorded PiP, no zoom/annotation path, no explicit camera/mic source selection, long-session sync not proven. | 30 minute coding recording with selected app/window, mic sync, no black frames, stable FPS. |
-| Remote workshop/class | Teaching profile exists and first-run setup can guide capture readiness. | `Face` and `Screen + Face` are preview-only for real output. No guest/remote-participant source, which should stay out of V1. | Workshop recording using screen + face compositor, pause/BRB safety, clear recovery if screen capture freezes. |
+| Solo product demo / screen + face | Preview can show screen with camera PiP. Setup flow guides toward `Screen + Face`. | Full RTMP cannot output camera PiP yet. Long-run composed recording still needs QA proof. | Record a 10 minute `Screen + Face` `.mov` with camera PiP, mic, optional system audio, no drift. |
+| Coding/tutorial stream | Screen target, screen motion, coding profile, and screen recording exist. | No zoom/annotation path, no explicit camera/mic source selection, long-session sync not proven. | 30 minute coding recording with selected app/window, mic sync, no black frames, stable FPS. |
+| Remote workshop/class | Teaching profile exists and first-run setup can guide capture readiness. | `Face` is preview-only for real output. Full RTMP `Screen + Face` remains blocked. No guest/remote-participant source, which should stay out of V1. | Workshop recording using screen + face compositor, pause/BRB safety, clear recovery if screen capture freezes. |
 | Founder/webinar/podcast | Face preview and podcast-style profile exist. | Face cannot be recorded/published as real media output yet. Smooth Mic is not implemented in the media path. | 20 minute face-first local recording with mic processing disabled/enabled comparison once audio graph exists. |
 | Local clip recording | Local screen recording, clip markers, and session report export exist. | No camera PiP in clips, no in-app playback/trim/export workflow. | Mark clips during recording and export report that links to playable media and marker timestamps. |
 
 ## Codebase Findings
 
-### P0: Real Composited Output Is Missing
+### P0: Real Composited Streaming Is Missing
 
-`PreviewCanvasView` can visually compose camera over screen, but `SystemMediaPipeline` records and publishes raw ScreenCaptureKit video. `StudioStore` correctly blocks real `Screen + Face` capture instead of silently lying to the user.
+`PreviewCanvasView` visually composes camera over screen. `SystemMediaPipeline` now records local `Screen + Face` output through a pixel-buffer compositor, while RTMP publishing still uses the raw ScreenCaptureKit path. `StudioStore` still blocks real `Screen + Face` streaming instead of silently lying to the user.
 
 Relevant files:
 
@@ -49,7 +49,7 @@ Relevant files:
 - `docs/mvp-scope.md`
 - `docs/technical-risks.md`
 
-Decision: build the compositor before AI polish. Start with local recording, then wire the same composed frames into RTMP.
+Decision: keep compositor work ahead of AI polish. Local recording now has the first compositor pass; next, wire the same composed frames into RTMP.
 
 ### P0: RTMP Is Not Proven In The Default Build
 

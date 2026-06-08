@@ -12,10 +12,12 @@ struct StudioControlPanelView: View {
 
                 Spacer()
 
-                Text(statusLine)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
+                if primaryActionBlockerDetail == nil {
+                    Text(statusLine)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
             }
 
             ViewThatFits(in: .horizontal) {
@@ -166,11 +168,6 @@ struct StudioControlPanelView: View {
                 .accessibilityValue(Text(store.recordingStatusDetail))
                 .accessibilityHint(Text(recordingActionHelp))
             }
-
-            HStack(spacing: StudioMetrics.sm) {
-                StudioBadge(title: store.streamState.title, systemImage: transportSymbol, tint: streamStateTint)
-                StudioBadge(title: store.recordingState.title, systemImage: "record.circle", tint: recordingStateTint)
-            }
         }
     }
 
@@ -209,10 +206,6 @@ struct StudioControlPanelView: View {
     }
 
     private var statusLine: String {
-        if let primaryActionBlockerDetail {
-            return primaryActionBlockerDetail
-        }
-
         if store.isLive || store.isStreamConnecting || isStreamFailed {
             return store.streamStatusDetail
         }
@@ -222,32 +215,6 @@ struct StudioControlPanelView: View {
         }
 
         return "Ready to preview, record, or stream"
-    }
-
-    private var transportSymbol: String {
-        switch store.streamTransport {
-        case .preview: "play.circle"
-        case .endpointValidation: "network"
-        case .rtmpPublish: "antenna.radiowaves.left.and.right"
-        }
-    }
-
-    private var streamStateTint: Color {
-        switch store.streamState {
-        case .offline: .secondary
-        case .connecting: .orange
-        case .live: .green
-        case .degraded, .failed: .red
-        }
-    }
-
-    private var recordingStateTint: Color {
-        switch store.recordingState {
-        case .stopped: .secondary
-        case .starting: .orange
-        case .recording: .red
-        case .failed: .red
-        }
     }
 
     private var sceneSelectionBinding: Binding<StudioScene.ID> {

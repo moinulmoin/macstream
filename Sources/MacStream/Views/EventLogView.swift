@@ -11,17 +11,16 @@ struct EventLogView: View {
     var exportReport: () -> Void = {}
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Label("Timeline", systemImage: "list.bullet.rectangle")
-                .font(.headline)
+        VStack(alignment: .leading, spacing: StudioMetrics.md) {
+            StudioPanelHeader(title: "Timeline", systemImage: "list.bullet.rectangle", tint: StudioPalette.info)
 
             ForEach(events.prefix(8)) { event in
-                HStack(alignment: .top, spacing: 10) {
+                HStack(alignment: .top, spacing: StudioMetrics.sm) {
                     Image(systemName: symbol(for: event.kind))
                         .foregroundStyle(tint(for: event.kind))
                         .frame(width: 18)
 
-                    VStack(alignment: .leading, spacing: 2) {
+                    VStack(alignment: .leading, spacing: StudioMetrics.xs) {
                         Text(event.title)
                             .font(.subheadline.weight(.semibold))
                         Text(event.detail)
@@ -34,7 +33,7 @@ struct EventLogView: View {
 
             Divider()
 
-            HStack {
+            HStack(spacing: StudioMetrics.sm) {
                 Label(clipMarkers.isEmpty ? "Session" : "Clips", systemImage: clipMarkers.isEmpty ? "doc.text" : "bookmark")
                     .font(.subheadline.weight(.semibold))
                 Spacer()
@@ -87,11 +86,11 @@ struct EventLogView: View {
 
     private func tint(for kind: StudioEventKind) -> Color {
         switch kind {
-        case .stream: .green
-        case .director: .accentColor
-        case .warning: .orange
+        case .stream: StudioPalette.success
+        case .director: StudioPalette.accent
+        case .warning: StudioPalette.warning
         case .source: .secondary
-        case .clip: .blue
+        case .clip: StudioPalette.info
         }
     }
 }
@@ -101,7 +100,7 @@ private struct ExportedFileActions: View {
     var url: URL
 
     var body: some View {
-        HStack {
+        HStack(spacing: StudioMetrics.sm) {
             Text(title)
                 .font(.caption.weight(.semibold))
                 .foregroundStyle(.secondary)
@@ -128,13 +127,13 @@ private struct ClipMarkerRow: View {
     var marker: ClipMarker
 
     var body: some View {
-        HStack(alignment: .top, spacing: 10) {
+        HStack(alignment: .top, spacing: StudioMetrics.sm) {
             Image(systemName: symbolName)
                 .foregroundStyle(tint)
                 .frame(width: 18)
 
-            VStack(alignment: .leading, spacing: 2) {
-                HStack {
+            VStack(alignment: .leading, spacing: StudioMetrics.xs) {
+                HStack(spacing: StudioMetrics.sm) {
                     Text(marker.title)
                         .font(.caption.weight(.semibold))
                     Spacer()
@@ -155,6 +154,6 @@ private struct ClipMarkerRow: View {
     }
 
     private var tint: Color {
-        marker.source == .director ? .accentColor : .secondary
+        marker.source == .director ? StudioPalette.accent : .secondary
     }
 }

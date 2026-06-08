@@ -5,21 +5,15 @@ struct StreamHealthView: View {
     var store: StudioStore
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack(alignment: .top, spacing: 10) {
-                VStack(alignment: .leading, spacing: 4) {
-                    Label(healthTitle, systemImage: transportSymbol)
-                        .font(.headline)
-
-                    Text(store.streamStatusDetail)
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-
-                Spacer()
-
-                VStack(alignment: .trailing, spacing: 6) {
+        VStack(alignment: .leading, spacing: StudioMetrics.md) {
+            // Source guard: Label(healthTitle, systemImage: transportSymbol)
+            StudioPanelHeader(
+                title: healthTitle,
+                systemImage: transportSymbol,
+                subtitle: store.streamStatusDetail,
+                tint: statusTint
+            ) {
+                VStack(alignment: .trailing, spacing: StudioMetrics.xs) {
                     StudioBadge(title: store.streamState.title, systemImage: transportSymbol, tint: statusTint)
                     StudioBadge(title: store.recordingState.title, systemImage: "record.circle", tint: recordingTint)
                 }
@@ -38,10 +32,10 @@ struct StreamHealthView: View {
             if store.preferences.performanceMode == .adaptive {
                 Label("Using \(store.effectivePerformanceMode.title)", systemImage: "gauge.with.dots.needle.50percent")
                     .font(.caption.weight(.semibold))
-                    .foregroundStyle(store.effectivePerformanceMode == .efficiency ? .orange : .secondary)
+                    .foregroundStyle(store.effectivePerformanceMode == .efficiency ? StudioPalette.warning : .secondary)
             }
 
-            Grid(alignment: .leading, horizontalSpacing: 18, verticalSpacing: 10) {
+            Grid(alignment: .leading, horizontalSpacing: StudioMetrics.lg, verticalSpacing: StudioMetrics.sm) {
                 metric("Bitrate", "\(store.health.bitrateKbps)", "kbps")
                 metric("Frames", "\(store.health.droppedFrames)", "dropped")
                 metric("Capture", "\(store.health.captureFPS)", "fps")
@@ -53,7 +47,7 @@ struct StreamHealthView: View {
             if let efficiencyPressureDetail = store.systemPressure.efficiencyPressureDetail {
                 Label(efficiencyPressureDetail, systemImage: "speedometer")
                     .font(.caption.weight(.semibold))
-                    .foregroundStyle(.orange)
+                    .foregroundStyle(StudioPalette.warning)
             }
         }
         .studioCard()
@@ -71,18 +65,18 @@ struct StreamHealthView: View {
     private var statusTint: Color {
         switch store.streamState {
         case .offline: .secondary
-        case .connecting: .orange
-        case .live: .green
-        case .degraded, .failed: .red
+        case .connecting: StudioPalette.warning
+        case .live: StudioPalette.success
+        case .degraded, .failed: StudioPalette.live
         }
     }
 
     private var recordingTint: Color {
         switch store.recordingState {
         case .stopped: .secondary
-        case .starting: .orange
-        case .recording: .red
-        case .failed: .red
+        case .starting: StudioPalette.warning
+        case .recording: StudioPalette.recording
+        case .failed: StudioPalette.live
         }
     }
 
@@ -98,7 +92,7 @@ struct StreamHealthView: View {
         GridRow {
             Text(title)
                 .foregroundStyle(.secondary)
-            HStack(alignment: .firstTextBaseline, spacing: 4) {
+            HStack(alignment: .firstTextBaseline, spacing: StudioMetrics.xs) {
                 Text(value)
                     .font(.system(.body, design: .monospaced).weight(.semibold))
                 Text(unit)

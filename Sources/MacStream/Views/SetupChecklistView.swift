@@ -6,31 +6,27 @@ struct SetupChecklistView: View {
 
     var body: some View {
         if store.shouldShowSetupChecklist {
-            VStack(alignment: .leading, spacing: 14) {
-                HStack(alignment: .top, spacing: 10) {
-                    VStack(alignment: .leading, spacing: 4) {
-                        Label("Preflight", systemImage: "checklist.checked")
-                            .font(.headline)
-
-                        Text(nextStepSummary)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                            .lineLimit(2)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
-
-                    Spacer()
-
-                    StudioBadge(title: progressTitle, systemImage: "gauge.with.dots.needle.50percent", tint: .orange)
+            VStack(alignment: .leading, spacing: StudioMetrics.md) {
+                StudioPanelHeader(
+                    title: "Preflight",
+                    systemImage: "checklist.checked",
+                    subtitle: nextStepSummary,
+                    tint: StudioPalette.warning
+                ) {
+                    StudioBadge(
+                        title: progressTitle,
+                        systemImage: "gauge.with.dots.needle.50percent",
+                        tint: StudioPalette.warning
+                    )
                 }
 
                 ProgressView(value: store.setupProgressFraction)
                     .controlSize(.small)
-                    .tint(.orange)
+                    .tint(StudioPalette.warning)
                     .accessibilityLabel(Text("Preflight progress"))
                     .accessibilityValue(Text(progressTitle))
 
-                VStack(spacing: 8) {
+                VStack(spacing: StudioMetrics.sm) {
                     ForEach(store.setupChecklistItems) { item in
                         SetupChecklistRow(
                             item: item,
@@ -119,7 +115,7 @@ struct SetupChecklistView: View {
             .buttonStyle(.borderedProminent)
             .help("Ask macOS for \(promptableKind.title.lowercased()) access")
         } else if missingScreenCaptureAccess {
-            HStack(spacing: 8) {
+            HStack(spacing: StudioMetrics.sm) {
                 Button {
                     CapturePermissionActions.openSettings(for: .display)
                 } label: {
@@ -193,15 +189,15 @@ private struct SetupChecklistRow: View {
     var isNext: Bool
 
     var body: some View {
-        HStack(alignment: .top, spacing: 10) {
+        HStack(alignment: .top, spacing: StudioMetrics.md) {
             Image(systemName: symbolName)
                 .font(.system(size: 14, weight: .semibold))
                 .foregroundStyle(symbolTint)
                 .frame(width: 24, height: 24)
                 .background(symbolTint.opacity(0.12), in: Circle())
 
-            VStack(alignment: .leading, spacing: 3) {
-                HStack(spacing: 6) {
+            VStack(alignment: .leading, spacing: StudioMetrics.xs) {
+                HStack(spacing: StudioMetrics.sm) {
                     Text(item.title)
                         .font(.caption.weight(.semibold))
 
@@ -218,10 +214,10 @@ private struct SetupChecklistRow: View {
             Spacer(minLength: 0)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(10)
-        .background(rowTint.opacity(isNext ? 0.12 : 0.06), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .padding(StudioMetrics.md)
+        .background(rowTint.opacity(isNext ? 0.12 : 0.06), in: RoundedRectangle(cornerRadius: StudioMetrics.controlRadius, style: .continuous))
         .overlay {
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
+            RoundedRectangle(cornerRadius: StudioMetrics.controlRadius, style: .continuous)
                 .strokeBorder(rowTint.opacity(isNext ? 0.22 : 0.08), lineWidth: 1)
         }
         .accessibilityElement(children: .combine)
@@ -236,8 +232,8 @@ private struct SetupChecklistRow: View {
     }
 
     private var rowTint: Color {
-        if item.isComplete { return .green }
-        if isNext { return .orange }
+        if item.isComplete { return StudioPalette.success }
+        if isNext { return StudioPalette.warning }
         return .secondary
     }
 
@@ -248,8 +244,8 @@ private struct SetupChecklistRow: View {
     }
 
     private var symbolTint: Color {
-        if item.isComplete { return .green }
-        if isNext { return .orange }
+        if item.isComplete { return StudioPalette.success }
+        if isNext { return StudioPalette.warning }
         return .secondary
     }
 }

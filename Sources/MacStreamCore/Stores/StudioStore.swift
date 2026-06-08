@@ -974,6 +974,54 @@ public final class StudioStore {
         destination = nextDestination
     }
 
+    public var matchingDestinationPreset: StreamPlatformPreset? {
+        guard destination.mode == .rtmp else { return nil }
+        let url = destination.rtmpURL.lowercased()
+        guard !url.isEmpty else { return nil }
+        return StreamPlatformPreset.allCases.first { preset in
+            guard let base = preset.ingestURL?.lowercased() else { return false }
+            return url.hasPrefix(base)
+        }
+    }
+
+    public func applyDestinationPreset(_ preset: StreamPlatformPreset) {
+        guard canEditDestination else { return }
+
+        var nextDestination = destination
+        nextDestination.mode = .rtmp
+        if nextDestination.name.isEmpty
+            || nextDestination.name == "Preview Session"
+            || nextDestination.name == "RTMP Destination"
+            || StreamPlatformPreset.allCases.contains(where: { $0.title == nextDestination.name }) {
+            nextDestination.name = preset.title
+        }
+        if let ingestURL = preset.ingestURL {
+            // Preserve an already-entered stream key for this platform; only (re)set the base
+            // when the current URL isn't already this preset's endpoint.
+            if !nextDestination.rtmpURL.lowercased().hasPrefix(ingestURL.lowercased()) {
+                nextDestination.rtmpURL = ingestURL
+            }
+        } else if nextDestination.usesPreviewSentinelURL || urlBelongsToKnownPlatform(nextDestination.rtmpURL) {
+            // Account- or broadcast-specific endpoint (X / Kick / Custom): the user must paste it.
+            // Drop a URL carried over from a different known platform (or the preview sentinel),
+            // but keep a custom URL the user already typed.
+            nextDestination.rtmpURL = ""
+        }
+
+        guard destination != nextDestination else { return }
+        destination = nextDestination
+        addEvent(kind: .stream, title: "Destination preset", detail: preset.title)
+    }
+
+    private func urlBelongsToKnownPlatform(_ rtmpURL: String) -> Bool {
+        let lowered = rtmpURL.lowercased()
+        guard !lowered.isEmpty else { return false }
+        return StreamPlatformPreset.allCases.contains { preset in
+            guard let base = preset.ingestURL?.lowercased() else { return false }
+            return lowered.hasPrefix(base)
+        }
+    }
+
     public func selectScreenCaptureTarget(_ target: ScreenCaptureTarget) {
         guard canEditScreenCaptureTarget else { return }
         guard selectedScreenCaptureTarget != target else {

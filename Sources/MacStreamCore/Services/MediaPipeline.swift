@@ -84,6 +84,62 @@ public enum StreamDestinationMode: String, CaseIterable, Codable, Identifiable, 
     }
 }
 
+public enum StreamPlatformPreset: String, CaseIterable, Identifiable, Sendable {
+    case twitch
+    case youtube
+    case facebook
+    case x
+    case kick
+    case custom
+
+    public var id: String { rawValue }
+
+    public var title: String {
+        switch self {
+        case .twitch: "Twitch"
+        case .youtube: "YouTube"
+        case .facebook: "Facebook"
+        case .x: "X"
+        case .kick: "Kick"
+        case .custom: "Custom"
+        }
+    }
+
+    public var symbolName: String {
+        switch self {
+        case .twitch: "gamecontroller.fill"
+        case .youtube: "play.rectangle.fill"
+        case .facebook: "person.2.fill"
+        case .x: "bubble.left.and.bubble.right.fill"
+        case .kick: "bolt.fill"
+        case .custom: "link"
+        }
+    }
+
+    /// Prefilled RTMP/RTMPS ingest base; append your stream key after it.
+    /// `nil` when the endpoint is account- or broadcast-specific and must be pasted.
+    public var ingestURL: String? {
+        switch self {
+        case .twitch: "rtmp://live.twitch.tv/app/"
+        case .youtube: "rtmp://a.rtmp.youtube.com/live2/"
+        case .facebook: "rtmps://live-api-s.facebook.com:443/rtmp/"
+        case .x, .kick, .custom: nil
+        }
+    }
+
+    /// Where to find the stream key (and any per-account ingest URL).
+    public var keyHint: String {
+        switch self {
+        case .twitch: "Creator Dashboard › Settings › Stream. Paste your key after /app/."
+        case .youtube: "YouTube Studio › Go Live › Stream key."
+        case .facebook: "facebook.com/live/producer › Streaming software. Paste your persistent key."
+        case .kick: "Kick Creator Dashboard › copy your full Server URL + Stream Key (they can change per account)."
+        case .x: "Create a broadcast in X Media Studio Producer, then paste its RTMP URL and key."
+        case .custom: "Paste the full rtmp:// or rtmps:// URL including your stream key."
+        }
+    }
+}
+
 public struct StreamDestination: Equatable, Sendable {
     public var mode: StreamDestinationMode
     public var name: String
@@ -120,6 +176,12 @@ public struct StreamDestination: Equatable, Sendable {
 
     public var isReadyToStart: Bool {
         validationError == nil
+    }
+
+    /// A complete, valid RTMP endpoint worth persisting. Excludes preview sessions and
+    /// draft values (preset bases with no stream key yet, or otherwise invalid URLs).
+    public var isPersistableEndpoint: Bool {
+        !isPreviewSession && isReadyToStart
     }
 
     public var safeDisplayDetail: String {

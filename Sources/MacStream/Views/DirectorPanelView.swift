@@ -13,19 +13,15 @@ struct DirectorPanelView: View {
     }
 
     private var compactDirectorPanel: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack(alignment: .center, spacing: 10) {
-                Label("Director", systemImage: "sparkles.tv")
-                    .font(.headline)
-
-                StudioBadge(title: store.directorMode.title, systemImage: "sparkles", tint: directorModeTint)
-
-                Spacer(minLength: 10)
-
-                directorActionButtons
+        VStack(alignment: .leading, spacing: StudioMetrics.md) {
+            StudioPanelHeader(title: "Director", systemImage: "sparkles.tv") {
+                HStack(spacing: StudioMetrics.sm) {
+                    StudioBadge(title: store.directorMode.title, systemImage: "sparkles", tint: directorModeTint)
+                    directorActionButtons
+                }
             }
 
-            HStack(spacing: 8) {
+            HStack(spacing: StudioMetrics.sm) {
                 Label("No cue pending", systemImage: "checkmark.circle.fill")
                     .font(.subheadline.weight(.semibold))
                     .foregroundStyle(.secondary)
@@ -39,20 +35,16 @@ struct DirectorPanelView: View {
     }
 
     private func expandedDirectorPanel(for recommendation: DirectorRecommendation) -> some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack {
-                Label("Director", systemImage: "sparkles.tv")
-                    .font(.headline)
-
-                StudioBadge(title: store.directorMode.title, systemImage: "sparkles", tint: directorModeTint)
-
-                Spacer()
-
-                directorActionButtons
+        VStack(alignment: .leading, spacing: StudioMetrics.md) {
+            StudioPanelHeader(title: "Director", systemImage: "sparkles.tv") {
+                HStack(spacing: StudioMetrics.sm) {
+                    StudioBadge(title: store.directorMode.title, systemImage: "sparkles", tint: directorModeTint)
+                    directorActionButtons
+                }
             }
 
-            VStack(alignment: .leading, spacing: 10) {
-                HStack(alignment: .firstTextBaseline) {
+            VStack(alignment: .leading, spacing: StudioMetrics.sm) {
+                HStack(alignment: .firstTextBaseline, spacing: StudioMetrics.sm) {
                     Label("Cue \(recommendation.target.title)", systemImage: recommendation.target.symbolName)
                         .font(.title3.weight(.semibold))
                     Spacer()
@@ -90,10 +82,10 @@ struct DirectorPanelView: View {
                 }
                 .controlSize(.regular)
             }
-            .padding(12)
-            .background(recommendationTint(for: recommendation).opacity(0.10), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+            .padding(StudioMetrics.md)
+            .background(recommendationTint(for: recommendation).opacity(0.10), in: RoundedRectangle(cornerRadius: StudioMetrics.controlRadius, style: .continuous))
             .overlay {
-                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                RoundedRectangle(cornerRadius: StudioMetrics.controlRadius, style: .continuous)
                     .strokeBorder(recommendationTint(for: recommendation).opacity(0.18), lineWidth: 1)
             }
 
@@ -103,7 +95,7 @@ struct DirectorPanelView: View {
     }
 
     private var directorActionButtons: some View {
-        HStack(spacing: 8) {
+        HStack(spacing: StudioMetrics.sm) {
             Button {
                 store.advanceDirector()
             } label: {
@@ -125,16 +117,16 @@ struct DirectorPanelView: View {
     private var directorModeTint: Color {
         switch store.directorMode {
         case .paused: .secondary
-        case .suggest: .accentColor
-        case .auto: .purple
+        case .suggest: StudioPalette.accent
+        case .auto: StudioPalette.info
         }
     }
 
     private func recommendationTint(for recommendation: DirectorRecommendation) -> Color {
         switch recommendation.urgency {
-        case .calm: .accentColor
-        case .soon: .orange
-        case .immediate: .red
+        case .calm: StudioPalette.accent
+        case .soon: StudioPalette.warning
+        case .immediate: StudioPalette.live
         }
     }
 
@@ -166,7 +158,7 @@ private struct SignalStripView: View {
     }
 
     private var wideSignals: some View {
-        HStack(spacing: 8) {
+        HStack(spacing: StudioMetrics.sm) {
             micSignal
             motionSignal
             appSignal
@@ -175,12 +167,12 @@ private struct SignalStripView: View {
     }
 
     private var stackedSignals: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 8) {
+        VStack(alignment: .leading, spacing: StudioMetrics.sm) {
+            HStack(spacing: StudioMetrics.sm) {
                 micSignal
                 motionSignal
             }
-            HStack(spacing: 8) {
+            HStack(spacing: StudioMetrics.sm) {
                 appSignal
                 idleSignal
             }
@@ -209,7 +201,7 @@ private struct SignalStripView: View {
 
     private func signal(_ title: String, value: String, symbol: String) -> some View {
         Label {
-            HStack(spacing: 3) {
+            HStack(spacing: StudioMetrics.xs) {
                 Text(title)
                     .foregroundStyle(.secondary)
                 Text(value)
@@ -220,8 +212,8 @@ private struct SignalStripView: View {
             Image(systemName: symbol)
                 .foregroundStyle(.secondary)
         }
-        .padding(.horizontal, 8)
-        .padding(.vertical, 5)
+        .padding(.horizontal, StudioMetrics.sm)
+        .padding(.vertical, StudioMetrics.xs)
         .background(.thinMaterial, in: Capsule())
     }
 }

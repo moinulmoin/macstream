@@ -29,6 +29,8 @@ struct SettingsView: View {
                 .pickerStyle(.segmented)
                 .disabled(!store.canEditDestination)
 
+                presetPicker
+
                 if store.destination.mode == .rtmp {
                     TextField("Name", text: $store.destination.name)
                         .disabled(!store.canEditDestination)
@@ -39,6 +41,13 @@ struct SettingsView: View {
                     Text(store.destination.safeDisplayDetail)
                         .font(.caption)
                         .foregroundStyle(destinationDetailTint)
+
+                    if let destinationKeyHint {
+                        Label(destinationKeyHint, systemImage: "info.circle")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
                 } else {
                     Label(store.destination.safeDisplayDetail, systemImage: StreamDestinationMode.preview.symbolName)
                         .font(.caption)
@@ -155,5 +164,87 @@ struct SettingsView: View {
         case .fallback: .orange
         case .unavailable: .red
         }
+    }
+
+    private var presetPicker: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("Quick connect")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.secondary)
+
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: 92), spacing: 8)], alignment: .leading, spacing: 8) {
+                ForEach(StreamPlatformPreset.allCases) { preset in
+                    DestinationPresetChip(
+                        preset: preset,
+                        tint: presetTint(preset),
+                        isSelected: selectedPreset == preset,
+                        isEnabled: store.canEditDestination
+                    ) {
+                        store.applyDestinationPreset(preset)
+                    }
+                }
+            }
+        }
+    }
+
+    private var selectedPreset: StreamPlatformPreset? {
+        if let match = store.matchingDestinationPreset { return match }
+        return store.destination.mode == .rtmp ? .custom : nil
+    }
+
+    private var destinationKeyHint: String? {
+        if let preset = store.matchingDestinationPreset { return preset.keyHint }
+        return store.destination.mode == .rtmp ? StreamPlatformPreset.custom.keyHint : nil
+    }
+
+    private func presetTint(_ preset: StreamPlatformPreset) -> Color {
+        switch preset {
+        case .twitch: Color(red: 0.57, green: 0.27, blue: 1.0)
+        case .youtube: Color(red: 0.90, green: 0.16, blue: 0.16)
+        case .facebook: Color(red: 0.10, green: 0.47, blue: 0.95)
+        case .x: Color(white: 0.62)
+        case .kick: Color(red: 0.33, green: 0.82, blue: 0.30)
+        case .custom: StudioPalette.accent
+        }
+    }
+}
+
+private struct DestinationPresetChip: View {
+    let preset: StreamPlatformPreset
+    let tint: Color
+    let isSelected: Bool
+    let isEnabled: Bool
+    let action: () -> Void
+    @State private var hovering = false
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 6) {
+                Image(systemName: preset.symbolName)
+                    .font(.caption)
+                Text(preset.title)
+                    .font(.caption.weight(.semibold))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.8)
+            }
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 7)
+            .padding(.horizontal, 10)
+            .foregroundStyle(isSelected ? Color.white : Color.primary)
+            .background {
+                RoundedRectangle(cornerRadius: 9, style: .continuous)
+                    .fill(isSelected ? AnyShapeStyle(tint.gradient) : AnyShapeStyle(Color.primary.opacity(hovering ? 0.10 : 0.05)))
+            }
+            .overlay {
+                RoundedRectangle(cornerRadius: 9, style: .continuous)
+                    .strokeBorder(isSelected ? Color.white.opacity(0.25) : tint.opacity(0.35), lineWidth: 1)
+            }
+        }
+        .buttonStyle(.plain)
+        .disabled(!isEnabled)
+        .opacity(isEnabled ? 1 : 0.5)
+        .onHover { hovering = $0 }
+        .help(preset.keyHint)
+        .accessibilityLabel(Text("\(preset.title) destination preset"))
     }
 }

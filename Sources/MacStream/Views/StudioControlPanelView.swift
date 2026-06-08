@@ -6,8 +6,8 @@ struct StudioControlPanelView: View {
     @AppStorage("performanceMode") private var performanceModeRaw = StudioPerformanceMode.balanced.rawValue
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack(spacing: 10) {
+        VStack(alignment: .leading, spacing: StudioMetrics.md) {
+            HStack(spacing: StudioMetrics.sm) {
                 StudioGroupLabel(title: "Control Room", systemImage: "slider.horizontal.3")
 
                 Spacer()
@@ -29,16 +29,16 @@ struct StudioControlPanelView: View {
                     .foregroundStyle(.orange)
                     .lineLimit(2)
                     .fixedSize(horizontal: false, vertical: true)
-                    .padding(10)
-                    .background(.orange.opacity(0.10), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                    .padding(StudioMetrics.md)
+                    .background(.orange.opacity(0.10), in: RoundedRectangle(cornerRadius: StudioMetrics.controlRadius, style: .continuous))
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .studioCard(padding: 12, cornerRadius: 16)
+        .studioCard(padding: StudioMetrics.cardPadding, cornerRadius: StudioMetrics.cardRadius)
     }
 
     private var horizontalControls: some View {
-        HStack(alignment: .top, spacing: 12) {
+        HStack(alignment: .top, spacing: StudioMetrics.md) {
             controlGroup("Scenes", systemImage: "rectangle.stack") {
                 sceneControls
             }
@@ -64,8 +64,8 @@ struct StudioControlPanelView: View {
     }
 
     private var wrappedControls: some View {
-        VStack(spacing: 12) {
-            HStack(alignment: .top, spacing: 12) {
+        VStack(spacing: StudioMetrics.md) {
+            HStack(alignment: .top, spacing: StudioMetrics.md) {
                 controlGroup("Scenes", systemImage: "rectangle.stack") {
                     sceneControls
                 }
@@ -76,7 +76,7 @@ struct StudioControlPanelView: View {
                 }
             }
 
-            HStack(alignment: .top, spacing: 12) {
+            HStack(alignment: .top, spacing: StudioMetrics.md) {
                 outputControls
                     .layoutPriority(2)
 
@@ -123,10 +123,11 @@ struct StudioControlPanelView: View {
     }
 
     private var outputControls: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: StudioMetrics.sm) {
             StudioGroupLabel(title: "Output", systemImage: "dot.radiowaves.left.and.right")
+                .padding(.bottom, StudioMetrics.xs)
 
-            HStack(spacing: 8) {
+            HStack(spacing: StudioMetrics.sm) {
                 Button {
                     if store.canStopStream {
                         store.stopStream()
@@ -139,9 +140,7 @@ struct StudioControlPanelView: View {
                         .minimumScaleFactor(0.78)
                         .frame(maxWidth: .infinity)
                 }
-                .buttonStyle(.borderedProminent)
-                .tint(streamActionTint)
-                .controlSize(.regular)
+                .buttonStyle(StudioPrimaryButtonStyle(tint: streamActionTint))
                 .disabled(!store.canStartStream && !store.canStopStream)
                 .help(streamActionHelp)
                 .accessibilityLabel(Text(streamActionTitle))
@@ -160,8 +159,7 @@ struct StudioControlPanelView: View {
                         .minimumScaleFactor(0.78)
                         .frame(maxWidth: .infinity)
                 }
-                .buttonStyle(.bordered)
-                .controlSize(.regular)
+                .buttonStyle(StudioSecondaryButtonStyle())
                 .disabled(!store.canStartRecording && !store.canStopRecording)
                 .help(recordingActionHelp)
                 .accessibilityLabel(Text(recordingActionTitle))
@@ -169,7 +167,7 @@ struct StudioControlPanelView: View {
                 .accessibilityHint(Text(recordingActionHelp))
             }
 
-            HStack(spacing: 8) {
+            HStack(spacing: StudioMetrics.sm) {
                 StudioBadge(title: store.streamState.title, systemImage: transportSymbol, tint: streamStateTint)
                 StudioBadge(title: store.recordingState.title, systemImage: "record.circle", tint: recordingStateTint)
             }
@@ -203,8 +201,9 @@ struct StudioControlPanelView: View {
         systemImage: String,
         @ViewBuilder content: () -> Content
     ) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: StudioMetrics.sm) {
             StudioGroupLabel(title: title, systemImage: systemImage)
+                .padding(.bottom, StudioMetrics.xs)
             content()
         }
     }

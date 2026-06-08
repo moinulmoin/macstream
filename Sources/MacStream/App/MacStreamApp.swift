@@ -185,13 +185,13 @@ struct MacStreamApp: App {
         destinationModeRaw = destination.mode.rawValue
         destinationName = destination.name
 
-        if destination.usesPreviewSentinelURL || destination.rtmpURL.isEmpty {
-            if !MacStreamDestinationKeychain.deleteRTMPURL() {
-                store.reportPersistenceFailure("RTMP destination could not be removed from Keychain.")
-            }
-        } else {
+        if destination.isPersistableEndpoint {
             if !MacStreamDestinationKeychain.saveRTMPURL(destination.rtmpURL) {
                 store.reportPersistenceFailure("RTMP destination could not be saved to Keychain.")
+            }
+        } else {
+            if !MacStreamDestinationKeychain.deleteRTMPURL() {
+                store.reportPersistenceFailure("RTMP destination could not be removed from Keychain.")
             }
         }
     }

@@ -7,5 +7,6 @@ struct ContentView: View {
     var body: some View {
         StudioView(store: store)
             .preferredColorScheme(.dark)
+            .tint(StudioPalette.accent)
     }
 }

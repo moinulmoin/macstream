@@ -28,7 +28,7 @@ struct StudioView: View {
             LinearGradient(
                 colors: [
                     Color.black.opacity(0.07),
-                    Color.accentColor.opacity(0.035),
+                    StudioPalette.accent.opacity(0.05),
                     Color.black.opacity(0.02)
                 ],
                 startPoint: .topLeading,
@@ -247,11 +247,12 @@ private struct InspectorHeaderView: View {
     }
 
     private var statusTint: Color {
-        if store.isLive || store.recordingState == .recording { return .red }
-        if store.isStreamConnecting || store.isRecordingStarting || store.isRecordingStopping { return .orange }
-        if store.shouldShowSetupChecklist { return .orange }
-        if hasStreamFailure || store.recordingState.isFailed { return .red }
-        return .green
+        if store.isLive { return StudioPalette.live }
+        if store.recordingState == .recording { return StudioPalette.recording }
+        if store.isStreamConnecting || store.isRecordingStarting || store.isRecordingStopping { return StudioPalette.warning }
+        if store.shouldShowSetupChecklist { return StudioPalette.warning }
+        if hasStreamFailure || store.recordingState.isFailed { return StudioPalette.live }
+        return StudioPalette.success
     }
 
     private var statusIsFilled: Bool {
@@ -274,18 +275,18 @@ private struct InspectorHeaderView: View {
     private var streamTint: Color {
         switch store.streamState {
         case .offline: .secondary
-        case .connecting: .orange
-        case .live: .green
-        case .degraded, .failed: .red
+        case .connecting: StudioPalette.warning
+        case .live: StudioPalette.success
+        case .degraded, .failed: StudioPalette.live
         }
     }
 
     private var recordingTint: Color {
         switch store.recordingState {
         case .stopped: .secondary
-        case .starting: .orange
-        case .recording: .red
-        case .failed: .red
+        case .starting: StudioPalette.warning
+        case .recording: StudioPalette.recording
+        case .failed: StudioPalette.live
         }
     }
 }
@@ -320,6 +321,9 @@ private struct SessionStatusStripView: View {
 
     private var badgeRow: some View {
         HStack(spacing: 8) {
+            if store.isLive {
+                StudioStatusDot(tint: StudioPalette.live, pulsing: true)
+            }
             streamBadge
             recordingBadge
             StudioBadge(title: store.directorMode.title, systemImage: "sparkles", tint: directorTint)
@@ -330,6 +334,9 @@ private struct SessionStatusStripView: View {
     private var compactBadgeRow: some View {
         VStack(alignment: .trailing, spacing: 6) {
             HStack(spacing: 8) {
+                if store.isLive {
+                    StudioStatusDot(tint: StudioPalette.live, pulsing: true)
+                }
                 streamBadge
                 recordingBadge
             }
@@ -373,9 +380,9 @@ private struct SessionStatusStripView: View {
     }
 
     private var streamTint: Color {
-        if store.isLive { return .red }
-        if store.isStreamConnecting { return .orange }
-        if hasStreamFailure { return .red }
+        if store.isLive { return StudioPalette.live }
+        if store.isStreamConnecting { return StudioPalette.warning }
+        if hasStreamFailure { return StudioPalette.live }
         return .secondary
     }
 
@@ -395,17 +402,17 @@ private struct SessionStatusStripView: View {
     }
 
     private var recordingTint: Color {
-        if store.recordingState == .recording { return .red }
-        if store.isRecordingStarting || store.isRecordingStopping { return .orange }
-        if store.recordingState.isFailed { return .red }
+        if store.recordingState == .recording { return StudioPalette.recording }
+        if store.isRecordingStarting || store.isRecordingStopping { return StudioPalette.warning }
+        if store.recordingState.isFailed { return StudioPalette.live }
         return .secondary
     }
 
     private var directorTint: Color {
         switch store.directorMode {
         case .paused: .secondary
-        case .suggest: .accentColor
-        case .auto: .purple
+        case .suggest: StudioPalette.info
+        case .auto: StudioPalette.accent
         }
     }
 
@@ -449,8 +456,8 @@ private struct PreviewOutputHUD: View {
     }
 
     private var streamTint: Color {
-        if store.isLive { return .red }
-        if store.isStreamConnecting { return .orange }
+        if store.isLive { return StudioPalette.live }
+        if store.isStreamConnecting { return StudioPalette.warning }
         return .secondary
     }
 
@@ -468,8 +475,8 @@ private struct PreviewOutputHUD: View {
     }
 
     private var recordingTint: Color {
-        if store.recordingState == .recording { return .red }
-        if store.isRecordingStarting || store.isRecordingStopping { return .orange }
+        if store.recordingState == .recording { return StudioPalette.recording }
+        if store.isRecordingStarting || store.isRecordingStopping { return StudioPalette.warning }
         return .secondary
     }
 }
@@ -488,11 +495,11 @@ private struct InspectorRailView: View {
             }
 
             if store.shouldShowSetupChecklist {
-                statusIcon("checklist.checked", tint: .orange, help: "Preflight needs attention")
+                statusIcon("checklist.checked", tint: StudioPalette.warning, help: "Preflight needs attention")
             }
 
             if showsReadyIcon {
-                statusIcon("checkmark.circle.fill", tint: .green, help: "Ready")
+                statusIcon("checkmark.circle.fill", tint: StudioPalette.success, help: "Ready")
             }
 
             Spacer()
@@ -542,9 +549,9 @@ private struct InspectorRailView: View {
     }
 
     private var streamTint: Color {
-        if store.isLive { return .red }
-        if store.isStreamConnecting { return .orange }
-        if hasStreamFailure { return .red }
+        if store.isLive { return StudioPalette.live }
+        if store.isStreamConnecting { return StudioPalette.warning }
+        if hasStreamFailure { return StudioPalette.live }
         return .secondary
     }
 
@@ -556,9 +563,9 @@ private struct InspectorRailView: View {
     }
 
     private var recordingTint: Color {
-        if store.recordingState == .recording { return .red }
-        if store.isRecordingStarting || store.isRecordingStopping { return .orange }
-        if store.recordingState.isFailed { return .red }
+        if store.recordingState == .recording { return StudioPalette.recording }
+        if store.isRecordingStarting || store.isRecordingStopping { return StudioPalette.warning }
+        if store.recordingState.isFailed { return StudioPalette.live }
         return .secondary
     }
 

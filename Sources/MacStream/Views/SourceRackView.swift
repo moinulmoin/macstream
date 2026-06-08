@@ -7,18 +7,11 @@ struct SourceRackView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            HStack(alignment: .top, spacing: 10) {
-                VStack(alignment: .leading, spacing: 3) {
-                    Label("Sources", systemImage: "slider.horizontal.3")
-                        .font(.headline)
-
-                    Text("Keep the required inputs armed and balanced before output starts.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-
-                Spacer()
-
+            StudioPanelHeader(
+                title: "Sources",
+                systemImage: "slider.horizontal.3",
+                subtitle: "Keep the required inputs armed and balanced before output starts."
+            ) {
                 HStack(spacing: 8) {
                     StudioBadge(title: "\(primarySources.count) primary", systemImage: "switch.2", tint: .secondary)
                     refreshDevicesButton

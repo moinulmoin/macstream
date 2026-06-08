@@ -6,14 +6,22 @@ struct DestinationView: View {
     var store: StudioStore
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack(alignment: .top, spacing: 10) {
-                Label("Destination", systemImage: "point.3.connected.trianglepath.dotted")
-                    .font(.headline)
+        VStack(alignment: .leading, spacing: StudioMetrics.md) {
+            StudioPanelHeader(
+                title: "Destination",
+                systemImage: "point.3.connected.trianglepath.dotted",
+                subtitle: store.destination.safeDisplayDetail
+            ) {
+                HStack(spacing: StudioMetrics.sm) {
+                    StudioBadge(title: store.destination.isReadyToStart ? "Ready" : "Needs setup", systemImage: store.destination.mode.symbolName, tint: destinationDetailTint)
 
-                Spacer()
-
-                StudioBadge(title: store.destination.isReadyToStart ? "Ready" : "Needs setup", systemImage: store.destination.mode.symbolName, tint: destinationDetailTint)
+                    SettingsLink {
+                        Label("Configure", systemImage: "gearshape")
+                            .labelStyle(.titleAndIcon)
+                    }
+                    .controlSize(.small)
+                    .help("Open destination setup")
+                }
             }
             Picker("Destination Mode", selection: destinationMode) {
                 ForEach(StreamDestinationMode.allCases) { mode in
@@ -25,25 +33,18 @@ struct DestinationView: View {
             .labelsHidden()
             .disabled(!store.canEditDestination)
 
-            HStack(alignment: .firstTextBaseline, spacing: 8) {
+            HStack(alignment: .firstTextBaseline, spacing: StudioMetrics.sm) {
                 Label(store.destination.safeDisplayDetail, systemImage: store.destination.mode.symbolName)
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(destinationDetailTint)
                     .lineLimit(2)
                     .fixedSize(horizontal: false, vertical: true)
 
-                Spacer(minLength: 8)
-
-                SettingsLink {
-                    Label("Configure", systemImage: "gearshape")
-                        .labelStyle(.titleAndIcon)
-                }
-                .controlSize(.small)
-                .help("Open destination setup")
+                Spacer(minLength: StudioMetrics.sm)
             }
 
             if let url = store.lastRecordingURL {
-                VStack(alignment: .leading, spacing: 8) {
+                VStack(alignment: .leading, spacing: StudioMetrics.sm) {
                     Divider()
 
                     Label("Last Recording", systemImage: "record.circle")
@@ -56,7 +57,7 @@ struct DestinationView: View {
                         .lineLimit(2)
                         .textSelection(.enabled)
 
-                    HStack {
+                    HStack(spacing: StudioMetrics.sm) {
                         Button {
                             NSWorkspace.shared.open(url)
                         } label: {
@@ -86,6 +87,6 @@ struct DestinationView: View {
     }
 
     private var destinationDetailTint: Color {
-        store.destination.isReadyToStart ? .secondary : .orange
+        store.destination.isReadyToStart ? .secondary : StudioPalette.warning
     }
 }

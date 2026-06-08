@@ -7,19 +7,11 @@ struct CapturePreflightView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            HStack(alignment: .top, spacing: 10) {
-                VStack(alignment: .leading, spacing: 3) {
-                    Label("Capture", systemImage: "checklist")
-                        .font(.headline)
-
-                    Text(store.captureReport.summary)
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-
-                Spacer()
-
+            StudioPanelHeader(
+                title: "Capture",
+                systemImage: "checklist",
+                subtitle: store.captureReport.summary
+            ) {
                 Button {
                     store.scanCaptureDevices()
                 } label: {
@@ -36,7 +28,6 @@ struct CapturePreflightView: View {
                 .accessibilityLabel(Text(store.isScanningCapture ? "Checking capture" : "Check capture"))
                 .accessibilityHint(Text(store.captureScanBlockedReason ?? "Refresh camera, microphone, and screen permissions."))
             }
-
 
             if store.requiresRelaunchForRequiredCapturePermission,
                !store.shouldShowSetupChecklist {

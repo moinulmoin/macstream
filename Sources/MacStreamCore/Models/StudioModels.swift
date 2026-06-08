@@ -549,6 +549,8 @@ public struct MediaPipelineConfiguration: Equatable, Sendable {
     public var microphoneLevel: Double
     public var screenCaptureTarget: ScreenCaptureTarget?
     public var cameraEnhancements: CameraEnhancementSettings
+    public var cameraDeviceID: String?
+    public var microphoneDeviceID: String?
 
     public init(
         maxVideoWidth: Int = 1_920,
@@ -561,7 +563,9 @@ public struct MediaPipelineConfiguration: Equatable, Sendable {
         systemAudioLevel: Double = 1,
         microphoneLevel: Double = 1,
         screenCaptureTarget: ScreenCaptureTarget? = nil,
-        cameraEnhancements: CameraEnhancementSettings = CameraEnhancementSettings()
+        cameraEnhancements: CameraEnhancementSettings = CameraEnhancementSettings(),
+        cameraDeviceID: String? = nil,
+        microphoneDeviceID: String? = nil
     ) {
         self.maxVideoWidth = max(320, maxVideoWidth)
         self.framesPerSecond = min(max(framesPerSecond, 10), 60)
@@ -574,6 +578,8 @@ public struct MediaPipelineConfiguration: Equatable, Sendable {
         self.microphoneLevel = min(max(microphoneLevel, 0), 1)
         self.screenCaptureTarget = screenCaptureTarget
         self.cameraEnhancements = cameraEnhancements
+        self.cameraDeviceID = cameraDeviceID
+        self.microphoneDeviceID = microphoneDeviceID
     }
 }
 
@@ -913,6 +919,9 @@ public struct CaptureDeviceInfo: Identifiable, Equatable, Sendable {
         self.detail = detail
         self.permission = permission
     }
+
+    public static func cameraID(uniqueID: String) -> String { "camera-\(uniqueID)" }
+    public static func microphoneID(uniqueID: String) -> String { "microphone-\(uniqueID)" }
 
     public var screenCaptureTarget: ScreenCaptureTarget? {
         switch kind {

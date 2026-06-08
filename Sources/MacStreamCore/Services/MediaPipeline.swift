@@ -540,7 +540,7 @@ public final class SystemMediaPipeline: NSObject, MediaPipeline, SCStreamOutput,
         let usesPublishingMicrophoneSession = mediaConfiguration.capturesMicrophone && publishingMicrophoneCapture != nil
         let microphoneCapture = usesPublishingMicrophoneSession
             ? nil
-            : (mediaConfiguration.capturesMicrophone ? await makeMicrophoneCaptureIfAvailable() : nil)
+            : (mediaConfiguration.capturesMicrophone ? await makeMicrophoneCaptureIfAvailable(deviceID: mediaConfiguration.microphoneDeviceID) : nil)
         let hasMicrophoneCapture = usesPublishingMicrophoneSession || microphoneCapture != nil
         let microphoneInput: AVAssetWriterInput?
         if hasMicrophoneCapture {
@@ -734,7 +734,7 @@ public final class SystemMediaPipeline: NSObject, MediaPipeline, SCStreamOutput,
         )
     }
 
-    private func makeMicrophoneCaptureIfAvailable() async -> MicrophoneCapture? {
+    private func makeMicrophoneCaptureIfAvailable(deviceID: String?) async -> MicrophoneCapture? {
         let status = AVCaptureDevice.authorizationStatus(for: .audio)
         let isAllowed: Bool
 
@@ -750,7 +750,7 @@ public final class SystemMediaPipeline: NSObject, MediaPipeline, SCStreamOutput,
         }
 
         guard isAllowed,
-              let device = AVCaptureDevice.default(for: .audio),
+              let device = Self.audioCaptureDevice(matching: deviceID),
               let input = try? AVCaptureDeviceInput(device: device)
         else {
             return nil
@@ -790,8 +790,7 @@ public final class SystemMediaPipeline: NSObject, MediaPipeline, SCStreamOutput,
         }
 
         guard isAllowed,
-              let device = AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: .unspecified)
-                ?? AVCaptureDevice.default(for: .video),
+              let device = Self.videoCaptureDevice(matching: configuration.cameraDeviceID),
               let input = try? AVCaptureDeviceInput(device: device)
         else {
             return nil
@@ -823,6 +822,35 @@ public final class SystemMediaPipeline: NSObject, MediaPipeline, SCStreamOutput,
         return session.inputs.isEmpty || session.outputs.isEmpty
             ? nil
             : CameraCapture(session: session, output: output)
+    }
+
+    private static func videoCaptureDevice(matching id: String?) -> AVCaptureDevice? {
+        if let id {
+            let discovery = AVCaptureDevice.DiscoverySession(
+                deviceTypes: [.builtInWideAngleCamera, .external],
+                mediaType: .video,
+                position: .unspecified
+            )
+            if let match = discovery.devices.first(where: { CaptureDeviceInfo.cameraID(uniqueID: $0.uniqueID) == id }) {
+                return match
+            }
+        }
+        return AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: .unspecified)
+            ?? AVCaptureDevice.default(for: .video)
+    }
+
+    private static func audioCaptureDevice(matching id: String?) -> AVCaptureDevice? {
+        if let id {
+            let discovery = AVCaptureDevice.DiscoverySession(
+                deviceTypes: [.microphone],
+                mediaType: .audio,
+                position: .unspecified
+            )
+            if let match = discovery.devices.first(where: { CaptureDeviceInfo.microphoneID(uniqueID: $0.uniqueID) == id }) {
+                return match
+            }
+        }
+        return AVCaptureDevice.default(for: .audio)
     }
 
     private func startPublishingCapture() async throws {
@@ -887,7 +915,7 @@ public final class SystemMediaPipeline: NSObject, MediaPipeline, SCStreamOutput,
             microphoneOutput = recordingMicrophoneCapture.output
             ownsMicrophoneSession = false
         } else if mediaConfiguration.capturesMicrophone {
-            let microphoneCapture = await makeMicrophoneCaptureIfAvailable()
+            let microphoneCapture = await makeMicrophoneCaptureIfAvailable(deviceID: mediaConfiguration.microphoneDeviceID)
             microphoneSession = microphoneCapture?.session
             microphoneOutput = microphoneCapture?.output
             ownsMicrophoneSession = microphoneCapture != nil

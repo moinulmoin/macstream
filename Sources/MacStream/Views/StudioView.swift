@@ -63,6 +63,7 @@ private struct PreviewColumnView: View {
                     signals: store.latestSignals,
                     previewConfiguration: store.effectivePerformanceMode.previewCaptureConfiguration,
                     cameraEnhancements: store.preferences.cameraEnhancements,
+                    cameraDeviceID: store.selectedCameraDeviceID,
                     isCameraEnabled: store.isSourceEnabled(.camera),
                     isCameraCaptureReady: store.captureReport.hasGrantedPermission(for: .camera),
                     isScreenEnabled: store.isSourceEnabled(.screen),

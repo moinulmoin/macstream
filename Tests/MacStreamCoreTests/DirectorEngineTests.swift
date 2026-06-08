@@ -337,12 +337,12 @@ func studioKeepsFrequentControlsInBottomDeck() throws {
     #expect(capturePreflightSource.contains("requiresRelaunchForRequiredCapturePermission"))
     #expect(capturePreflightSource.contains("!store.shouldShowSetupChecklist"))
     #expect(capturePreflightSource.contains("Label(\"Reopen MacStream\""))
-    #expect(capturePreflightSource.contains("@SceneStorage(\"MacStream.CapturePreflightView.showDeviceDetails\")"))
+    #expect(!capturePreflightSource.contains("showDeviceDetails"))
     #expect(capturePreflightSource.contains("attentionDevices"))
-    #expect(capturePreflightSource.contains("DisclosureGroup(isExpanded: $showDeviceDetails)"))
-    #expect(capturePreflightSource.contains("Label(\"Device details\", systemImage: \"list.bullet.rectangle\")"))
+    #expect(!capturePreflightSource.contains("DisclosureGroup"))
+    #expect(!capturePreflightSource.contains("Device details"))
     #expect(capturePreflightSource.contains("deviceRows(for: attentionDevices)"))
-    #expect(capturePreflightSource.contains("Array(store.captureReport.devices.prefix(6))"))
+    #expect(!capturePreflightSource.contains("Picker(\"Screen target\""))
     #expect(settingsSource.contains("Section(\"Startup\")"))
     #expect(settingsSource.contains("@AppStorage(\"defaultSceneKind\")"))
     #expect(settingsSource.contains("Picker(\"Startup scene\""))
@@ -417,6 +417,16 @@ func studioKeepsFrequentControlsInBottomDeck() throws {
     #expect(sourceRackSource.contains("sourceLevelHelp(for: source)"))
     #expect(sourceRackSource.contains("Switch scenes or stop capture before turning off a required source"))
     #expect(sourceRackSource.contains("Switch scenes or stop capture before adjusting a required source"))
+    #expect(sourceRackSource.contains("refreshDevicesButton"))
+    #expect(sourceRackSource.contains("store.scanCaptureDevices()"))
+    #expect(sourceRackSource.contains("private func deviceSelector(for kind: SourceKind)"))
+    #expect(sourceRackSource.contains("store.availableCameraDevices"))
+    #expect(sourceRackSource.contains("store.availableMicrophoneDevices"))
+    #expect(sourceRackSource.contains("store.availableScreenCaptureTargets"))
+    #expect(sourceRackSource.contains("store.selectCameraDevice(id: $0)"))
+    #expect(sourceRackSource.contains("store.selectMicrophoneDevice(id: $0)"))
+    #expect(sourceRackSource.contains("store.selectScreenCaptureTarget(target)"))
+    #expect(sourceRackSource.contains("store.canSelectInputDevice"))
 }
 
 @Test
@@ -646,7 +656,11 @@ func studioStoreKeepsRuntimeStateReadOnlyOutsideStore() throws {
         "effectivePerformanceMode",
         "captureReport",
         "isScanningCapture",
-        "hasRunInitialCaptureScan"
+        "hasRunInitialCaptureScan",
+        "selectedCameraDeviceID",
+        "cameraDeviceIDPreference",
+        "selectedMicrophoneDeviceID",
+        "microphoneDeviceIDPreference"
     ]
 
     for property in readOnlyRuntimeState {
@@ -3204,6 +3218,172 @@ func selectingScreenCaptureTargetUpdatesMediaAndSignals() async {
     #expect(pipeline.lastConfiguration?.screenCaptureTarget == windowTarget)
     #expect(signalProvider.lastConfiguration?.screenCaptureTarget == windowTarget)
     #expect(store.events.contains { $0.title == "Screen target" && $0.detail == "Slides - Keynote" })
+}
+
+@Test
+@MainActor
+func availableInputDevicesListOnlyGrantedDevices() async {
+    let report = CapturePreflightReport(
+        devices: [
+            CaptureDeviceInfo(id: "camera-front", kind: .camera, name: "Front Camera", permission: .granted),
+            CaptureDeviceInfo(id: "camera-ext", kind: .camera, name: "External Camera", permission: .denied),
+            CaptureDeviceInfo(id: "microphone-built", kind: .microphone, name: "Built-in Mic", permission: .granted),
+            CaptureDeviceInfo(id: "microphone-usb", kind: .microphone, name: "USB Mic", permission: .notDetermined),
+            CaptureDeviceInfo(id: "display-7", kind: .display, name: "Studio Display", detail: "3024x1964", permission: .granted)
+        ],
+        summary: "Capture sources are ready."
+    )
+    let store = StudioStore(captureDeviceProvider: FixedCaptureDeviceProvider(report: report))
+
+    store.scanCaptureDevices()
+    try? await Task.sleep(for: .milliseconds(30))
+
+    #expect(store.availableCameraDevices.map(\.id) == ["camera-front"])
+    #expect(store.availableMicrophoneDevices.map(\.id) == ["microphone-built"])
+}
+
+@Test
+@MainActor
+func captureScanSelectsFirstInputDevicesAndConfiguresPipeline() async {
+    let pipeline = ConfigurableMediaPipeline()
+    let report = CapturePreflightReport(
+        devices: [
+            CaptureDeviceInfo(id: "camera-front", kind: .camera, name: "Front Camera", permission: .granted),
+            CaptureDeviceInfo(id: "camera-ext", kind: .camera, name: "External Camera", permission: .granted),
+            CaptureDeviceInfo(id: "microphone-built", kind: .microphone, name: "Built-in Mic", permission: .granted),
+            CaptureDeviceInfo(id: "display-7", kind: .display, name: "Studio Display", detail: "3024x1964", permission: .granted)
+        ],
+        summary: "Capture sources are ready."
+    )
+    let store = StudioStore(
+        mediaPipeline: pipeline,
+        captureDeviceProvider: FixedCaptureDeviceProvider(report: report)
+    )
+
+    store.scanCaptureDevices()
+    try? await Task.sleep(for: .milliseconds(30))
+
+    #expect(store.selectedCameraDeviceID == "camera-front")
+    #expect(store.selectedMicrophoneDeviceID == "microphone-built")
+    #expect(pipeline.lastConfiguration?.cameraDeviceID == "camera-front")
+    #expect(pipeline.lastConfiguration?.microphoneDeviceID == "microphone-built")
+}
+
+@Test
+@MainActor
+func selectingCameraDeviceUpdatesMediaConfiguration() async {
+    let pipeline = ConfigurableMediaPipeline()
+    let report = CapturePreflightReport(
+        devices: [
+            CaptureDeviceInfo(id: "camera-front", kind: .camera, name: "Front Camera", permission: .granted),
+            CaptureDeviceInfo(id: "camera-ext", kind: .camera, name: "External Camera", permission: .granted)
+        ],
+        summary: "Capture sources are ready."
+    )
+    let store = StudioStore(
+        mediaPipeline: pipeline,
+        captureDeviceProvider: FixedCaptureDeviceProvider(report: report)
+    )
+
+    store.scanCaptureDevices()
+    try? await Task.sleep(for: .milliseconds(30))
+    store.selectCameraDevice(id: "camera-ext")
+
+    #expect(store.selectedCameraDeviceID == "camera-ext")
+    #expect(pipeline.lastConfiguration?.cameraDeviceID == "camera-ext")
+    #expect(store.events.contains { $0.title == "Camera device" && $0.detail == "External Camera" })
+}
+
+@Test
+@MainActor
+func selectingMicrophoneDeviceUpdatesMediaConfiguration() async {
+    let pipeline = ConfigurableMediaPipeline()
+    let report = CapturePreflightReport(
+        devices: [
+            CaptureDeviceInfo(id: "microphone-built", kind: .microphone, name: "Built-in Mic", permission: .granted),
+            CaptureDeviceInfo(id: "microphone-usb", kind: .microphone, name: "USB Mic", permission: .granted)
+        ],
+        summary: "Capture sources are ready."
+    )
+    let store = StudioStore(
+        mediaPipeline: pipeline,
+        captureDeviceProvider: FixedCaptureDeviceProvider(report: report)
+    )
+
+    store.scanCaptureDevices()
+    try? await Task.sleep(for: .milliseconds(30))
+    store.selectMicrophoneDevice(id: "microphone-usb")
+
+    #expect(store.selectedMicrophoneDeviceID == "microphone-usb")
+    #expect(pipeline.lastConfiguration?.microphoneDeviceID == "microphone-usb")
+    #expect(store.events.contains { $0.title == "Mic device" && $0.detail == "USB Mic" })
+}
+
+@Test
+@MainActor
+func savedCameraDevicePreferenceRestoresAfterScan() async {
+    let report = CapturePreflightReport(
+        devices: [
+            CaptureDeviceInfo(id: "camera-front", kind: .camera, name: "Front Camera", permission: .granted),
+            CaptureDeviceInfo(id: "camera-ext", kind: .camera, name: "External Camera", permission: .granted)
+        ],
+        summary: "Capture sources are ready."
+    )
+    let store = StudioStore(captureDeviceProvider: FixedCaptureDeviceProvider(report: report))
+
+    store.applySavedCameraDeviceIDPreference("camera-ext")
+    store.scanCaptureDevices()
+    try? await Task.sleep(for: .milliseconds(30))
+
+    #expect(store.selectedCameraDeviceID == "camera-ext")
+}
+
+@Test
+@MainActor
+func missingCameraDevicePreferenceFallsBackToFirstAvailable() async {
+    let report = CapturePreflightReport(
+        devices: [
+            CaptureDeviceInfo(id: "camera-front", kind: .camera, name: "Front Camera", permission: .granted)
+        ],
+        summary: "Capture sources are ready."
+    )
+    let store = StudioStore(captureDeviceProvider: FixedCaptureDeviceProvider(report: report))
+
+    store.applySavedCameraDeviceIDPreference("camera-missing")
+    store.scanCaptureDevices()
+    try? await Task.sleep(for: .milliseconds(30))
+
+    #expect(store.selectedCameraDeviceID == "camera-front")
+}
+
+@Test
+@MainActor
+func inputDeviceSelectionIsBlockedWhileStreamIsConnecting() async {
+    let pipeline = DelayedStartMediaPipeline()
+    let report = CapturePreflightReport(
+        devices: [
+            CaptureDeviceInfo(id: "camera-front", kind: .camera, name: "Front Camera", permission: .granted),
+            CaptureDeviceInfo(id: "camera-ext", kind: .camera, name: "External Camera", permission: .granted),
+            CaptureDeviceInfo(id: "display-7", kind: .display, name: "Studio Display", detail: "3024x1964", permission: .granted)
+        ],
+        summary: "Capture sources are ready."
+    )
+    let store = StudioStore(
+        mediaPipeline: pipeline,
+        captureDeviceProvider: FixedCaptureDeviceProvider(report: report)
+    )
+
+    store.scanCaptureDevices()
+    try? await Task.sleep(for: .milliseconds(30))
+    store.startStream()
+    try? await Task.sleep(for: .milliseconds(10))
+
+    #expect(store.isStreamConnecting)
+    #expect(!store.canSelectInputDevice)
+
+    store.selectCameraDevice(id: "camera-ext")
+
+    #expect(store.selectedCameraDeviceID == "camera-front")
 }
 
 @Test

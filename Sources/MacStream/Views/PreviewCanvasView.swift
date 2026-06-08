@@ -6,6 +6,7 @@ struct PreviewCanvasView: View {
     var signals: SignalSnapshot
     var previewConfiguration = PreviewCaptureConfiguration()
     var cameraEnhancements = CameraEnhancementSettings()
+    var cameraDeviceID: String?
     var isCameraEnabled = true
     var isCameraCaptureReady = true
     var isScreenEnabled = true
@@ -157,7 +158,8 @@ struct PreviewCanvasView: View {
                 ZStack {
                     CameraPreviewView(
                         configuration: previewConfiguration,
-                        cameraEnhancements: cameraEnhancements
+                        cameraEnhancements: cameraEnhancements,
+                        cameraDeviceID: cameraDeviceID
                     )
 
                     VStack {

@@ -55,6 +55,10 @@ public final class StudioStore {
     public private(set) var hasRunInitialCaptureScan = false
     public private(set) var selectedScreenCaptureTarget: ScreenCaptureTarget?
     public private(set) var screenCaptureTargetPreference: ScreenCaptureTarget?
+    public private(set) var selectedCameraDeviceID: String?
+    public private(set) var cameraDeviceIDPreference: String?
+    public private(set) var selectedMicrophoneDeviceID: String?
+    public private(set) var microphoneDeviceIDPreference: String?
     public private(set) var streamStartAttempt = 0
     public private(set) var streamStartMaxAttempts = 1
     public private(set) var isStreamStopping = false
@@ -273,6 +277,18 @@ public final class StudioStore {
 
     public var availableScreenCaptureTargets: [ScreenCaptureTarget] {
         captureReport.screenCaptureTargets
+    }
+
+    public var availableCameraDevices: [CaptureDeviceInfo] {
+        captureReport.devices.filter { $0.kind == .camera && $0.permission == .granted }
+    }
+
+    public var availableMicrophoneDevices: [CaptureDeviceInfo] {
+        captureReport.devices.filter { $0.kind == .microphone && $0.permission == .granted }
+    }
+
+    public var canSelectInputDevice: Bool {
+        canEditScreenCaptureTarget
     }
 
     public var missingRequiredCapturePermissionKinds: [CaptureDeviceKind] {
@@ -703,6 +719,22 @@ public final class StudioStore {
         applyPerformanceConfiguration()
     }
 
+    public func applySavedCameraDeviceIDPreference(_ id: String?) {
+        guard canSelectInputDevice, cameraDeviceIDPreference != id else { return }
+        cameraDeviceIDPreference = id
+        guard let id, let device = availableCameraDevices.first(where: { $0.id == id }), selectedCameraDeviceID != device.id else { return }
+        selectedCameraDeviceID = device.id
+        applyPerformanceConfiguration()
+    }
+
+    public func applySavedMicrophoneDeviceIDPreference(_ id: String?) {
+        guard canSelectInputDevice, microphoneDeviceIDPreference != id else { return }
+        microphoneDeviceIDPreference = id
+        guard let id, let device = availableMicrophoneDevices.first(where: { $0.id == id }), selectedMicrophoneDeviceID != device.id else { return }
+        selectedMicrophoneDeviceID = device.id
+        applyPerformanceConfiguration()
+    }
+
     public func applySavedSetupPrompt(_ prompt: String) {
         let boundedPrompt = Self.boundedSetupPrompt(prompt)
         guard setupPrompt != boundedPrompt else { return }
@@ -955,6 +987,28 @@ public final class StudioStore {
         addEvent(kind: .source, title: "Screen target", detail: target.title)
     }
 
+    public func selectCameraDevice(id: String) {
+        guard canSelectInputDevice else { return }
+        cameraDeviceIDPreference = id
+        guard selectedCameraDeviceID != id else { return }
+        selectedCameraDeviceID = id
+        applyPerformanceConfiguration()
+        if let name = captureReport.devices.first(where: { $0.id == id })?.name {
+            addEvent(kind: .source, title: "Camera device", detail: name)
+        }
+    }
+
+    public func selectMicrophoneDevice(id: String) {
+        guard canSelectInputDevice else { return }
+        microphoneDeviceIDPreference = id
+        guard selectedMicrophoneDeviceID != id else { return }
+        selectedMicrophoneDeviceID = id
+        applyPerformanceConfiguration()
+        if let name = captureReport.devices.first(where: { $0.id == id })?.name {
+            addEvent(kind: .source, title: "Mic device", detail: name)
+        }
+    }
+
     public func advanceDirector() {
         sampleSystemPressure()
         latestSignals = signalSnapshotApplyingSourceState(signalProvider.snapshot())
@@ -1197,6 +1251,7 @@ public final class StudioStore {
         if shouldPublishReport {
             captureReport = report
             updateSelectedScreenCaptureTarget(from: report)
+            updateSelectedInputDevices(from: report)
         }
         isScanningCapture = false
         hasRunInitialCaptureScan = true
@@ -1445,6 +1500,8 @@ public final class StudioStore {
         mediaConfiguration.sceneKind = selectedSceneKind
         mediaConfiguration.screenCaptureTarget = selectedScreenCaptureTarget
         mediaConfiguration.cameraEnhancements = preferences.cameraEnhancements
+        mediaConfiguration.cameraDeviceID = selectedCameraDeviceID
+        mediaConfiguration.microphoneDeviceID = selectedMicrophoneDeviceID
         if mediaConfiguration != lastAppliedMediaConfiguration {
             mediaPipeline.update(configuration: mediaConfiguration)
             lastAppliedMediaConfiguration = mediaConfiguration
@@ -1480,6 +1537,35 @@ public final class StudioStore {
 
         selectedScreenCaptureTarget = targets.first { $0.kind == .display } ?? targets.first
         applyPerformanceConfiguration()
+    }
+
+    private func updateSelectedInputDevices(from report: CapturePreflightReport) {
+        guard canSelectInputDevice else { return }
+
+        let cameras = report.devices.filter { $0.kind == .camera && $0.permission == .granted }
+        let microphones = report.devices.filter { $0.kind == .microphone && $0.permission == .granted }
+        let resolvedCamera = resolvedDeviceID(from: cameras, current: selectedCameraDeviceID, preference: cameraDeviceIDPreference)
+        let resolvedMicrophone = resolvedDeviceID(from: microphones, current: selectedMicrophoneDeviceID, preference: microphoneDeviceIDPreference)
+
+        var didChange = false
+        if resolvedCamera != selectedCameraDeviceID {
+            selectedCameraDeviceID = resolvedCamera
+            didChange = true
+        }
+        if resolvedMicrophone != selectedMicrophoneDeviceID {
+            selectedMicrophoneDeviceID = resolvedMicrophone
+            didChange = true
+        }
+        if didChange {
+            applyPerformanceConfiguration()
+        }
+    }
+
+    private func resolvedDeviceID(from devices: [CaptureDeviceInfo], current: String?, preference: String?) -> String? {
+        guard !devices.isEmpty else { return nil }
+        if let preference, devices.contains(where: { $0.id == preference }) { return preference }
+        if let current, devices.contains(where: { $0.id == current }) { return current }
+        return devices.first?.id
     }
 
     private func destinationDidChange(from previousDestination: StreamDestination) {

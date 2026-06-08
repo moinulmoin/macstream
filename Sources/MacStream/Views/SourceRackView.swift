@@ -19,7 +19,10 @@ struct SourceRackView: View {
 
                 Spacer()
 
-                StudioBadge(title: "\(primarySources.count) primary", systemImage: "switch.2", tint: .secondary)
+                HStack(spacing: 8) {
+                    StudioBadge(title: "\(primarySources.count) primary", systemImage: "switch.2", tint: .secondary)
+                    refreshDevicesButton
+                }
             }
 
             sourceRows(for: primarySources)
@@ -92,6 +95,8 @@ struct SourceRackView: View {
                     .accessibilityValue(Text(source.isEnabled ? "On" : "Off"))
                     .accessibilityHint(Text(sourceToggleHelp(for: source)))
                 }
+
+                deviceSelector(for: source.kind)
 
                 if source.kind.supportsLevelControl {
                     HStack(spacing: 8) {
@@ -168,6 +173,102 @@ struct SourceRackView: View {
 
         return "Switch scenes or stop capture before adjusting a required source"
     }
+
+    private var refreshDevicesButton: some View {
+        Button {
+            store.scanCaptureDevices()
+        } label: {
+            if store.isScanningCapture {
+                ProgressView()
+                    .controlSize(.small)
+            } else {
+                Label("Refresh", systemImage: "arrow.clockwise")
+            }
+        }
+        .buttonStyle(.bordered)
+        .controlSize(.small)
+        .disabled(!store.canScanCaptureDevices)
+        .help(store.captureScanBlockedReason ?? "Re-scan cameras, microphones, and screens")
+        .accessibilityLabel(Text(store.isScanningCapture ? "Refreshing devices" : "Refresh devices"))
+        .accessibilityHint(Text(store.captureScanBlockedReason ?? "List the currently available capture devices."))
+    }
+
+    @ViewBuilder
+    private func deviceSelector(for kind: SourceKind) -> some View {
+        switch kind {
+        case .camera:
+            devicePicker(
+                title: "Camera",
+                options: store.availableCameraDevices.map { DeviceOption(id: $0.id, name: $0.name) },
+                selectedID: store.selectedCameraDeviceID,
+                isEnabled: store.canSelectInputDevice,
+                emptyHint: "No cameras found. Grant camera access, then Refresh."
+            ) { store.selectCameraDevice(id: $0) }
+        case .microphone:
+            devicePicker(
+                title: "Microphone",
+                options: store.availableMicrophoneDevices.map { DeviceOption(id: $0.id, name: $0.name) },
+                selectedID: store.selectedMicrophoneDeviceID,
+                isEnabled: store.canSelectInputDevice,
+                emptyHint: "No microphones found. Grant mic access, then Refresh."
+            ) { store.selectMicrophoneDevice(id: $0) }
+        case .screen:
+            devicePicker(
+                title: "Screen",
+                options: store.availableScreenCaptureTargets.map { DeviceOption(id: $0.id, name: $0.title) },
+                selectedID: store.selectedScreenCaptureTarget?.id,
+                isEnabled: store.canEditScreenCaptureTarget,
+                emptyHint: "No screens found. Grant Screen Recording, then Refresh."
+            ) { id in
+                if let target = store.availableScreenCaptureTargets.first(where: { $0.id == id }) {
+                    store.selectScreenCaptureTarget(target)
+                }
+            }
+        case .systemAudio:
+            EmptyView()
+        }
+    }
+
+    @ViewBuilder
+    private func devicePicker(
+        title: String,
+        options: [DeviceOption],
+        selectedID: String?,
+        isEnabled: Bool,
+        emptyHint: String,
+        onSelect: @escaping (String) -> Void
+    ) -> some View {
+        if options.isEmpty {
+            Label(emptyHint, systemImage: "exclamationmark.triangle")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        } else {
+            HStack(spacing: 8) {
+                Image(systemName: "chevron.down.circle")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+
+                Picker(title, selection: Binding(
+                    get: { selectedID ?? options.first?.id },
+                    set: { newID in if let newID { onSelect(newID) } }
+                )) {
+                    ForEach(options) { option in
+                        Text(option.name).tag(Optional(option.id))
+                    }
+                }
+                .labelsHidden()
+                .pickerStyle(.menu)
+                .disabled(!isEnabled)
+                .help(isEnabled ? "Choose the \(title.lowercased()) to use" : "Stop capture before changing the \(title.lowercased())")
+                .accessibilityLabel(Text("\(title) device"))
+            }
+        }
+    }
+}
+
+private struct DeviceOption: Identifiable {
+    let id: String
+    let name: String
 }
 
 private struct CameraEnhancementControls: View {

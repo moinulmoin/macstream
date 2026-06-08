@@ -4,7 +4,6 @@ import MacStreamCore
 
 struct CapturePreflightView: View {
     var store: StudioStore
-    @SceneStorage("MacStream.CapturePreflightView.showDeviceDetails") private var showDeviceDetails = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -52,17 +51,6 @@ struct CapturePreflightView: View {
                 .help("Quit and reopen MacStream after granting Screen Recording")
             }
 
-            if !store.availableScreenCaptureTargets.isEmpty {
-                Picker("Screen target", selection: screenCaptureTarget) {
-                    ForEach(store.availableScreenCaptureTargets) { target in
-                        Text(target.title)
-                            .tag(Optional(target))
-                    }
-                }
-                .disabled(!store.canEditScreenCaptureTarget)
-                .help(store.canEditScreenCaptureTarget ? "Choose the display or window to preview and record" : "Stop capture before changing the screen target")
-            }
-
             if store.hasRunInitialCaptureScan {
                 Label("Checked on launch", systemImage: "checkmark.seal")
                     .font(.caption)
@@ -71,14 +59,6 @@ struct CapturePreflightView: View {
 
             if !attentionDevices.isEmpty {
                 deviceRows(for: attentionDevices)
-            } else if !store.captureReport.devices.isEmpty {
-                DisclosureGroup(isExpanded: $showDeviceDetails) {
-                    deviceRows(for: visibleDeviceDetails)
-                } label: {
-                    Label("Device details", systemImage: "list.bullet.rectangle")
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(.secondary)
-                }
             }
         }
         .studioCard()
@@ -86,10 +66,6 @@ struct CapturePreflightView: View {
 
     private var attentionDevices: [CaptureDeviceInfo] {
         store.captureReport.devices.filter { $0.permission != .granted }
-    }
-
-    private var visibleDeviceDetails: [CaptureDeviceInfo] {
-        Array(store.captureReport.devices.prefix(6))
     }
 
     private func deviceRows(for devices: [CaptureDeviceInfo]) -> some View {
@@ -165,16 +141,6 @@ struct CapturePreflightView: View {
         case .notDetermined: .orange
         case .unknown: .secondary
         }
-    }
-
-    private var screenCaptureTarget: Binding<ScreenCaptureTarget?> {
-        Binding(
-            get: { store.selectedScreenCaptureTarget },
-            set: { target in
-                guard let target else { return }
-                store.selectScreenCaptureTarget(target)
-            }
-        )
     }
 
 }

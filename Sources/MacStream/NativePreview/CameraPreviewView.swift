@@ -7,9 +7,10 @@ import SwiftUI
 struct CameraPreviewView: NSViewRepresentable {
     var configuration = PreviewCaptureConfiguration()
     var cameraEnhancements = CameraEnhancementSettings()
+    var cameraDeviceID: String?
 
     func makeCoordinator() -> Coordinator {
-        Coordinator(configuration: configuration, cameraEnhancements: cameraEnhancements)
+        Coordinator(configuration: configuration, cameraEnhancements: cameraEnhancements, cameraDeviceID: cameraDeviceID)
     }
 
     func makeNSView(context: Context) -> CameraPreviewNSView {
@@ -22,7 +23,7 @@ struct CameraPreviewView: NSViewRepresentable {
 
     func updateNSView(_ nsView: CameraPreviewNSView, context: Context) {
         nsView.update(cameraEnhancements: cameraEnhancements)
-        context.coordinator.update(configuration: configuration, cameraEnhancements: cameraEnhancements)
+        context.coordinator.update(configuration: configuration, cameraEnhancements: cameraEnhancements, cameraDeviceID: cameraDeviceID)
         if nsView.previewLayer.session !== context.coordinator.session {
             nsView.previewLayer.session = context.coordinator.session
         }
@@ -41,12 +42,14 @@ struct CameraPreviewView: NSViewRepresentable {
         private var requestedPreset: AVCaptureSession.Preset
         private var requestedFramesPerSecond: Int
         private var requestedCameraEnhancements: CameraEnhancementSettings
+        private var requestedDeviceID: String?
         private weak var videoDevice: AVCaptureDevice?
 
-        init(configuration: PreviewCaptureConfiguration, cameraEnhancements: CameraEnhancementSettings) {
+        init(configuration: PreviewCaptureConfiguration, cameraEnhancements: CameraEnhancementSettings, cameraDeviceID: String?) {
             self.requestedPreset = Self.sessionPreset(for: configuration)
             self.requestedFramesPerSecond = Self.frameRateLimit(for: configuration)
             self.requestedCameraEnhancements = cameraEnhancements
+            self.requestedDeviceID = cameraDeviceID
         }
 
         func start() {
@@ -64,7 +67,7 @@ struct CameraPreviewView: NSViewRepresentable {
             }
         }
 
-        func update(configuration: PreviewCaptureConfiguration, cameraEnhancements: CameraEnhancementSettings) {
+        func update(configuration: PreviewCaptureConfiguration, cameraEnhancements: CameraEnhancementSettings, cameraDeviceID: String?) {
             let preset = Self.sessionPreset(for: configuration)
             let framesPerSecond = Self.frameRateLimit(for: configuration)
 
@@ -73,12 +76,17 @@ struct CameraPreviewView: NSViewRepresentable {
                 let shouldUpdateSession = self.requestedPreset != preset
                     || self.requestedFramesPerSecond != framesPerSecond
                 let shouldUpdateCameraTuning = self.requestedCameraEnhancements != cameraEnhancements
-                guard shouldUpdateSession || shouldUpdateCameraTuning else { return }
+                let shouldSwitchDevice = self.requestedDeviceID != cameraDeviceID
+                guard shouldUpdateSession || shouldUpdateCameraTuning || shouldSwitchDevice else { return }
 
                 self.requestedPreset = preset
                 self.requestedFramesPerSecond = framesPerSecond
                 self.requestedCameraEnhancements = cameraEnhancements
+                self.requestedDeviceID = cameraDeviceID
                 guard self.isConfigured else { return }
+                if shouldSwitchDevice {
+                    self.reconfigureInput()
+                }
 
                 if let videoDevice = self.videoDevice {
                     if shouldUpdateSession {
@@ -122,8 +130,7 @@ struct CameraPreviewView: NSViewRepresentable {
                     self.applyRequestedPreset()
                     defer { self.session.commitConfiguration() }
 
-                    guard let device = AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: .unspecified)
-                        ?? AVCaptureDevice.default(for: .video),
+                    guard let device = Self.resolveDevice(matching: self.requestedDeviceID),
                           let input = try? AVCaptureDeviceInput(device: device),
                           self.session.canAddInput(input)
                     else {
@@ -141,6 +148,41 @@ struct CameraPreviewView: NSViewRepresentable {
                     self.session.startRunning()
                 }
             }
+        }
+
+        private func reconfigureInput() {
+            session.beginConfiguration()
+            defer { session.commitConfiguration() }
+            for input in session.inputs {
+                session.removeInput(input)
+            }
+            guard let device = Self.resolveDevice(matching: requestedDeviceID),
+                  let input = try? AVCaptureDeviceInput(device: device),
+                  session.canAddInput(input)
+            else {
+                videoDevice = nil
+                return
+            }
+            session.addInput(input)
+            videoDevice = device
+            applyRequestedPreset()
+            applyRequestedFrameRateLimit(to: device)
+            applyRequestedCameraTuning(to: device)
+        }
+
+        private static func resolveDevice(matching id: String?) -> AVCaptureDevice? {
+            if let id {
+                let discovery = AVCaptureDevice.DiscoverySession(
+                    deviceTypes: [.builtInWideAngleCamera, .external],
+                    mediaType: .video,
+                    position: .unspecified
+                )
+                if let match = discovery.devices.first(where: { CaptureDeviceInfo.cameraID(uniqueID: $0.uniqueID) == id }) {
+                    return match
+                }
+            }
+            return AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: .unspecified)
+                ?? AVCaptureDevice.default(for: .video)
         }
 
         private func applyRequestedPreset() {

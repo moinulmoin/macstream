@@ -86,7 +86,7 @@ public struct SystemCaptureDeviceProvider: CaptureDeviceProvider {
 
         return session.devices.map { device in
             CaptureDeviceInfo(
-                id: "camera-\(device.uniqueID)",
+                id: CaptureDeviceInfo.cameraID(uniqueID: device.uniqueID),
                 kind: .camera,
                 name: device.localizedName,
                 detail: device.manufacturer,
@@ -105,7 +105,7 @@ public struct SystemCaptureDeviceProvider: CaptureDeviceProvider {
 
         return session.devices.map { device in
             CaptureDeviceInfo(
-                id: "microphone-\(device.uniqueID)",
+                id: CaptureDeviceInfo.microphoneID(uniqueID: device.uniqueID),
                 kind: .microphone,
                 name: device.localizedName,
                 detail: device.manufacturer,

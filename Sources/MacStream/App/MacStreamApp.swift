@@ -22,6 +22,8 @@ struct MacStreamApp: App {
     @AppStorage("destinationName") private var destinationName = "Preview Session"
     @AppStorage("sourceConfiguration") private var sourceConfigurationJSON = ""
     @AppStorage("screenCaptureTargetPreference") private var screenCaptureTargetPreferenceJSON = ""
+    @AppStorage("cameraDeviceIDPreference") private var savedCameraDeviceID = ""
+    @AppStorage("microphoneDeviceIDPreference") private var savedMicrophoneDeviceID = ""
     @AppStorage("cameraEnhancementSettings") private var cameraEnhancementSettingsJSON = ""
     @State private var store = StudioStore(
         mediaPipeline: SystemMediaPipeline(),
@@ -43,6 +45,8 @@ struct MacStreamApp: App {
                     applySavedDestination()
                     applySavedSourceConfiguration()
                     applySavedScreenCaptureTargetPreference()
+                    applySavedCameraDeviceIDPreference()
+                    applySavedMicrophoneDeviceIDPreference()
                     syncPreferences()
                     store.scanCaptureDevicesIfNeeded()
                 }
@@ -66,6 +70,12 @@ struct MacStreamApp: App {
                 }
                 .onChange(of: store.screenCaptureTargetPreference) { _, newTarget in
                     saveScreenCaptureTargetPreference(newTarget)
+                }
+                .onChange(of: store.cameraDeviceIDPreference) { _, newID in
+                    saveCameraDeviceIDPreference(newID)
+                }
+                .onChange(of: store.microphoneDeviceIDPreference) { _, newID in
+                    saveMicrophoneDeviceIDPreference(newID)
                 }
                 .onChange(of: store.preferences.cameraEnhancements) { _, newSettings in
                     saveCameraEnhancementSettings(newSettings)
@@ -130,6 +140,12 @@ struct MacStreamApp: App {
                 }
                 .onChange(of: store.screenCaptureTargetPreference) { _, newTarget in
                     saveScreenCaptureTargetPreference(newTarget)
+                }
+                .onChange(of: store.cameraDeviceIDPreference) { _, newID in
+                    saveCameraDeviceIDPreference(newID)
+                }
+                .onChange(of: store.microphoneDeviceIDPreference) { _, newID in
+                    saveMicrophoneDeviceIDPreference(newID)
                 }
                 .onChange(of: store.preferences.cameraEnhancements) { _, newSettings in
                     saveCameraEnhancementSettings(newSettings)
@@ -263,6 +279,24 @@ struct MacStreamApp: App {
         }
 
         screenCaptureTargetPreferenceJSON = json
+    }
+
+    private func applySavedCameraDeviceIDPreference() {
+        guard !savedCameraDeviceID.isEmpty else { return }
+        store.applySavedCameraDeviceIDPreference(savedCameraDeviceID)
+    }
+
+    private func applySavedMicrophoneDeviceIDPreference() {
+        guard !savedMicrophoneDeviceID.isEmpty else { return }
+        store.applySavedMicrophoneDeviceIDPreference(savedMicrophoneDeviceID)
+    }
+
+    private func saveCameraDeviceIDPreference(_ id: String?) {
+        savedCameraDeviceID = id ?? ""
+    }
+
+    private func saveMicrophoneDeviceIDPreference(_ id: String?) {
+        savedMicrophoneDeviceID = id ?? ""
     }
 
     private func loadCameraEnhancementSettings() -> CameraEnhancementSettings {

@@ -1,24 +1,24 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-APP_NAME="${OPEN_CUE_APP_NAME:-OpenCue}"
-BUNDLE_ID="${OPEN_CUE_BUNDLE_ID:-com.ideaplexa.opencue}"
-MIN_SYSTEM_VERSION="${OPEN_CUE_MIN_SYSTEM_VERSION:-26.0}"
-CONFIGURATION="${OPEN_CUE_BUILD_CONFIGURATION:-release}"
-BUILD_ARCH="${OPEN_CUE_BUILD_ARCH:-$(uname -m)}"
-VERSION="${OPEN_CUE_VERSION:-0.1.0}"
-BUILD_NUMBER="${OPEN_CUE_BUILD_NUMBER:-0}"
-SIGN_IDENTITY="${OPEN_CUE_CODESIGN_IDENTITY:-}"
-TIMESTAMP_MODE="${OPEN_CUE_CODESIGN_TIMESTAMP:-auto}"
-REQUIRE_DEVELOPER_ID="${OPEN_CUE_REQUIRE_DEVELOPER_ID:-0}"
-REQUIRE_HARDENED_RUNTIME="${OPEN_CUE_REQUIRE_HARDENED_RUNTIME:-0}"
-HARDENED_RUNTIME="${OPEN_CUE_HARDENED_RUNTIME:-1}"
+APP_NAME="${MAC_STREAM_APP_NAME:-MacStream}"
+BUNDLE_ID="${MAC_STREAM_BUNDLE_ID:-com.ideaplexa.macstream}"
+MIN_SYSTEM_VERSION="${MAC_STREAM_MIN_SYSTEM_VERSION:-26.0}"
+CONFIGURATION="${MAC_STREAM_BUILD_CONFIGURATION:-release}"
+BUILD_ARCH="${MAC_STREAM_BUILD_ARCH:-$(uname -m)}"
+VERSION="${MAC_STREAM_VERSION:-0.1.0}"
+BUILD_NUMBER="${MAC_STREAM_BUILD_NUMBER:-0}"
+SIGN_IDENTITY="${MAC_STREAM_CODESIGN_IDENTITY:-}"
+TIMESTAMP_MODE="${MAC_STREAM_CODESIGN_TIMESTAMP:-auto}"
+REQUIRE_DEVELOPER_ID="${MAC_STREAM_REQUIRE_DEVELOPER_ID:-0}"
+REQUIRE_HARDENED_RUNTIME="${MAC_STREAM_REQUIRE_HARDENED_RUNTIME:-0}"
+HARDENED_RUNTIME="${MAC_STREAM_HARDENED_RUNTIME:-1}"
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-DIST_DIR="${OPEN_CUE_DIST_DIR:-$ROOT_DIR/dist}"
-ENTITLEMENTS="${OPEN_CUE_ENTITLEMENTS:-$ROOT_DIR/Resources/Entitlements/OpenCue.Release.entitlements}"
-INFO_TEMPLATE="${OPEN_CUE_INFO_PLIST_TEMPLATE:-$ROOT_DIR/Resources/Info.plist}"
-APP_ICON="${OPEN_CUE_APP_ICON:-$ROOT_DIR/Resources/AppIcon/OpenCue.icns}"
+DIST_DIR="${MAC_STREAM_DIST_DIR:-$ROOT_DIR/dist}"
+ENTITLEMENTS="${MAC_STREAM_ENTITLEMENTS:-$ROOT_DIR/Resources/Entitlements/MacStream.Release.entitlements}"
+INFO_TEMPLATE="${MAC_STREAM_INFO_PLIST_TEMPLATE:-$ROOT_DIR/Resources/Info.plist}"
+APP_ICON="${MAC_STREAM_APP_ICON:-$ROOT_DIR/Resources/AppIcon/MacStream.icns}"
 APP_BUNDLE="$DIST_DIR/$APP_NAME.app"
 APP_CONTENTS="$APP_BUNDLE/Contents"
 APP_MACOS="$APP_CONTENTS/MacOS"
@@ -32,17 +32,17 @@ mkdir -p "$CLANG_MODULE_CACHE_PATH"
 VERSION="${VERSION#v}"
 
 if [[ ! "$VERSION" =~ ^[0-9]+(\.[0-9]+){1,2}$ ]]; then
-  echo "OPEN_CUE_VERSION must be a bundle version like 0.1.0 or v0.1.0; got '$VERSION'" >&2
+  echo "MAC_STREAM_VERSION must be a bundle version like 0.1.0 or v0.1.0; got '$VERSION'" >&2
   exit 2
 fi
 
 if [[ ! "$BUILD_NUMBER" =~ ^[0-9]+(\.[0-9]+){0,2}$ ]]; then
-  echo "OPEN_CUE_BUILD_NUMBER must be numeric, optionally dotted; got '$BUILD_NUMBER'" >&2
+  echo "MAC_STREAM_BUILD_NUMBER must be numeric, optionally dotted; got '$BUILD_NUMBER'" >&2
   exit 2
 fi
 
 if [[ "$REQUIRE_DEVELOPER_ID" == "1" && ( -z "$SIGN_IDENTITY" || "$SIGN_IDENTITY" == "-" ) ]]; then
-  echo "OPEN_CUE_CODESIGN_IDENTITY is required for Developer ID release signing" >&2
+  echo "MAC_STREAM_CODESIGN_IDENTITY is required for Developer ID release signing" >&2
   exit 2
 fi
 
@@ -70,7 +70,7 @@ write_info_plist() {
   /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $VERSION" "$INFO_PLIST"
   /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $BUILD_NUMBER" "$INFO_PLIST"
   /usr/libexec/PlistBuddy -c "Set :LSMinimumSystemVersion $MIN_SYSTEM_VERSION" "$INFO_PLIST"
-  /usr/libexec/PlistBuddy -c "Set :CFBundleIconFile OpenCue" "$INFO_PLIST"
+  /usr/libexec/PlistBuddy -c "Set :CFBundleIconFile MacStream" "$INFO_PLIST"
 }
 
 build_app() {
@@ -86,7 +86,7 @@ build_app() {
   rm -rf "$APP_BUNDLE"
   mkdir -p "$APP_MACOS" "$APP_RESOURCES"
   cp "$build_binary" "$APP_BINARY"
-  cp "$APP_ICON" "$APP_RESOURCES/OpenCue.icns"
+  cp "$APP_ICON" "$APP_RESOURCES/MacStream.icns"
   chmod +x "$APP_BINARY"
   xattr -cr "$APP_BUNDLE" >/dev/null 2>&1 || true
   write_info_plist
@@ -153,7 +153,7 @@ verify_app() {
   /usr/libexec/PlistBuddy -c "Print :NSCameraUsageDescription" "$INFO_PLIST" >/dev/null
   /usr/libexec/PlistBuddy -c "Print :NSMicrophoneUsageDescription" "$INFO_PLIST" >/dev/null
   /usr/libexec/PlistBuddy -c "Print :NSAudioCaptureUsageDescription" "$INFO_PLIST" >/dev/null
-  test -f "$APP_RESOURCES/OpenCue.icns"
+  test -f "$APP_RESOURCES/MacStream.icns"
 }
 
 emit_github_outputs() {

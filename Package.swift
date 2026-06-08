@@ -3,8 +3,8 @@
 import Foundation
 import PackageDescription
 
-let enableHaishinKitRTMP = ProcessInfo.processInfo.environment["OPEN_CUE_ENABLE_HAISHINKIT"] == "1"
-let enableMLX = ProcessInfo.processInfo.environment["OPEN_CUE_ENABLE_MLX"] == "1"
+let enableHaishinKitRTMP = ProcessInfo.processInfo.environment["MAC_STREAM_ENABLE_HAISHINKIT"] == "1"
+let enableMLX = ProcessInfo.processInfo.environment["MAC_STREAM_ENABLE_MLX"] == "1"
 
 let packageDependencies: [Package.Dependency] =
     (enableHaishinKitRTMP
@@ -18,7 +18,7 @@ let packageDependencies: [Package.Dependency] =
        ]
        : [])
 
-let openCueCoreDependencies: [Target.Dependency] =
+let macStreamCoreDependencies: [Target.Dependency] =
     (enableHaishinKitRTMP
      ? [
         .product(name: "HaishinKit", package: "HaishinKit.swift"),
@@ -34,32 +34,32 @@ let openCueCoreDependencies: [Target.Dependency] =
        : [])
 
 let optionalFeatureSwiftSettings: [SwiftSetting] =
-    (enableHaishinKitRTMP ? [.define("OPEN_CUE_HAS_HAISHINKIT")] : [])
-    + (enableMLX ? [.define("OPEN_CUE_HAS_MLX")] : [])
+    (enableHaishinKitRTMP ? [.define("MAC_STREAM_HAS_HAISHINKIT")] : [])
+    + (enableMLX ? [.define("MAC_STREAM_HAS_MLX")] : [])
 
 let package = Package(
-    name: "OpenCue",
+    name: "MacStream",
     platforms: [
         .macOS("26.0")
     ],
     products: [
-        .executable(name: "OpenCue", targets: ["OpenCue"]),
-        .library(name: "OpenCueCore", targets: ["OpenCueCore"])
+        .executable(name: "MacStream", targets: ["MacStream"]),
+        .library(name: "MacStreamCore", targets: ["MacStreamCore"])
     ],
     dependencies: packageDependencies,
     targets: [
         .target(
-            name: "OpenCueCore",
-            dependencies: openCueCoreDependencies,
+            name: "MacStreamCore",
+            dependencies: macStreamCoreDependencies,
             swiftSettings: optionalFeatureSwiftSettings
         ),
         .executableTarget(
-            name: "OpenCue",
-            dependencies: ["OpenCueCore"]
+            name: "MacStream",
+            dependencies: ["MacStreamCore"]
         ),
         .testTarget(
-            name: "OpenCueCoreTests",
-            dependencies: ["OpenCueCore"],
+            name: "MacStreamCoreTests",
+            dependencies: ["MacStreamCore"],
             swiftSettings: optionalFeatureSwiftSettings
         )
     ]

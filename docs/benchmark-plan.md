@@ -1,6 +1,6 @@
 # Benchmark Plan
 
-OpenCue should prove Mac-native reliability with repeatable measurements, not claims. Every benchmark should run OBS and OpenCue on the same Mac, same OS version, same devices, same capture target, same duration, and same network path when RTMP is involved.
+MacStream should prove Mac-native reliability with repeatable measurements, not claims. Every benchmark should run OBS and MacStream on the same Mac, same OS version, same devices, same capture target, same duration, and same network path when RTMP is involved.
 
 ## Benchmark Outputs
 
@@ -69,7 +69,7 @@ Store results under `benchmarks/` when this harness exists:
 | Dropped frame count | Shows render/encode/backpressure health. |
 | Black/frozen preview count | Directly addresses common macOS capture pain. |
 | A/V drift at 10/30/60 minutes | Proves audio path reliability. |
-| CPU, memory, thermal pressure | Proves local model/director work is not stealing capture budget. |
+| CPU, memory, thermal pressure | Proves director sampling and any idle/setup AI provider work are not stealing capture budget. |
 | Permission prompt recurrence | Proves TCC identity and relaunch behavior. |
 | Device reconnect recovery time | Proves native Apple device reliability. |
 | RTMP connect/reconnect time | Proves streaming egress readiness. |
@@ -98,10 +98,12 @@ Relevant OBS docs and issues:
 
 ## Pass Bar
 
-OpenCue should not claim a Mac-native reliability advantage until it can show:
+MacStream should not claim a Mac-native reliability advantage until it can show on macOS 26:
 
 - 60 minute screen recording with mic and optional system audio without black/frozen output.
 - 30 minute composited `Screen + Face` recording with stable sync.
+- 30 minute HaishinKit `Screen + Face` RTMP publish where the remote ingest includes camera PiP and stable audio sync.
 - Clear recovery or explicit failure state after sleep/wake or device loss.
 - Lower or comparable CPU/memory/thermal pressure than OBS on the same workflow.
 - No repeated permission loops after a grant and relaunch.
+- Setup/review AI provider work disabled or deferred during capture pressure.

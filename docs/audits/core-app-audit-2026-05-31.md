@@ -2,13 +2,13 @@
 
 ## Scope
 
-This audit checks OpenCue against real creator workflows before adding more AI features. It combines repository review, current OBS research, and read-only subagent review. The key standard is simple: can a solo Mac creator reliably preview, record, or stream the scene they think they are sending?
+This audit checks MacStream against real creator workflows before adding more AI features. It combines repository review, current OBS research, and read-only subagent review. The key standard is simple: can a solo Mac creator reliably preview, record, or stream the scene they think they are sending?
 
 ## Product Truth
 
-OpenCue has a solid native app spine:
+MacStream has a solid native app spine:
 
-- SwiftPM package with `OpenCue` app and `OpenCueCore` library targets.
+- SwiftPM package with `MacStream` app and `MacStreamCore` library targets.
 - Fixed V1 scenes: `Face`, `Screen + Face`, `Screen`, and `BRB`.
 - Native camera preview through AVFoundation.
 - Native screen/window preview and local screen recording through ScreenCaptureKit.
@@ -21,19 +21,19 @@ The central product gap at the time of this audit was also clear:
 
 - The real media output was screen-only.
 - `Screen + Face` was available in preview and director planning, but local recording and full RTMP publishing blocked it until camera/screen composition existed.
-- `Face` and `BRB` are not real media output scenes yet for recording/publishing.
+- `Face` and `BRB` were not real media output scenes yet for recording/publishing.
 
-After the first compositor pass, local `Screen + Face` recording is the first proof target; full RTMP publishing still needs the same composed output path before OpenCue is a reliable "solo screen + face streamer."
+Status update: MacStream now has local `Screen + Face` recording composition and the HaishinKit RTMP path uses the same Screen + Face compositor. The remaining proof is live-ingest QA, long-session A/V sync, and non-screen output support for Face/BRB.
 
 ## User Scene Audit
 
 | User scene | Current fit | Main blockers | Next proof |
 | --- | --- | --- | --- |
-| Solo product demo / screen + face | Preview can show screen with camera PiP. Setup flow guides toward `Screen + Face`. | Full RTMP cannot output camera PiP yet. Long-run composed recording still needs QA proof. | Record a 10 minute `Screen + Face` `.mov` with camera PiP, mic, optional system audio, no drift. |
+| Solo product demo / screen + face | Preview, local recording, and HaishinKit RTMP can use screen with camera PiP. | Long-run composed recording and live RTMP remote-output QA still need proof. | Run 30-60 minute `Screen + Face` local and RTMP sessions with camera PiP, mic, optional system audio, no drift. |
 | Coding/tutorial stream | Screen target, screen motion, coding profile, and screen recording exist. | No zoom/annotation path, no explicit camera/mic source selection, long-session sync not proven. | 30 minute coding recording with selected app/window, mic sync, no black frames, stable FPS. |
-| Remote workshop/class | Teaching profile exists and first-run setup can guide capture readiness. | `Face` is preview-only for real output. Full RTMP `Screen + Face` remains blocked. No guest/remote-participant source, which should stay out of V1. | Workshop recording using screen + face compositor, pause/BRB safety, clear recovery if screen capture freezes. |
+| Remote workshop/class | Teaching profile exists and first-run setup can guide capture readiness. | `Face` is preview-only for real output. Guest/remote-participant source should stay out of V1. | Workshop recording and RTMP test using screen + face compositor, pause/BRB safety, clear recovery if screen capture freezes. |
 | Founder/webinar/podcast | Face preview and podcast-style profile exist. | Face cannot be recorded/published as real media output yet. Smooth Mic is not implemented in the media path. | 20 minute face-first local recording with mic processing disabled/enabled comparison once audio graph exists. |
-| Local clip recording | Local screen recording, clip markers, and session report export exist. | No camera PiP in clips, no in-app playback/trim/export workflow. | Mark clips during recording and export report that links to playable media and marker timestamps. |
+| Local clip recording | Local screen recording, Screen + Face recording, clip markers, and session report export exist. | No in-app playback/trim/export workflow. | Mark clips during recording and export report that links to playable media and marker timestamps. |
 
 ## Codebase Findings
 
@@ -43,9 +43,9 @@ After the first compositor pass, local `Screen + Face` recording is the first pr
 
 Relevant files:
 
-- `Sources/OpenCue/Views/PreviewCanvasView.swift`
-- `Sources/OpenCueCore/Services/MediaPipeline.swift`
-- `Sources/OpenCueCore/Stores/StudioStore.swift`
+- `Sources/MacStream/Views/PreviewCanvasView.swift`
+- `Sources/MacStreamCore/Services/MediaPipeline.swift`
+- `Sources/MacStreamCore/Stores/StudioStore.swift`
 - `docs/mvp-scope.md`
 - `docs/technical-risks.md`
 
@@ -53,12 +53,12 @@ Decision: keep compositor work ahead of AI polish. Local recording now has the f
 
 ### P0: RTMP Is Not Proven In The Default Build
 
-The default app validates RTMP reachability. Full media publish requires `OPEN_CUE_ENABLE_HAISHINKIT=1`, and that path still needs real long-run validation.
+The default app validates RTMP reachability. Full media publish requires `MAC_STREAM_ENABLE_HAISHINKIT=1`, and that path still needs real long-run validation.
 
 Relevant files:
 
 - `Package.swift`
-- `Sources/OpenCueCore/Services/MediaPipeline.swift`
+- `Sources/MacStreamCore/Services/MediaPipeline.swift`
 - `.github/workflows/ci.yml`
 - `.github/workflows/release.yml`
 
@@ -70,10 +70,10 @@ Capture preflight lists camera and microphone devices, but the actual preview/me
 
 Relevant files:
 
-- `Sources/OpenCueCore/Services/CaptureDeviceProvider.swift`
-- `Sources/OpenCue/NativePreview/CameraPreviewView.swift`
-- `Sources/OpenCueCore/Services/MediaPipeline.swift`
-- `Sources/OpenCueCore/Services/SignalProvider.swift`
+- `Sources/MacStreamCore/Services/CaptureDeviceProvider.swift`
+- `Sources/MacStream/NativePreview/CameraPreviewView.swift`
+- `Sources/MacStreamCore/Services/MediaPipeline.swift`
+- `Sources/MacStreamCore/Services/SignalProvider.swift`
 
 Decision: explicit source device selection should land before Smooth Mic or vision models.
 
@@ -83,16 +83,16 @@ The architecture already models dropped frames, capture FPS, thermal pressure, m
 
 Relevant files:
 
-- `Sources/OpenCueCore/Services/SystemPerformanceMonitor.swift`
-- `Sources/OpenCueCore/Services/MediaPipeline.swift`
-- `Sources/OpenCueCore/Services/SignalProvider.swift`
-- `Sources/OpenCue/NativePreview/ScreenCapturePreviewView.swift`
+- `Sources/MacStreamCore/Services/SystemPerformanceMonitor.swift`
+- `Sources/MacStreamCore/Services/MediaPipeline.swift`
+- `Sources/MacStreamCore/Services/SignalProvider.swift`
+- `Sources/MacStream/NativePreview/ScreenCapturePreviewView.swift`
 
 Decision: create repeatable benchmark artifacts before claiming OBS reliability advantages.
 
 ### P1: Test Coverage Is Broad But Too Centralized
 
-The test suite covers many core behaviors, including permissions, setup, source gating, RTMP validation/retry, adaptive performance, recording ownership, exports, and release scripts. The risk is maintainability: most coverage is concentrated in `Tests/OpenCueCoreTests/DirectorEngineTests.swift`, with many source-text assertions that protect architecture but can become brittle during refactors.
+The test suite covers many core behaviors, including permissions, setup, source gating, RTMP validation/retry, adaptive performance, recording ownership, exports, and release scripts. The risk is maintainability: most coverage is concentrated in `Tests/MacStreamCoreTests/DirectorEngineTests.swift`, with many source-text assertions that protect architecture but can become brittle during refactors.
 
 Decision: keep current tests, but split future media/store/release tests into focused files as implementation grows.
 
@@ -102,9 +102,9 @@ Clip markers and session reports exist, but local clip recording is not yet a cr
 
 Relevant files:
 
-- `Sources/OpenCueCore/Services/ClipMarkerExporter.swift`
-- `Sources/OpenCueCore/Services/SessionReportExporter.swift`
-- `Sources/OpenCue/Views/EventLogView.swift`
+- `Sources/MacStreamCore/Services/ClipMarkerExporter.swift`
+- `Sources/MacStreamCore/Services/SessionReportExporter.swift`
+- `Sources/MacStream/Views/EventLogView.swift`
 
 Decision: after compositor and recording stability, make clips reviewable inside the app.
 
@@ -114,8 +114,8 @@ The current local intelligence plan is sane. MLX is setup-time only, falls back 
 
 Relevant files:
 
-- `Sources/OpenCueCore/Services/LocalIntelligenceProvider.swift`
-- `Sources/OpenCueCore/Services/DirectorEngine.swift`
+- `Sources/MacStreamCore/Services/LocalIntelligenceProvider.swift`
+- `Sources/MacStreamCore/Services/DirectorEngine.swift`
 - `docs/technical-risks.md`
 
 Decision: keep AI out of frame-by-frame switching. Use it for setup, summaries, post-session help, and later slow sampled-frame signals.
@@ -136,17 +136,17 @@ The macOS reliability wedge is real but must be proven. Public OBS issues show u
 - [obs-studio #11435: macOS screen capture freezes randomly](https://github.com/obsproject/obs-studio/issues/11435)
 - [obs-studio #12044: macOS 15.4 preview freezes and system audio stops](https://github.com/obsproject/obs-studio/issues/12044)
 
-OpenCue should not claim superiority until the benchmark plan produces comparable data.
+MacStream should not claim superiority until the benchmark plan produces comparable data.
 
 ## Recommended Build Order
 
-1. Real local compositor for `Screen + Face`, `Face`, and `BRB` output.
-2. Explicit camera and microphone device selection.
+1. Prove local and RTMP `Screen + Face` composition under long-session capture pressure.
+2. Add explicit camera and microphone device selection.
 3. Long-run local recording QA with screen, camera, mic, and optional system audio.
-4. Real RTMP media publish path, first screen-only, then composited scenes.
-5. OBS-vs-OpenCue benchmark reports on the same Macs and devices.
+4. Real RTMP media publish QA against live ingest, including remote PiP verification and reconnect behavior.
+5. OBS-vs-MacStream benchmark reports on the same Macs and devices.
 6. Clip review workflow.
-7. Smooth Mic inside OpenCue's own media path.
+7. Smooth Mic inside MacStream's own media path.
 8. AI setup and post-session improvements.
 
 The next code sprint should start at item 1, not UI polish.

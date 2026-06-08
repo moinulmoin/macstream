@@ -23,7 +23,7 @@
 - Stream startup and recording startup do not overlap while either capture setup is still pending.
 - Recording failures surface their reason in the inspector.
 - Local display recording to a `.mov` file through ScreenCaptureKit and AVAssetWriter, including system audio and best-effort microphone audio.
-- RTMP/RTMPS endpoint validation and publisher adapter boundary, with HaishinKit full publishing available only through the explicit `OPEN_CUE_ENABLE_HAISHINKIT=1` build path.
+- RTMP/RTMPS endpoint validation and publisher adapter boundary, with HaishinKit full publishing available only through the explicit `MAC_STREAM_ENABLE_HAISHINKIT=1` build path.
 - Endpoint-validation builds label RTMP starts as endpoint checks, not live publishing, so the default dependency-light build cannot be mistaken for a real broadcast path.
 - RTMP destination validation blocks predictable malformed input before starting.
 - Explicit stream transport status for Preview, endpoint validation, or full RTMP publish.
@@ -38,11 +38,13 @@
 - Director sampling loop while the stream is live in Suggest or Auto, with the first live sample running immediately and Paused mode stopping live signal sampling to save capture budget.
 - Real signal provider for microphone speech level, active app, user idle time, screen motion, and frozen-screen detection.
 - Signal model for face presence and muted mic.
-- Local intelligence provider boundary for future MLX/Foundation Models.
-- MLX-ready local intelligence mode that falls back to fast setup rules when model packages are not linked, with an explicit `OPEN_CUE_ENABLE_MLX=1` SwiftPM path for linking mlx-swift-lm and `LiquidAI/LFM2.5-8B-A1B-MLX-4bit` as the configured setup model identifier.
-- MLX setup-plan prompt and JSON decoder boundary for future local model inference.
-- Future multimodal adapter boundary for sampled-frame vision, with local Moondream or explicit cloud vision as separate providers outside the live director hot path.
-- Setup-rule generation is limited to pre-capture states and any in-flight setup generation is cancelled when capture starts, so future local model work does not compete with streaming or recording.
+- Local intelligence provider boundary for Foundation Models, OpenAI-compatible local providers, rule fallback, and experimental MLX benchmarking.
+- Rule-based setup assistance is the dependable default until provider-first adapters land.
+- Future Foundation Models provider for native Apple-local setup/review assistance on supported macOS 26 systems.
+- Future OpenAI-compatible provider for LM Studio, Ollama, llama.cpp servers, MLX servers, and other user-owned endpoints.
+- Experimental MLX adapter remains opt-in through `MAC_STREAM_ENABLE_MLX=1`; full model loading is not part of the live path.
+- Future multimodal adapter boundary for sampled-frame vision, with local or provider-backed VLMs outside the live director hot path.
+- Setup-rule generation is limited to pre-capture states and any in-flight setup generation is cancelled when capture starts, so AI provider work does not compete with streaming or recording.
 - The setup-rules panel is shown only while capture is idle, keeping live/recording operation focused on controls, health, sources, and timeline.
 - Setup assistant applies typed director profiles for coding, demos, teaching, podcasts, and balanced streams.
 - Manual and director-assisted clip markers for active capture moments worth reviewing later, with JSON export.
@@ -55,8 +57,8 @@
 - Live controls include performance modes, including Adaptive mode that tunes director cadence, screen-motion sampling, display and camera preview capture, and active ScreenCaptureKit preview, motion, recording, and publishing stream configuration from system pressure and runtime capture health.
 - Adaptive runtime health monitoring continues while the director is paused during a live stream and while local recording is running without a live stream.
 - The MVP uses a single main studio window so duplicate windows do not create duplicate preview and capture stacks.
-- Local recording supports Screen and composited Screen + Face output. Full RTMP publish remains Screen-only until the publish path uses the same compositor, so OpenCue does not silently stream screen-only media while claiming camera PiP.
-- Runtime capture pressure from dropped frames or low capture FPS degrades the running stream, lowers Adaptive mode to Efficiency, and recovers when capture health stabilizes. System pressure from thermal state, Low Power Mode, or high OpenCue memory use also lowers Adaptive mode to Efficiency with the matching reason shown in the inspector.
+- Local recording supports Screen and composited Screen + Face output. The HaishinKit RTMP publish path now uses the same compositor for Screen + Face, while the default dependency-light build stays honest as endpoint validation only.
+- Runtime capture pressure from dropped frames or low capture FPS degrades the running stream, lowers Adaptive mode to Efficiency, and recovers when capture health stabilizes. System pressure from thermal state, Low Power Mode, or high MacStream memory use also lowers Adaptive mode to Efficiency with the matching reason shown in the inspector.
 
 ## Out
 
@@ -64,18 +66,22 @@
 - Advanced overlays.
 - Multi-platform support.
 - Cloud-first AI.
-- Full MLX model loading or generation in the hot path.
+- Managed MLX model loading or generation in the hot path.
 - Direct VLM calls from live scene switching.
 - Model-controlled live scene switching.
 - Hand-rolled RTMP egress before proving whether HaishinKit fits.
 
 ## MVP Success
 
-OpenCue should be able to demonstrate the product loop before the expensive media stack is complete:
+MacStream should be able to prove the core product loop before advanced AI or the expensive media stack is complete:
 
-- start a stream session in the UI,
-- switch between the four scenes,
+- launch as a packaged macOS 26 app with the final bundle identifier,
+- guide Camera, Microphone, and Screen Recording permission recovery,
+- select one display/window target shared by preview, motion sampling, recording, and publishing,
+- preview the four fixed scenes,
+- record `Screen` and composited `Screen + Face` `.mov` files that play back correctly,
+- start a Preview session and, in default builds, label RTMP attempts as endpoint checks rather than real publishing,
 - sample director signals,
 - receive a cue with a reason,
 - accept or hold the cue,
-- see stream health and source state.
+- see stream health, source state, and adaptive pressure state.

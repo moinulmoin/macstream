@@ -2,10 +2,10 @@
 set -euo pipefail
 
 MODE="${1:-run}"
-APP_NAME="OpenCue"
-BUNDLE_ID="com.ideaplexa.opencue"
+APP_NAME="MacStream"
+BUNDLE_ID="com.ideaplexa.macstream"
 DEFAULT_SIGN_IDENTITY="Developer ID Application: Ideaplexa LLC (53P98M92V7)"
-REQUESTED_SIGN_IDENTITY="${OPEN_CUE_CODESIGN_IDENTITY:-$DEFAULT_SIGN_IDENTITY}"
+REQUESTED_SIGN_IDENTITY="${MAC_STREAM_CODESIGN_IDENTITY:-$DEFAULT_SIGN_IDENTITY}"
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 DIST_DIR="$ROOT_DIR/dist"
@@ -31,13 +31,13 @@ SIGN_IDENTITY="$(resolve_sign_identity)"
 pkill -x "$APP_NAME" >/dev/null 2>&1 || true
 
 package_app() {
-  OPEN_CUE_BUILD_CONFIGURATION="${OPEN_CUE_BUILD_CONFIGURATION:-debug}" \
-  OPEN_CUE_BUILD_ARCH="${OPEN_CUE_BUILD_ARCH:-$(uname -m)}" \
-  OPEN_CUE_VERSION="${OPEN_CUE_VERSION:-0.1.0}" \
-  OPEN_CUE_BUILD_NUMBER="${OPEN_CUE_BUILD_NUMBER:-0}" \
-  OPEN_CUE_CODESIGN_IDENTITY="$SIGN_IDENTITY" \
-  OPEN_CUE_CODESIGN_TIMESTAMP="${OPEN_CUE_CODESIGN_TIMESTAMP:-none}" \
-  OPEN_CUE_HARDENED_RUNTIME="${OPEN_CUE_HARDENED_RUNTIME:-0}" \
+  MAC_STREAM_BUILD_CONFIGURATION="${MAC_STREAM_BUILD_CONFIGURATION:-debug}" \
+  MAC_STREAM_BUILD_ARCH="${MAC_STREAM_BUILD_ARCH:-$(uname -m)}" \
+  MAC_STREAM_VERSION="${MAC_STREAM_VERSION:-0.1.0}" \
+  MAC_STREAM_BUILD_NUMBER="${MAC_STREAM_BUILD_NUMBER:-0}" \
+  MAC_STREAM_CODESIGN_IDENTITY="$SIGN_IDENTITY" \
+  MAC_STREAM_CODESIGN_TIMESTAMP="${MAC_STREAM_CODESIGN_TIMESTAMP:-none}" \
+  MAC_STREAM_HARDENED_RUNTIME="${MAC_STREAM_HARDENED_RUNTIME:-0}" \
   "$ROOT_DIR/script/package_macos_app.sh"
 }
 
@@ -47,7 +47,7 @@ open_app() {
 
 verify_info_plist() {
   /usr/libexec/PlistBuddy -c "Print :CFBundleIconFile" "$INFO_PLIST" >/dev/null
-  test -f "$APP_BUNDLE/Contents/Resources/OpenCue.icns"
+  test -f "$APP_BUNDLE/Contents/Resources/MacStream.icns"
   /usr/libexec/PlistBuddy -c "Print :NSCameraUsageDescription" "$INFO_PLIST" >/dev/null
   /usr/libexec/PlistBuddy -c "Print :NSMicrophoneUsageDescription" "$INFO_PLIST" >/dev/null
   /usr/libexec/PlistBuddy -c "Print :NSAudioCaptureUsageDescription" "$INFO_PLIST" >/dev/null

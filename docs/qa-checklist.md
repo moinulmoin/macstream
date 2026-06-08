@@ -1,13 +1,13 @@
-# OpenCue QA Checklist
+# MacStream QA Checklist
 
-Use this checklist before release promotion and after any media-pipeline change. Prefer testing the packaged app from `dist/OpenCue.app` or a release zip, not a raw executable.
+Use this checklist before release promotion and after any media-pipeline change. Prefer testing the packaged app from `dist/MacStream.app` or a release zip, not a raw executable.
 
 ## Build And Launch
 
 - Run `swift test`.
 - Run `./script/build_and_run.sh --verify`.
-- Confirm `dist/OpenCue.app` launches.
-- Confirm bundle identifier is `com.ideaplexa.opencue`.
+- Confirm `dist/MacStream.app` launches.
+- Confirm bundle identifier is `com.ideaplexa.macstream`.
 - Confirm the icon renders correctly in Finder/Dock.
 - Confirm no source files changed after build except intentional edits: `git status --short`.
 
@@ -45,7 +45,7 @@ Use this checklist before release promotion and after any media-pipeline change.
 ## Recording
 
 - Start local recording from `Screen`.
-- Stop recording and verify the `.mov` exists under Movies/OpenCue.
+- Stop recording and verify the `.mov` exists under Movies/MacStream.
 - Play the file and verify video is not black.
 - Verify microphone audio is present when mic is enabled.
 - Verify system audio is present only when system audio is enabled.
@@ -60,7 +60,7 @@ Use this checklist before release promotion and after any media-pipeline change.
 - Start and stop Preview mode.
 - Switch destination to RTMP with a malformed URL and confirm start is blocked.
 - Use a valid RTMP URL in default build and confirm wording says Endpoint Check, not Go Live.
-- In a HaishinKit build, connect to a test RTMP server and verify real media arrives.
+- In a HaishinKit build, connect to a test RTMP server and verify real Screen media arrives, then verify `Screen + Face` arrives remotely with the camera PiP included.
 - Cancel an RTMP connection attempt and confirm late success does not mark the stream live.
 - Verify stream key never appears in events, exports, release notes, or visible reports.
 
@@ -83,6 +83,14 @@ Use this checklist before release promotion and after any media-pipeline change.
 - Export session report twice quickly; filenames must not collide.
 - Confirm report includes transport, health, sources, selected capture target, events, and recording path.
 - Confirm report excludes RTMP secrets.
+
+## AI Provider Behavior
+
+- Confirm setup assistance is visible only while capture is idle.
+- Confirm starting preview, streaming, recording, connecting, or stopping disables setup generation.
+- Confirm the default rules provider produces a setup plan without a configured model provider.
+- Confirm provider offline/error states surface as fallback status instead of blocking capture.
+- Confirm director cues during live capture come from deterministic signals, not model output.
 
 ## Release Artifact
 

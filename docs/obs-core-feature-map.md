@@ -1,10 +1,10 @@
-# OBS Core Feature Map For OpenCue
+# OBS Core Feature Map For MacStream
 
-OpenCue should learn from OBS without becoming an OBS clone. The V1 goal is a smaller Mac-native studio for solo screen + camera creators.
+MacStream should learn from OBS without becoming an OBS clone. The V1 goal is a smaller macOS 26-native studio for solo screen + camera creators.
 
 ## OBS Core Primitives
 
-| OBS primitive | Why users rely on it | OpenCue V1 stance |
+| OBS primitive | Why users rely on it | MacStream V1 stance |
 | --- | --- | --- |
 | Scenes | Fast switching between stream layouts. | Keep four fixed scenes: `Face`, `Screen + Face`, `Screen`, `BRB`. |
 | Sources | Cameras, displays, windows, apps, media, browser overlays, text, audio. | Keep camera, screen/window, mic, system audio. Skip arbitrary source graph for V1. |
@@ -18,7 +18,7 @@ OpenCue should learn from OBS without becoming an OBS clone. The V1 goal is a sm
 | Plugins | Huge ecosystem. | Explicitly out of scope. |
 | Virtual camera | Send OBS output to Zoom/Meet/etc. | Out of scope until compositor and signing/release are mature. |
 
-## What OpenCue Should Keep
+## What MacStream Should Keep
 
 - First-run setup that gets camera, mic, screen, destination, and source readiness right.
 - Fixed scene model for a smaller operating surface.
@@ -29,8 +29,9 @@ OpenCue should learn from OBS without becoming an OBS clone. The V1 goal is a sm
 - Clear transport labels: Preview, Endpoint Check, RTMP Publish.
 - Health telemetry visible enough to prove capture reliability.
 - Honest limitations when a scene cannot be captured yet.
+- Provider-first setup/review assistance that helps configure the stream without controlling live switching.
 
-## What OpenCue Should Skip For V1
+## What MacStream Should Skip For V1
 
 - Arbitrary scene graph editing.
 - Plugin compatibility.
@@ -41,8 +42,8 @@ OpenCue should learn from OBS without becoming an OBS clone. The V1 goal is a sm
 - Cloud-first AI.
 - Model-controlled live scene switching.
 
-## Current OpenCue Gap Against This Map
+## Current MacStream Gap Against This Map
 
-The store, source controls, setup flow, preview, recording boundary, and release automation are already in place. Local recording can now compose the creator's intended `Screen + Face` scene, but the RTMP publish path still needs to use that compositor before OpenCue can claim real screen + camera streaming.
+The store, source controls, setup flow, preview, recording boundary, release automation, and first RTMP composition path are in place. Local recording composes the creator's intended `Screen + Face` scene, and the HaishinKit RTMP path now uses the same compositor for Screen + Face publishing.
 
-That is the next foundation feature for streaming.
+The next foundation feature is live-ingest proof: remote PiP verification, A/V sync, reconnect behavior, and long-session stream health.

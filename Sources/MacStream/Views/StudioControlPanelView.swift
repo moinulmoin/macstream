@@ -75,25 +75,26 @@ struct StudioControlPanelView: View {
 
     private var wrappedControls: some View {
         VStack(spacing: StudioMetrics.md) {
-            HStack(alignment: .top, spacing: StudioMetrics.md) {
+            HStack(alignment: .top, spacing: StudioMetrics.lg) {
                 controlGroup("Scenes", systemImage: "rectangle.stack") {
                     sceneControls
                 }
-                .layoutPriority(2)
+                .frame(maxWidth: .infinity, alignment: .leading)
 
                 controlGroup("Director", systemImage: "sparkles") {
                     directorControls
                 }
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
 
-            HStack(alignment: .top, spacing: StudioMetrics.md) {
+            HStack(alignment: .top, spacing: StudioMetrics.lg) {
                 outputControls
-                    .layoutPriority(2)
+                    .frame(maxWidth: .infinity, alignment: .leading)
 
                 controlGroup("Performance", systemImage: "speedometer") {
                     performanceControls
                 }
-                .frame(width: 146)
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
         }
     }

@@ -76,7 +76,6 @@ private struct PreviewColumnView: View {
                     .padding(16)
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .aspectRatio(16 / 9, contentMode: .fit)
 
             StudioControlPanelView(store: store)
         }

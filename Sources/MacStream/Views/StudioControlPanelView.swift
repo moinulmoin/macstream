@@ -40,29 +40,37 @@ struct StudioControlPanelView: View {
     }
 
     private var horizontalControls: some View {
-        HStack(alignment: .top, spacing: StudioMetrics.md) {
+        HStack(alignment: .top, spacing: StudioMetrics.lg) {
             controlGroup("Scenes", systemImage: "rectangle.stack") {
                 sceneControls
             }
-            .frame(minWidth: 260, idealWidth: 300, maxWidth: 340)
-            .layoutPriority(2)
+            .frame(maxWidth: .infinity, alignment: .leading)
+
+            controlDivider
 
             controlGroup("Director", systemImage: "sparkles") {
                 directorControls
             }
-            .frame(width: 168)
+            .frame(maxWidth: .infinity, alignment: .leading)
+
+            controlDivider
 
             outputControls
-                .frame(minWidth: 280, idealWidth: 320)
-                .layoutPriority(3)
+                .frame(maxWidth: .infinity, alignment: .leading)
 
-            Spacer(minLength: 0)
+            controlDivider
 
             controlGroup("Performance", systemImage: "speedometer") {
                 performanceControls
             }
-            .frame(width: 146)
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
+    }
+
+    private var controlDivider: some View {
+        Divider()
+            .frame(height: 46)
+            .overlay(Color.white.opacity(0.06))
     }
 
     private var wrappedControls: some View {

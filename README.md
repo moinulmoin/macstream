@@ -1,116 +1,206 @@
 <div align="center">
 
-<img src=".github/assets/macstream-logo.png" width="128" height="128" alt="MacStream icon" />
+<img src=".github/assets/macstream-logo.png" width="148" height="148" alt="MacStream icon" />
 
 # MacStream
 
-**A calm, native macOS streaming studio — with a director that watches the signals so you don't have to.**
+### A Mac-native streaming studio with a built-in director.
 
-Stream and record your screen + camera from a Mac-native app that proves it's ready before you go live, keeps the live controls quiet, and lets a deterministic director surface scene cues from local motion, speech, and focus.
+MacStream is a focused OBS alternative for macOS: full-bleed preview, explicit
+source selection, preflight before live, local recording, RTMP targets, and a
+deterministic director layer that helps without touching the hot capture path.
 
 ![macOS 26](https://img.shields.io/badge/macOS-26-111?logo=apple&logoColor=white)
 ![Swift 6](https://img.shields.io/badge/Swift-6.0-F05138?logo=swift&logoColor=white)
 ![SwiftUI](https://img.shields.io/badge/UI-SwiftUI-0A84FF)
 ![ScreenCaptureKit](https://img.shields.io/badge/capture-ScreenCaptureKit-5E6AD2)
-![Tests](https://img.shields.io/badge/tests-229%20passing-30A46C)
+![Tests](https://img.shields.io/badge/tests-swift%20test-30A46C)
 
-<img src=".github/assets/macstream-studio.png" width="760" alt="MacStream studio" />
+<img src=".github/assets/macstream-studio.png" width="860" alt="MacStream Studio showing preview, control room, and preflight" />
 
 </div>
 
 ---
 
-## Why MacStream
+## The idea
 
-It is **not** an OBS clone. The direction is smaller and more Mac-native:
+OBS is powerful. MacStream is intentionally narrower: a polished Mac control room
+for creators who mostly need **screen, face, recording, and clean live output** —
+not a node graph and a thousand knobs.
 
-- **Preflight that means it.** Camera, mic, screen, and permissions are checked up front — you can't "go live" into a black frame.
-- **A program monitor, not a node graph.** Four honest scenes (`Face`, `Screen + Face`, `Screen`, `BRB`) and a full-bleed preview. No endless source trees.
-- **A deterministic director.** `Suggest` / `Auto` / `Paused` cues come from typed local signals (motion, speech, app focus, idle) — never from a model in the hot path.
-- **Local-first AI, on the side.** Setup plans and session summaries run on-device via Foundation Models or any OpenAI-compatible local server. The capture/encode path stays AI-free.
+The product line is simple:
 
-## Features
+- **Preview first.** The program monitor is the main object, not a tiny debug view.
+- **Preflight before panic.** Scene, capture, sources, destination, and permissions
+  are surfaced before the stream starts.
+- **Choose real devices.** Camera, microphone, and display/window inputs are
+  explicit pickers with refresh controls.
+- **AI stays off the encoder.** Models can help plan setups, explain cues, and
+  summarize sessions; live switching stays deterministic and testable.
 
-**Capture & record**
-- Native SwiftUI app with a full-bleed program preview.
-- Camera preview via AVFoundation; screen/window capture via ScreenCaptureKit.
-- Local `.mov` recording for `Screen` and **composited `Screen + Face`** (camera PiP baked in), with system + best-effort mic audio.
+## What works today
 
-**Inputs — pick and refresh**
-- Per-input **device pickers** for camera, microphone, and screen — choose the exact device, with a one-click **Refresh** to re-scan.
-- Selections are honored end-to-end (preview, recording, and RTMP) and persist across launches.
+### Studio
 
-**Go live**
-- **One-click destination presets:** Twitch, YouTube, Facebook, X, Kick, Custom — prefilled ingest URLs where they're stable, paste-only where they're account-specific.
-- RTMP/RTMPS endpoint validation in the default build; optional HaishinKit path for real `Screen` and composited `Screen + Face` egress.
-- Stream keys are redacted everywhere they're displayed, logged, or persisted (Keychain).
+- Fixed creator scenes: `Face`, `Screen + Face`, `Screen`, and `BRB`.
+- Full-bleed SwiftUI program preview.
+- AVFoundation camera preview.
+- ScreenCaptureKit screen/window preview.
+- Control Room for scene, director mode, output, recording, and performance mode.
+- Inspector-side preflight checklist with the next required action.
 
-**Director & performance**
-- Deterministic director engine with countdown-gated `Auto` switching.
-- Adaptive performance mode that lowers capture cost under system pressure or dropped frames.
-- Clip markers and session reports exported as JSON (secrets redacted).
+### Sources
 
-## Quickstart
+- Camera picker with refresh.
+- Microphone picker with refresh.
+- Screen/display picker with refresh.
+- Selections persist and flow into preview, recording, RTMP configuration, and
+  director signals.
+
+### Recording and streaming
+
+- Local `.mov` recording for `Screen`.
+- Local composited `.mov` recording for `Screen + Face` with camera PiP baked in.
+- System audio plus best-effort microphone audio where the active capture path
+  supports it.
+- Destination presets for Twitch, YouTube, Facebook, X, Kick, and Custom.
+- RTMP/RTMPS URL validation in the default build.
+- Optional HaishinKit build path for `Screen` and composited `Screen + Face` RTMP/RTMPS publishing experiments.
+- Stream keys stored in Keychain and redacted in UI/log/report surfaces.
+
+### Director layer
+
+- `Paused`, `Suggest`, and countdown-gated `Auto` modes.
+- Typed local signals: motion, speech, app focus, idle, capture health, and
+  system pressure.
+- Adaptive performance mode that can lower capture cost under pressure.
+- Clip markers and JSON session reports with secrets redacted.
+
+## Pre-release limits
+
+This is still a pre-release core. The strongest proof path today is local preview
+and recording. Before calling it release-grade streaming software, the real RTMP
+path still needs live ingest QA for:
+
+- remote `Screen + Face` PiP verification;
+- A/V sync over long sessions;
+- bitrate stability and reconnect behavior;
+- packaged-app permission recovery on a fresh Mac;
+- Developer ID signing, notarization, stapling, and Gatekeeper launch proof.
+
+## Quick start
 
 ```bash
 git clone git@github.com:moinulmoin/macstream.git
 cd macstream
 
-swift build          # default, dependency-light
-swift test           # 229 tests
-./script/build_and_run.sh           # build + launch the app bundle
-./script/build_and_run.sh --verify  # + bundle/signing/launch checks
+swift build
+swift test
+./script/build_and_run.sh
 ```
 
-The packaged app lands at `dist/MacStream.app` (bundle id `com.ideaplexa.macstream`).
+The packaged app is written to:
+
+```text
+dist/MacStream.app
+```
+
+Bundle id:
+
+```text
+com.ideaplexa.macstream
+```
 
 ## Going live
 
-1. **Settings → Destination → Quick connect** — pick your platform; the ingest URL is prefilled (or you get a hint where to grab it).
-2. Paste your **stream key** after the prefilled base.
-3. Pick your **Scene** and confirm **Sources** are armed in the Control Room.
-4. Hit **Go Live**.
-
-> Real RTMP egress requires the optional HaishinKit build. The default build validates the endpoint without publishing media.
-
-## Optional builds
+1. Open **Settings → Destination**.
+2. Pick a quick-connect platform.
+3. Paste the stream key after the prefilled ingest URL, or paste the full URL for
+   paste-only platforms.
+4. For real RTMP publishing today, choose `Screen + Face` or `Screen`.
+5. Confirm Preflight is ready.
+6. Start the stream.
 
 ```bash
-MAC_STREAM_ENABLE_HAISHINKIT=1 swift build   # real RTMP/RTMPS publishing
-MAC_STREAM_ENABLE_MLX=1 swift build          # experimental on-device MLX adapter
+MAC_STREAM_ENABLE_HAISHINKIT=1 swift build
 ```
 
-Both are opt-in so the default MVP stays fast and dependency-light. The default AI runtime is rule-based; provider adapters (Foundation Models + OpenAI-compatible) are the first-class path, and managed MLX is explicitly experimental.
+Real RTMP/RTMPS publishing is behind the HaishinKit build flag and currently
+targets `Screen` plus composited `Screen + Face`. The default build validates the
+endpoint but does not publish media.
+
+## AI direction
+
+MacStream's AI strategy is provider-first, but the current runtime is still
+rules-first until the adapters land:
+
+- **Rules** are available today and keep the app deterministic.
+- **Foundation Models** are the planned native macOS 26 path where available.
+- **OpenAI-compatible local servers** are the planned flexible path for LM Studio,
+  Ollama, llama.cpp, MLX server, and other user-owned runtimes.
+- **Managed MLX** is not part of the default app until cold start, tokens/sec,
+  memory pressure, GPU contention, unload reliability, model footprint, and crash
+  isolation are proven.
+
+Good AI use cases for this app:
+
+- setup assistant from natural language to a typed profile;
+- preflight coach for missing permissions or dead sources;
+- director explanations based on local signals;
+- clip title suggestions;
+- post-session health summaries;
+- slow sampled-frame review outside the live hot path.
+
+## Build variants
+
+```bash
+swift build                                  # default dependency-light build
+MAC_STREAM_ENABLE_HAISHINKIT=1 swift build   # RTMP/RTMPS publishing path
+MAC_STREAM_ENABLE_MLX=1 swift build          # experimental MLX adapter shell
+./script/package_macos_app.sh                # signed local app bundle
+```
 
 ## Architecture
 
-```
+```text
 Sources/
-  MacStream/         SwiftUI app — views, native AV/SC previews, app shell
-  MacStreamCore/     Store, media pipeline, director engine, models, services
+  MacStream/          SwiftUI app shell, views, native previews
+  MacStreamCore/      Store, media pipeline, director engine, models, services
 Tests/
-  MacStreamCoreTests/  Behavior + guardrail tests
-Resources/           Info.plist, entitlements, app icon
-script/              build_and_run.sh, package_macos_app.sh, generate_app_icon.py
+  MacStreamCoreTests/ Behavior tests and guardrails
+Resources/            Info.plist, entitlements, app icon
+script/               build, package, and icon tooling
 ```
 
-- `StudioStore` is the single observable source of truth; the UI is a pure projection of it.
-- `MediaPipeline` owns capture/record/publish; device IDs and scene kind flow in via `MediaPipelineConfiguration`.
-- The director consumes typed `SignalSnapshot`s — deterministic and testable, off the encode path.
+Core rules:
 
-See [docs/architecture.md](docs/architecture.md) for the full picture.
+- `StudioStore` is the single observable source of truth.
+- `MediaPipeline` owns capture, recording, and publish state.
+- `MediaPipelineConfiguration` carries scene kind, destination, and selected
+  device IDs into the pipeline.
+- `DirectorEngine` consumes typed `SignalSnapshot`s; no model drives live scene
+  switching.
+- Secrets are redacted before they leave the narrow destination/keychain layer.
+
+Read more:
+
+- [Architecture](docs/architecture.md)
+- [Current state & next plan](docs/current-state.md)
+- [MVP scope](docs/mvp-scope.md)
+- [Technical risks](docs/technical-risks.md)
+- [OBS feature map](docs/obs-core-feature-map.md)
+- [QA checklist](docs/qa-checklist.md)
+- [Release process](docs/releasing.md)
 
 ## Requirements
 
-- macOS 26 SDK / matching Xcode toolchain, Swift 6.0.
+- macOS 26 SDK / matching Xcode toolchain.
+- Swift 6.
 - Camera, Microphone, and Screen Recording permissions for the relevant workflows.
-
-## Docs
-
-- [Current state & next plan](docs/current-state.md) · [Product brief](docs/product-brief.md) · [MVP scope](docs/mvp-scope.md)
-- [Architecture](docs/architecture.md) · [Technical risks](docs/technical-risks.md) · [OBS feature map](docs/obs-core-feature-map.md)
-- [QA checklist](docs/qa-checklist.md) · [Benchmark plan](docs/benchmark-plan.md) · [Release process](docs/releasing.md)
 
 ## Status
 
-`v0.1.0` MVP spine. Strongest proof path today is local capture: `Screen` and composited `Screen + Face` recording, plus the optional HaishinKit RTMP publish through the same compositor. Distribution is via GitHub Releases (signed, notarized, stapled); no in-app updater yet.
+`v0.1.0` core spine. The app has a polished studio shell, explicit source UX,
+preflight, local recording, destination setup, and deterministic director logic.
+The next milestone is proving long-session capture/record/RTMP behavior on real
+hardware and real ingest endpoints.

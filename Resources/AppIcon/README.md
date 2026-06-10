@@ -1,32 +1,30 @@
 # MacStream App Icon
 
-Designed to Apple's macOS 26 (Liquid Glass) guidance: a **simple, flat,
-crisp-edged** play mark. No baked blur/shadow/specular/gloss — the system
-renders depth at runtime. See HIG ▸ Foundations ▸ App icons.
+MacStream uses the selected **Broadcast Core** icon: a capture frame, camera lens,
+broadcast arcs, and live-status dot on a dark Liquid Glass-style tile.
 
 ## Source of truth
 
-`python3 script/generate_logo.py` draws the mark and writes:
+- `MacStream-AppIcon-Original.png` — the original OpenAI-generated master image
+  chosen for the product identity.
+- `MacStream-AppIcon-Source.png` — normalized 1024 px transparent app-icon
+  source generated from the master.
+- `.github/assets/macstream-logo.png` — README/logo copy generated from the same
+  source.
+- `MacStream.icns` + `MacStream.iconset/` — packaged app icon output.
 
-- `icon-composer/MacStream-Foreground.svg` — flat, transparent, full-canvas play
-  triangle. This is the **foreground layer** for Icon Composer.
-- `MacStream-AppIcon-Source.png` (+ `.github/assets/macstream-logo.png`) — a flat
-  composite (gradient background + play + rounded-corner mask) for the legacy
-  `.icns`.
+## Regenerate
 
-`python3 script/generate_app_icon.py` resizes the source into `MacStream.iconset`
-+ `MacStream.icns` + `preview/`. Both scripts need Pillow.
+```bash
+python3 script/generate_logo.py
+python3 script/generate_app_icon.py
+```
 
-## Real Liquid Glass (macOS 26)
+`generate_logo.py` removes only the light edge-connected generation background,
+keeps glass highlights inside the mark, and writes the normalized transparent
+source used by both the app bundle and README.
 
-The legacy `.icns` (used by `script/package_macos_app.sh`) is flat. For the true
-glass icon:
+## Packaging
 
-1. Open **Icon Composer** (Xcode ▸ Open Developer Tool ▸ Icon Composer).
-2. Import `icon-composer/MacStream-Foreground.svg` as the foreground layer.
-3. Set a **gradient background**: top `#6C7CFA` → bottom `#342680`.
-4. Let Icon Composer apply specular / refraction / translucency; export `AppIcon.icon`.
-5. Add the `.icon` to an Xcode target (replaces the asset catalog; Xcode
-   generates flat fallbacks for older releases automatically).
-
-`Resources/Info.plist` declares `CFBundleIconFile` = `MacStream` for the `.icns`.
+`Resources/Info.plist` declares `CFBundleIconFile` = `MacStream`. The packaging
+script includes `MacStream.icns` in `dist/MacStream.app`.

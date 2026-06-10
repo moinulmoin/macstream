@@ -1,136 +1,115 @@
 #!/usr/bin/env python3
-"""Generate the MacStream play mark following Apple's macOS 26 icon guidance.
+"""Install the selected MacStream app icon across repo assets.
 
-Apple's Liquid Glass icons want FLAT, crisp-edged vector layers with no baked
-blur/shadow/specular/gloss and no pre-applied corner mask — the system renders
-depth at runtime. So this emits:
-
-  - Resources/AppIcon/icon-composer/MacStream-Foreground.svg
-        a flat, transparent, full-canvas play triangle (the foreground layer to
-        drop into Icon Composer; set the gradient background there).
-  - Resources/AppIcon/MacStream-AppIcon-Source.png  (+ README hero)
-        a clean FLAT composite (gradient background + play + rounded-corner mask)
-        used to build the legacy .icns for SwiftPM packaging / older releases.
+The source of truth is the OpenAI-generated production concept at
+`Resources/AppIcon/MacStream-AppIcon-Original.png`. This script normalizes it
+into the transparent 1024 px source used by SwiftPM packaging and the README.
 
 Usage: python3 script/generate_logo.py   (requires Pillow)
 """
-import math
+from __future__ import annotations
+
+from collections import deque
 from pathlib import Path
 
-from PIL import Image, ImageDraw
+from PIL import Image
 
 ROOT = Path(__file__).resolve().parent.parent
-SS = 4
-
-# Brand background gradient (set in Icon Composer for the real glass icon).
-INDIGO = (108, 124, 250)   # top    #6C7CFA
-VIOLET = (52, 38, 128)     # bottom #342680
-WHITE = (255, 255, 255)
-
-# Play triangle geometry on a 1024 canvas (kept well within the canvas — Apple
-# says don't fill it). Optically centered for a right-pointing triangle.
-A = (385.0, 282.0)   # top-left
-B = (765.0, 512.0)   # right tip
-C = (385.0, 742.0)   # bottom-left
-CORNER = 50.0
+SOURCE = ROOT / "Resources" / "AppIcon" / "MacStream-AppIcon-Original.png"
+APP_ICON_SOURCE = ROOT / "Resources" / "AppIcon" / "MacStream-AppIcon-Source.png"
+README_LOGO = ROOT / ".github" / "assets" / "macstream-logo.png"
+PREVIEW = ROOT / "Resources" / "AppIcon" / "preview" / "MacStream-AppIcon-1024.png"
+CANVAS_SIZE = 1024
+PADDING = 20
 
 
-def _unit(p, q):
-    dx, dy = q[0] - p[0], q[1] - p[1]
-    d = math.hypot(dx, dy)
-    return (dx / d, dy / d)
-
-
-def _rounded_triangle_points(verts, r, samples=24):
-    n = len(verts)
-    out = []
-    for i in range(n):
-        prev = verts[(i - 1) % n]
-        v = verts[i]
-        nxt = verts[(i + 1) % n]
-        uin = _unit(v, prev)          # from vertex back toward prev
-        uout = _unit(v, nxt)          # from vertex toward next
-        t1 = (v[0] + uin[0] * r, v[1] + uin[1] * r)
-        t2 = (v[0] + uout[0] * r, v[1] + uout[1] * r)
-        for s in range(samples + 1):
-            t = s / samples
-            mt = 1 - t
-            x = mt * mt * t1[0] + 2 * mt * t * v[0] + t * t * t2[0]
-            y = mt * mt * t1[1] + 2 * mt * t * v[1] + t * t * t2[1]
-            out.append((x, y))
-    return out
-
-
-def _svg_path(verts, r):
-    cmds = []
-    for i in range(len(verts)):
-        prev = verts[(i - 1) % len(verts)]
-        v = verts[i]
-        nxt = verts[(i + 1) % len(verts)]
-        uin = _unit(v, prev)
-        uout = _unit(v, nxt)
-        t1 = (v[0] + uin[0] * r, v[1] + uin[1] * r)
-        t2 = (v[0] + uout[0] * r, v[1] + uout[1] * r)
-        cmds.append(f"{'M' if i == 0 else 'L'} {t1[0]:.2f} {t1[1]:.2f}")
-        cmds.append(f"Q {v[0]:.2f} {v[1]:.2f} {t2[0]:.2f} {t2[1]:.2f}")
-    cmds.append("Z")
-    return " ".join(cmds)
-
-
-def write_svg():
-    path = _svg_path([A, B, C], CORNER)
-    svg = (
-        '<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" '
-        'viewBox="0 0 1024 1024">\n'
-        f'  <path d="{path}" fill="#FFFFFF"/>\n'
-        "</svg>\n"
-    )
-    out = ROOT / "Resources" / "AppIcon" / "icon-composer" / "MacStream-Foreground.svg"
-    out.parent.mkdir(parents=True, exist_ok=True)
-    out.write_text(svg)
-    print(f"wrote {out.relative_to(ROOT)}")
-
-
-def vertical_gradient(size, top, bottom):
-    mask = Image.linear_gradient("L").resize((size, size))
-    return Image.composite(
-        Image.new("RGB", (size, size), bottom),
-        Image.new("RGB", (size, size), top),
-        mask,
+def _is_edge_background(pixel: tuple[int, int, int, int]) -> bool:
+    red, green, blue, alpha = pixel
+    if alpha == 0:
+        return True
+    # The generated master has an off-white studio background outside the icon.
+    # Remove only light neutral pixels connected to the image edge so glass
+    # highlights inside the mark remain intact.
+    return (
+        red >= 232
+        and green >= 232
+        and blue >= 232
+        and abs(red - green) <= 10
+        and abs(green - blue) <= 10
     )
 
 
-def superellipse_alpha(size, n=4.8):
-    m = Image.new("L", (size, size), 0)
-    a = size / 2
-    pts = []
-    for i in range(1600):
-        th = 2 * math.pi * i / 1600
-        ct, st = math.cos(th), math.sin(th)
-        x = a + a * math.copysign(abs(ct) ** (2 / n), ct)
-        y = a + a * math.copysign(abs(st) ** (2 / n), st)
-        pts.append((x, y))
-    ImageDraw.Draw(m).polygon(pts, fill=255)
-    return m
+def _remove_connected_edge_background(image: Image.Image) -> Image.Image:
+    image = image.convert("RGBA")
+    width, height = image.size
+    pixels = image.load()
+    visited = bytearray(width * height)
+    queue: deque[tuple[int, int]] = deque()
+
+    def push(x: int, y: int) -> None:
+        index = y * width + x
+        if not visited[index] and _is_edge_background(pixels[x, y]):
+            visited[index] = 1
+            queue.append((x, y))
+
+    for x in range(width):
+        push(x, 0)
+        push(x, height - 1)
+    for y in range(height):
+        push(0, y)
+        push(width - 1, y)
+
+    while queue:
+        x, y = queue.popleft()
+        if x > 0:
+            push(x - 1, y)
+        if x + 1 < width:
+            push(x + 1, y)
+        if y > 0:
+            push(x, y - 1)
+        if y + 1 < height:
+            push(x, y + 1)
+
+    for y in range(height):
+        for x in range(width):
+            if visited[y * width + x]:
+                red, green, blue, _ = pixels[x, y]
+                pixels[x, y] = (red, green, blue, 0)
+
+    return image
 
 
-def render_flat_png():
-    size = 1024 * SS
-    bg = vertical_gradient(size, INDIGO, VIOLET).convert("RGBA")
-    bg.putalpha(superellipse_alpha(size))
-    play = _rounded_triangle_points([A, B, C], CORNER)
-    play = [(x * SS, y * SS) for x, y in play]
-    ImageDraw.Draw(bg).polygon(play, fill=WHITE + (255,))
-    icon = bg.resize((1024, 1024), Image.LANCZOS)
-    for p in (
-        ROOT / "Resources" / "AppIcon" / "MacStream-AppIcon-Source.png",
-        ROOT / ".github" / "assets" / "macstream-logo.png",
-    ):
-        p.parent.mkdir(parents=True, exist_ok=True)
-        icon.save(p)
-        print(f"wrote {p.relative_to(ROOT)}")
+def _normalize_icon(image: Image.Image) -> Image.Image:
+    alpha_bounds = image.getchannel("A").getbbox()
+    if alpha_bounds is None:
+        raise RuntimeError("Selected icon has no visible pixels after background removal")
+
+    icon = image.crop(alpha_bounds)
+    max_dimension = CANVAS_SIZE - (PADDING * 2)
+    scale = min(max_dimension / icon.width, max_dimension / icon.height)
+    resized = icon.resize(
+        (round(icon.width * scale), round(icon.height * scale)),
+        Image.Resampling.LANCZOS,
+    )
+
+    canvas = Image.new("RGBA", (CANVAS_SIZE, CANVAS_SIZE), (0, 0, 0, 0))
+    canvas.alpha_composite(
+        resized,
+        ((CANVAS_SIZE - resized.width) // 2, (CANVAS_SIZE - resized.height) // 2),
+    )
+    return canvas
+
+
+def main() -> None:
+    if not SOURCE.is_file():
+        raise FileNotFoundError(f"Missing selected icon source: {SOURCE.relative_to(ROOT)}")
+
+    icon = _normalize_icon(_remove_connected_edge_background(Image.open(SOURCE)))
+    for output in (APP_ICON_SOURCE, README_LOGO, PREVIEW):
+        output.parent.mkdir(parents=True, exist_ok=True)
+        icon.save(output)
+        print(f"wrote {output.relative_to(ROOT)}")
 
 
 if __name__ == "__main__":
-    write_svg()
-    render_flat_png()
+    main()

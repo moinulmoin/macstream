@@ -1,27 +1,33 @@
 # MacStream App Icon
 
-Source artwork lives in `MacStream-AppIcon-Source.png` — a deep indigo→violet
-squircle with a play glyph inside concentric broadcast arcs and a coral "live"
-dot, the streaming-studio identity of MacStream.
+The active icon source is `MacStream-AppIcon-Source.png` — a 1024 px squircle
+with transparent corners. The current mark is the **play + live-dot** variant.
 
 Generated macOS resources:
 
-- `MacStream.iconset/` contains the standard PNG sizes expected by `iconutil`.
-- `MacStream.icns` is generated from that iconset.
-- `preview/MacStream-AppIcon-1024.png` is the masked 1024 px render.
+- `MacStream.iconset/` — standard PNG sizes for `iconutil`.
+- `MacStream.icns` — assembled from the iconset.
+- `preview/MacStream-AppIcon-1024.png` — 1024 px preview.
 
-## Regenerating
+## Variants
 
-After updating `MacStream-AppIcon-Source.png`, run:
+Three brand marks live in `.github/assets/logo-variants/`:
+
+- `play.png` — play triangle in a live ring (active).
+- `waveform.png` — audio level bars with a coral live bar.
+- `lens.png` — glossy camera lens.
+
+## Switching / regenerating
+
+To make a variant the app icon:
 
 ```sh
+cp .github/assets/logo-variants/<name>.png Resources/AppIcon/MacStream-AppIcon-Source.png
+cp .github/assets/logo-variants/<name>.png .github/assets/macstream-logo.png   # README hero
 python3 script/generate_app_icon.py
+./script/package_macos_app.sh
 ```
 
-The script trims the near-white background around the squircle, squares the
-crop, resizes to 1024 px, applies a rounded-rectangle alpha mask for clean
-transparent corners, then writes the iconset, `MacStream.icns`, and the preview.
-Requires Pillow (`python3 -m pip install pillow`).
-
-`script/package_macos_app.sh` copies `MacStream.icns` into the app bundle and
-`Resources/Info.plist` declares `CFBundleIconFile` with value `MacStream`.
+`script/generate_app_icon.py` resizes the source into the iconset + `.icns`
+(requires Pillow). `script/package_macos_app.sh` copies `MacStream.icns` into the
+bundle; `Resources/Info.plist` declares `CFBundleIconFile` = `MacStream`.

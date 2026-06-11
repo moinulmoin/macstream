@@ -208,7 +208,10 @@ public struct StreamDestination: Equatable, Sendable {
             return "Invalid RTMP endpoint"
         }
 
-        return "\(target.connectionURL)/****"
+        let connectionPrefix = target.connectionURL.hasSuffix("/")
+            ? target.connectionURL
+            : "\(target.connectionURL)/"
+        return "\(connectionPrefix)****"
     }
 
     public var usesPreviewSentinelURL: Bool {
@@ -289,7 +292,8 @@ public struct StreamDestination: Equatable, Sendable {
             throw MediaPipelineError.unavailable("Enter an RTMP or RTMPS URL to publish.")
         }
 
-        guard let components = URLComponents(string: rtmpURL),
+        let trimmedServerURL = rtmpServerURL.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let components = URLComponents(string: trimmedServerURL),
               let scheme = components.scheme?.lowercased(),
               scheme == "rtmp" || scheme == "rtmps",
               let host = components.host,
@@ -300,30 +304,16 @@ public struct StreamDestination: Equatable, Sendable {
 
         let pathParts = components.path
             .split(separator: "/", omittingEmptySubsequences: true)
-            .map(String.init)
-
-        guard pathParts.count >= 2, let rawStreamName = pathParts.last, !rawStreamName.isEmpty else {
-            throw MediaPipelineError.unavailable("RTMP URL must include an app path and stream key.")
+        guard !pathParts.isEmpty else {
+            throw MediaPipelineError.unavailable("RTMP server URL must include an app path.")
         }
 
-        var streamName = rawStreamName
-        if let query = components.percentEncodedQuery, !query.isEmpty {
-            streamName += "?\(query)"
-        }
-        if let fragment = components.percentEncodedFragment, !fragment.isEmpty {
-            streamName += "#\(fragment)"
+        let streamName = Self.normalizedStreamKey(rtmpStreamKey)
+        guard !streamName.isEmpty else {
+            throw MediaPipelineError.unavailable("RTMP stream key is required.")
         }
 
-        var connectionComponents = components
-        connectionComponents.path = "/" + pathParts.dropLast().joined(separator: "/")
-        connectionComponents.query = nil
-        connectionComponents.fragment = nil
-
-        guard let connectionURL = connectionComponents.string else {
-            throw MediaPipelineError.unavailable("Cannot build RTMP connection URL.")
-        }
-
-        return RTMPPublishTarget(connectionURL: connectionURL, streamName: streamName)
+        return RTMPPublishTarget(connectionURL: trimmedServerURL, streamName: streamName)
     }
 
     private static func inferMode(from rtmpURL: String) -> StreamDestinationMode {
@@ -1309,7 +1299,7 @@ public final class SystemMediaPipeline: NSObject, MediaPipeline, SCStreamOutput,
             case .audio:
                 guard Self.shouldProcessSystemAudioSample(configuration: mediaConfiguration) else { return }
                 if Self.shouldPublishStreamSample(isPublishingStream: isPublishingStream, hasPublisher: rtmpPublisher != nil) {
-                    _ = publish(sampleBuffer)
+                    _ = publish(sampleBuffer, track: 0)
                 }
             case .microphone:
                 break
@@ -1416,8 +1406,8 @@ public final class SystemMediaPipeline: NSObject, MediaPipeline, SCStreamOutput,
         }
     }
 
-    private func publish(_ sampleBuffer: CMSampleBuffer) -> Bool {
-        rtmpPublisher?.append(sampleBuffer) ?? true
+    private func publish(_ sampleBuffer: CMSampleBuffer, track: UInt8 = 0) -> Bool {
+        rtmpPublisher?.append(sampleBuffer, track: track) ?? true
     }
 
     private func publishCompositedVideoSample(
@@ -1616,9 +1606,16 @@ public final class SystemMediaPipeline: NSObject, MediaPipeline, SCStreamOutput,
             maxVideoWidth: maxWidth
         )
         return ScreenCaptureSelection(
-            filter: SCContentFilter(display: display, excludingWindows: []),
+            filter: SCContentFilter(display: display, excludingWindows: selfWindows(in: content)),
             geometry: geometry
         )
+    }
+
+    private static func selfWindows(in content: SCShareableContent) -> [SCWindow] {
+        guard let bundleIdentifier = Bundle.main.bundleIdentifier else { return [] }
+        return content.windows.filter { window in
+            window.owningApplication?.bundleIdentifier == bundleIdentifier
+        }
     }
 
     static func streamConfiguration(
@@ -1761,7 +1758,7 @@ public final class SystemMediaPipeline: NSObject, MediaPipeline, SCStreamOutput,
             isPublishingOutput: isPublishingMicrophoneOutput(output),
             hasPublisher: rtmpPublisher != nil
         ) {
-            _ = publish(sampleBuffer)
+            _ = publish(sampleBuffer, track: 1)
         }
 
         guard let writer,
@@ -2004,12 +2001,16 @@ private extension CMSampleBuffer {
 protocol RTMPPublisher: AnyObject, Sendable {
     func configure(configuration: MediaPipelineConfiguration) async throws
     func connect() async throws
-    func append(_ sampleBuffer: CMSampleBuffer) -> Bool
+    func append(_ sampleBuffer: CMSampleBuffer, track: UInt8) -> Bool
     func close() async
 }
 
 extension RTMPPublisher {
     func configure(configuration: MediaPipelineConfiguration) async throws {}
+
+    func append(_ sampleBuffer: CMSampleBuffer) -> Bool {
+        append(sampleBuffer, track: 0)
+    }
 }
 
 final class RTMPAppendBackpressureGate: @unchecked Sendable {
@@ -2042,6 +2043,7 @@ private final class HaishinKitRTMPPublisher: RTMPPublisher, @unchecked Sendable 
     private let target: RTMPPublishTarget
     private let connection = RTMPConnection()
     private let stream: RTMPStream
+    private let mixer = MediaMixer(captureSessionMode: .manual, multiTrackAudioMixingEnabled: true)
     private let appendGate = RTMPAppendBackpressureGate()
 
     init(target: RTMPPublishTarget) {
@@ -2056,7 +2058,7 @@ private final class HaishinKitRTMPPublisher: RTMPPublisher, @unchecked Sendable 
         try await stream.setVideoSettings(VideoCodecSettings(
             videoSize: CGSize(width: videoWidth, height: videoHeight),
             bitRate: configuration.videoBitrate,
-            profileLevel: kVTProfileLevel_H264_Main_AutoLevel as String,
+            profileLevel: kVTProfileLevel_H264_Baseline_AutoLevel as String,
             scalingMode: .letterbox,
             bitRateMode: .average,
             maxKeyFrameIntervalDuration: 2,
@@ -2072,22 +2074,37 @@ private final class HaishinKitRTMPPublisher: RTMPPublisher, @unchecked Sendable 
             format: .aac
         ))
         await stream.setVideoInputBufferCounts(configuration.queueDepth)
-    }
-    func connect() async throws {
-        _ = try await connection.connect(target.connectionURL)
-        _ = try await stream.publish(target.streamName)
+
+        var videoMixerSettings = await mixer.videoMixerSettings
+        videoMixerSettings.mode = .passthrough
+        videoMixerSettings.mainTrack = 0
+        await mixer.setVideoMixerSettings(videoMixerSettings)
+
+        var audioMixerSettings = AudioMixerSettings(sampleRate: 48_000, channels: 2)
+        audioMixerSettings.tracks[0] = .default
+        audioMixerSettings.tracks[1] = .default
+        await mixer.setAudioMixerSettings(audioMixerSettings)
+        await mixer.addOutput(stream)
+        await mixer.startRunning()
     }
 
-    func append(_ sampleBuffer: CMSampleBuffer) -> Bool {
+    func connect() async throws {
+        _ = try await connection.connect(target.connectionURL)
+        _ = try await stream.publish(target.streamName, type: .live)
+    }
+
+    func append(_ sampleBuffer: CMSampleBuffer, track: UInt8) -> Bool {
         guard appendGate.tryBeginAppend() else { return false }
         Task {
             defer { appendGate.finishAppend() }
-            await stream.append(sampleBuffer)
+            await mixer.append(sampleBuffer, track: track)
         }
         return true
     }
 
     func close() async {
+        await mixer.removeOutput(stream)
+        await mixer.stopRunning()
         _ = try? await stream.close()
         _ = try? await connection.close()
     }
@@ -2151,7 +2168,7 @@ private final class ConnectivityRTMPPublisher: RTMPPublisher, @unchecked Sendabl
         }
     }
 
-    func append(_ sampleBuffer: CMSampleBuffer) -> Bool {
+    func append(_ sampleBuffer: CMSampleBuffer, track: UInt8) -> Bool {
         // This adapter intentionally only proves RTMP endpoint reachability.
         // Full RTMP mux/publish is isolated behind RTMPPublisher.
         true

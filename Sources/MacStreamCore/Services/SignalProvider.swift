@@ -572,9 +572,16 @@ private final class ScreenMotionMonitor: NSObject, SCStreamOutput, @unchecked Se
             sourceHeight: display.height
         )
         return ScreenCaptureSelection(
-            filter: SCContentFilter(display: display, excludingWindows: []),
+            filter: SCContentFilter(display: display, excludingWindows: selfWindows(in: content)),
             geometry: geometry
         )
+    }
+
+    private static func selfWindows(in content: SCShareableContent) -> [SCWindow] {
+        guard let bundleIdentifier = Bundle.main.bundleIdentifier else { return [] }
+        return content.windows.filter { window in
+            window.owningApplication?.bundleIdentifier == bundleIdentifier
+        }
     }
 
     nonisolated func stream(_ stream: SCStream, didOutputSampleBuffer sampleBuffer: CMSampleBuffer, of outputType: SCStreamOutputType) {

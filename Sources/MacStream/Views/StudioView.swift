@@ -61,7 +61,7 @@ private struct PreviewColumnView: View {
                 PreviewCanvasView(
                     scene: store.selectedScene,
                     signals: store.latestSignals,
-                    previewConfiguration: store.effectivePerformanceMode.previewCaptureConfiguration,
+                    previewConfiguration: previewConfiguration,
                     cameraEnhancements: store.preferences.cameraEnhancements,
                     cameraDeviceID: store.selectedCameraDeviceID,
                     isCameraEnabled: store.isSourceEnabled(.camera),
@@ -80,6 +80,16 @@ private struct PreviewColumnView: View {
             StudioControlPanelView(store: store)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    private var previewConfiguration: PreviewCaptureConfiguration {
+        guard store.streamTransport == .rtmpPublish,
+              store.isStreamConnecting || store.streamState.isLive
+        else {
+            return store.effectivePerformanceMode.previewCaptureConfiguration
+        }
+
+        return StudioPerformanceMode.efficiency.previewCaptureConfiguration
     }
 }
 

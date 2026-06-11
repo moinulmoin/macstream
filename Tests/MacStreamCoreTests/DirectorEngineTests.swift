@@ -852,8 +852,21 @@ func rtmpDestinationSplitsConnectionAndStreamName() throws {
 
     let target = try destination.rtmpPublishTarget()
 
-    #expect(target.connectionURL == "rtmps://live.example.com/app")
+    #expect(target.connectionURL == "rtmps://live.example.com/app/")
     #expect(target.streamName == "sk_live_123")
+}
+
+@Test
+func facebookPresetPreservesTrailingSlashForRTMPConnectURL() throws {
+    var destination = StreamDestination(mode: .rtmp, name: "Facebook")
+    destination.setRTMPServerURL(StreamPlatformPreset.facebook.ingestURL ?? "")
+    destination.setRTMPStreamKey("fb_live_key")
+
+    let target = try destination.rtmpPublishTarget()
+
+    #expect(target.connectionURL == "rtmps://live-api-s.facebook.com:443/rtmp/")
+    #expect(target.streamName == "fb_live_key")
+    #expect(destination.safeDisplayDetail == "rtmps://live-api-s.facebook.com:443/rtmp/****")
 }
 
 @Test
@@ -885,7 +898,7 @@ func rtmpDestinationPreservesStreamNameQueryTokens() throws {
 
     let target = try destination.rtmpPublishTarget()
 
-    #expect(target.connectionURL == "rtmps://live.example.com/app")
+    #expect(target.connectionURL == "rtmps://live.example.com/app/")
     #expect(target.streamName == "sk_live_123?token=abc123&expires=60")
     #expect(destination.safeDisplayDetail == "rtmps://live.example.com/app/****")
 }
@@ -1002,6 +1015,16 @@ func systemMediaPipelinePublishesOnlyFromPublishingCaptureOutputs() {
     #expect(!SystemMediaPipeline.shouldPublishStreamSample(isPublishingStream: false, hasPublisher: true))
     #expect(!SystemMediaPipeline.shouldPublishStreamSample(isPublishingStream: true, hasPublisher: false))
     #expect(!SystemMediaPipeline.shouldPublishStreamSample(isPublishingStream: false, hasPublisher: false))
+    #expect(SystemMediaPipeline.shouldPublishScreenStreamSample(
+        isPublishingStream: true,
+        hasPublisher: true,
+        hasImageBuffer: true
+    ))
+    #expect(!SystemMediaPipeline.shouldPublishScreenStreamSample(
+        isPublishingStream: true,
+        hasPublisher: true,
+        hasImageBuffer: false
+    ))
 
     #expect(SystemMediaPipeline.shouldPublishMicrophoneOutputSample(isPublishingOutput: true, hasPublisher: true))
     #expect(!SystemMediaPipeline.shouldPublishMicrophoneOutputSample(isPublishingOutput: false, hasPublisher: true))
@@ -5239,10 +5262,12 @@ func setupRulesPauseGenerationWhileStreamIsConnecting() async {
     store.startStream()
     try? await Task.sleep(for: .milliseconds(10))
     store.generateSetupPlan()
-    try? await Task.sleep(for: .milliseconds(20))
 
     #expect(!store.canGenerateSetupPlan)
     #expect(store.setupGenerationStatusDetail == "Finish connecting before generating setup rules.")
+
+    try? await Task.sleep(for: .milliseconds(20))
+
     #expect(await provider.generatedCount() == 0)
 }
 
@@ -5641,7 +5666,7 @@ private actor DelayedSuccessfulRTMPPublisher: RTMPPublisher {
         finishConnectContinuation = nil
     }
 
-    nonisolated func append(_ sampleBuffer: CMSampleBuffer) -> Bool {
+    nonisolated func append(_ sampleBuffer: CMSampleBuffer, track: UInt8) -> Bool {
         true
     }
 

@@ -97,6 +97,22 @@ func screenCapturePermissionHintExplainsRestartRequirement() {
     #expect(!CapturePreflightReport(devices: [camera]).isScreenCapturePermissionGranted)
 }
 
+
+@Test
+func capturePermissionAttentionGroupsDeviceInstancesByPermissionKind() {
+    let devices = [
+        CaptureDeviceInfo(id: "camera-1", kind: .camera, name: "iPhone Camera", permission: .notDetermined),
+        CaptureDeviceInfo(id: "camera-2", kind: .camera, name: "MacBook Camera", permission: .notDetermined),
+        CaptureDeviceInfo(id: "microphone-1", kind: .microphone, name: "iPhone Mic", permission: .notDetermined),
+        CaptureDeviceInfo(id: "microphone-2", kind: .microphone, name: "USB Mic", permission: .notDetermined),
+        CaptureDeviceInfo(id: "display-1", kind: .display, name: "Main Display", permission: .notDetermined),
+        CaptureDeviceInfo(id: "window-1", kind: .window, name: "Slides", permission: .notDetermined)
+    ]
+    let report = CapturePreflightReport(devices: devices)
+
+    #expect(report.permissionAttentionKindCount == 3)
+    #expect(CapturePreflightReport.permissionAttentionSummary(for: devices) == "3 capture permissions need attention.")
+}
 @Test
 func screenCaptureScanDoesNotLoadShareableContentBeforePermissionIsVisible() async {
     let listing = CountingScreenCaptureContentListing()
@@ -338,10 +354,12 @@ func studioKeepsFrequentControlsInBottomDeck() throws {
     #expect(capturePreflightSource.contains("!store.shouldShowSetupChecklist"))
     #expect(capturePreflightSource.contains("Label(\"Reopen MacStream\""))
     #expect(!capturePreflightSource.contains("showDeviceDetails"))
-    #expect(capturePreflightSource.contains("attentionDevices"))
+    #expect(capturePreflightSource.contains("CapturePermissionRow.rows"))
+    #expect(capturePreflightSource.contains("permissionRows(rows)"))
+    #expect(!capturePreflightSource.contains("attentionDevices"))
+    #expect(!capturePreflightSource.contains("deviceRows(for: attentionDevices)"))
     #expect(!capturePreflightSource.contains("DisclosureGroup"))
     #expect(!capturePreflightSource.contains("Device details"))
-    #expect(capturePreflightSource.contains("deviceRows(for: attentionDevices)"))
     #expect(!capturePreflightSource.contains("Picker(\"Screen target\""))
     #expect(settingsSource.contains("Section(\"Startup\")"))
     #expect(settingsSource.contains("@AppStorage(\"defaultSceneKind\")"))
@@ -485,8 +503,9 @@ func cameraPreviewDoesNotRequestCameraPermissionPassively() throws {
     #expect(canvasSource.contains("isCameraCaptureReady"))
     #expect(canvasSource.contains("Camera Capture Not Ready"))
     #expect(studioSource.contains("isCameraCaptureReady: store.captureReport.hasGrantedPermission(for: .camera)"))
-    #expect(captureSource.contains("Button(\"Ask\")"))
-    #expect(captureSource.contains("CapturePermissionActions.requestAccess(for: device.kind, store: store)"))
+    #expect(captureSource.contains("CapturePermissionRow.rows"))
+    #expect(captureSource.contains("CapturePermissionActions.requestAccess(for: row.requestKind, store: store)"))
+    #expect(!captureSource.contains("CapturePermissionActions.requestAccess(for: device.kind, store: store)"))
     #expect(permissionActionsSource.contains("mediaType = .video"))
     #expect(permissionActionsSource.contains("mediaType = .audio"))
     #expect(permissionActionsSource.contains("AVCaptureDevice.requestAccess(for: mediaType)"))

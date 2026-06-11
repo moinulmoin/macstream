@@ -1019,6 +1019,31 @@ public struct CapturePreflightReport: Equatable, Sendable {
         }
     }
 
+
+    public var permissionAttentionKindCount: Int {
+        var keys: Set<String> = []
+        for device in devices where device.permission != .granted {
+            switch device.kind {
+            case .camera, .microphone:
+                keys.insert(device.kind.rawValue)
+            case .display, .window:
+                keys.insert("screen")
+            }
+        }
+        return keys.count
+    }
+
+    public static func permissionAttentionSummary(for devices: [CaptureDeviceInfo]) -> String {
+        let count = CapturePreflightReport(devices: devices).permissionAttentionKindCount
+        switch count {
+        case 0:
+            return "Capture sources are ready."
+        case 1:
+            return "1 capture permission needs attention."
+        default:
+            return "\(count) capture permissions need attention."
+        }
+    }
     public func missingPermissionKinds(requiredKinds: [CaptureDeviceKind]) -> [CaptureDeviceKind] {
         var missingKinds: [CaptureDeviceKind] = []
         for kind in requiredKinds where !hasGrantedPermission(for: kind) {

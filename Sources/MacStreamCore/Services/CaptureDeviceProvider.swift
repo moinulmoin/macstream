@@ -68,10 +68,7 @@ public struct SystemCaptureDeviceProvider: CaptureDeviceProvider {
         devices.append(contentsOf: microphoneDevices())
         devices.append(contentsOf: await screenDevices())
 
-        let missing = devices.filter { $0.permission != .granted }
-        let summary = missing.isEmpty
-            ? "Capture sources are ready."
-            : "\(missing.count) source permissions need attention."
+        let summary = CapturePreflightReport.permissionAttentionSummary(for: devices)
 
         return CapturePreflightReport(devices: devices, summary: summary)
     }

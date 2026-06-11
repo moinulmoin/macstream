@@ -115,11 +115,11 @@ com.ideaplexa.macstream
 
 1. Open **Settings → Destination**.
 2. Pick a quick-connect platform.
-3. Paste the stream key after the prefilled ingest URL, or paste the full URL for
-   paste-only platforms.
-4. For real RTMP publishing today, choose `Screen + Face` or `Screen`.
-5. Confirm Preflight is ready.
-6. Start the stream.
+3. Confirm or paste the **Server URL**.
+4. Paste the private **Stream key** in its own field.
+5. For real RTMP publishing today, choose `Screen + Face` or `Screen`.
+6. Confirm Preflight is ready.
+7. Start the stream.
 
 ```bash
 MAC_STREAM_ENABLE_HAISHINKIT=1 swift build

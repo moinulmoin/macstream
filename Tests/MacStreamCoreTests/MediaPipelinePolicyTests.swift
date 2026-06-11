@@ -259,6 +259,68 @@ func rtmpAppendBackpressureGateRejectsWorkWhenPublishQueueIsFull() {
 }
 
 @Test
+func orderedMediaAppendQueuePreservesFIFOOrderUnderAsyncConsumer() async {
+    let recorder = OrderedAppendRecorder()
+    let queue = OrderedMediaAppendQueue<Int>(maxPendingAppends: 10) { value in
+        await recorder.append(value)
+    }
+
+    for value in 0..<8 {
+        #expect(queue.enqueue(value))
+    }
+
+    await recorder.waitForCount(8)
+    #expect(await recorder.values == Array(0..<8))
+    await queue.closeAndWait()
+}
+
+@Test
+func orderedMediaAppendQueueRejectsWhenPendingCapacityIsFull() async {
+    let blocker = OrderedAppendBlocker()
+    let queue = OrderedMediaAppendQueue<Int>(maxPendingAppends: 3) { value in
+        await blocker.append(value)
+    }
+
+    #expect(queue.enqueue(0))
+    #expect(queue.enqueue(1))
+    #expect(queue.enqueue(2))
+    await blocker.waitForStartedCount(1)
+
+    #expect(!queue.enqueue(3))
+
+    await blocker.releaseAll()
+    await queue.closeAndWait()
+    #expect(await blocker.startedCount == 3)
+}
+
+@Test
+func orderedMediaAppendQueueStopsAcceptingAndProcessingAfterClose() async {
+    let recorder = OrderedAppendRecorder()
+    let blocker = OrderedAppendBlocker()
+    let queue = OrderedMediaAppendQueue<Int>(maxPendingAppends: 3) { value in
+        await blocker.append(value, recorder: recorder)
+    }
+
+    #expect(queue.enqueue(1))
+    await blocker.waitForStartedCount(1)
+
+    let closeTask = Task {
+        await queue.closeAndWait()
+    }
+    for _ in 0..<100 where !queue.isClosed {
+        await Task.yield()
+    }
+    #expect(queue.isClosed)
+
+    #expect(!queue.enqueue(2))
+    #expect(await recorder.values == [1])
+
+    await blocker.releaseAll()
+    await closeTask.value
+    #expect(await recorder.values == [1])
+}
+
+@Test
 func rtmpConnectionCancellationBoxResumesPendingConnectionAttempt() async {
     let cancellation = RTMPConnectionCancellationBox()
     let connection = NWConnection(host: "127.0.0.1", port: 9, using: .tcp)
@@ -334,4 +396,79 @@ func systemMediaPipelineStartsPreviewSessionWithoutEndpoint() async throws {
 
     try await pipeline.startStream(destination: StreamDestination())
     await pipeline.stopStream()
+}
+
+
+private actor OrderedAppendRecorder {
+    private(set) var values: [Int] = []
+    private var waiters: [(count: Int, continuation: CheckedContinuation<Void, Never>)] = []
+
+    func append(_ value: Int) {
+        values.append(value)
+        resumeReadyWaiters()
+    }
+
+    func waitForCount(_ count: Int) async {
+        guard values.count < count else { return }
+        await withCheckedContinuation { continuation in
+            waiters.append((count, continuation))
+        }
+    }
+
+    private func resumeReadyWaiters() {
+        var pendingWaiters: [(count: Int, continuation: CheckedContinuation<Void, Never>)] = []
+        for waiter in waiters {
+            if values.count >= waiter.count {
+                waiter.continuation.resume()
+            } else {
+                pendingWaiters.append(waiter)
+            }
+        }
+        waiters = pendingWaiters
+    }
+}
+
+private actor OrderedAppendBlocker {
+    private(set) var startedCount = 0
+    private var startWaiters: [(count: Int, continuation: CheckedContinuation<Void, Never>)] = []
+    private var releaseWaiters: [CheckedContinuation<Void, Never>] = []
+    private var isReleased = false
+
+    func append(_ value: Int, recorder: OrderedAppendRecorder? = nil) async {
+        startedCount += 1
+        resumeReadyStartWaiters()
+        if let recorder {
+            await recorder.append(value)
+        }
+        guard !isReleased else { return }
+        await withCheckedContinuation { continuation in
+            releaseWaiters.append(continuation)
+        }
+    }
+
+    func waitForStartedCount(_ count: Int) async {
+        guard startedCount < count else { return }
+        await withCheckedContinuation { continuation in
+            startWaiters.append((count, continuation))
+        }
+    }
+
+    func releaseAll() {
+        isReleased = true
+        let waiters = releaseWaiters
+        releaseWaiters.removeAll()
+        waiters.forEach { $0.resume() }
+    }
+
+    private func resumeReadyStartWaiters() {
+        var pendingWaiters: [(count: Int, continuation: CheckedContinuation<Void, Never>)] = []
+        for waiter in startWaiters {
+            if startedCount >= waiter.count {
+                waiter.continuation.resume()
+            } else {
+                pendingWaiters.append(waiter)
+            }
+        }
+        startWaiters = pendingWaiters
+    }
 }

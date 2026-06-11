@@ -401,6 +401,7 @@ public final class SystemMediaPipeline: NSObject, MediaPipeline, SCStreamOutput,
     private var videoCompositor: RecordingVideoCompositor?
     private var publishingVideoCompositor: RecordingVideoCompositor?
     private var publishingPixelBufferPool: CVPixelBufferPool?
+    private var publishingVideoFormatDescriptionCache: VideoFormatDescriptionCache?
     private var latestCameraPixelBuffer: CVPixelBuffer?
     private var latestPublishingCameraPixelBuffer: CVPixelBuffer?
     private var didStartSession = false
@@ -568,6 +569,7 @@ public final class SystemMediaPipeline: NSObject, MediaPipeline, SCStreamOutput,
             publishingMicrophoneOutput = nil
             publishingVideoCompositor = nil
             publishingPixelBufferPool = nil
+            publishingVideoFormatDescriptionCache = nil
             latestPublishingCameraPixelBuffer = nil
             publishingOwnsMicrophoneSession = false
             firstPublishingVideoContinuation?.resume(throwing: CancellationError())
@@ -1140,6 +1142,7 @@ public final class SystemMediaPipeline: NSObject, MediaPipeline, SCStreamOutput,
             self.publishingMicrophoneOutput = microphoneOutput
             self.publishingVideoCompositor = publishingVideoCompositor
             self.publishingPixelBufferPool = publishingPixelBufferPool
+            self.publishingVideoFormatDescriptionCache = nil
             self.latestPublishingCameraPixelBuffer = nil
             self.publishingOwnsMicrophoneSession = ownsMicrophoneSession
             self.firstPublishingVideoContinuation = nil
@@ -1164,6 +1167,7 @@ public final class SystemMediaPipeline: NSObject, MediaPipeline, SCStreamOutput,
                     self.publishingCameraOutput = nil
                     self.publishingVideoCompositor = nil
                     self.publishingPixelBufferPool = nil
+                    self.publishingVideoFormatDescriptionCache = nil
                     self.latestPublishingCameraPixelBuffer = nil
                 }
                 if self.publishingMicrophoneSession === microphoneSession {
@@ -1500,15 +1504,20 @@ public final class SystemMediaPipeline: NSObject, MediaPipeline, SCStreamOutput,
             return false
         }
 
-        var formatDescription: CMVideoFormatDescription?
-        guard CMVideoFormatDescriptionCreateForImageBuffer(
-            allocator: kCFAllocatorDefault,
-            imageBuffer: outputPixelBuffer,
-            formatDescriptionOut: &formatDescription
-        ) == noErr,
-              let formatDescription
-        else {
-            return false
+        let formatDescription: CMVideoFormatDescription
+        if let cache = publishingVideoFormatDescriptionCache, cache.matches(outputPixelBuffer) {
+            formatDescription = cache.formatDescription
+        } else {
+            guard let created = Self.makeVideoFormatDescription(for: outputPixelBuffer) else {
+                return false
+            }
+            publishingVideoFormatDescriptionCache = VideoFormatDescriptionCache(
+                width: CVPixelBufferGetWidth(outputPixelBuffer),
+                height: CVPixelBufferGetHeight(outputPixelBuffer),
+                pixelFormat: CVPixelBufferGetPixelFormatType(outputPixelBuffer),
+                formatDescription: created
+            )
+            formatDescription = created
         }
 
         var timing = CMSampleTimingInfo(
@@ -1532,6 +1541,19 @@ public final class SystemMediaPipeline: NSObject, MediaPipeline, SCStreamOutput,
         return publish(compositedSampleBuffer)
     }
 
+    private static func makeVideoFormatDescription(
+        for pixelBuffer: CVPixelBuffer
+    ) -> CMVideoFormatDescription? {
+        var formatDescription: CMVideoFormatDescription?
+        guard CMVideoFormatDescriptionCreateForImageBuffer(
+            allocator: kCFAllocatorDefault,
+            imageBuffer: pixelBuffer,
+            formatDescriptionOut: &formatDescription
+        ) == noErr else {
+            return nil
+        }
+        return formatDescription
+    }
 
     private func appendCompositedVideoSample(
         _ sampleBuffer: CMSampleBuffer,
@@ -1729,6 +1751,7 @@ public final class SystemMediaPipeline: NSObject, MediaPipeline, SCStreamOutput,
         guard let publishingCaptureGeometry else {
             publishingVideoCompositor = nil
             publishingPixelBufferPool = nil
+            publishingVideoFormatDescriptionCache = nil
             return
         }
 
@@ -1737,10 +1760,12 @@ public final class SystemMediaPipeline: NSObject, MediaPipeline, SCStreamOutput,
         guard let pixelBufferPool = Self.makePixelBufferPool(width: outputWidth, height: outputHeight) else {
             publishingVideoCompositor = nil
             publishingPixelBufferPool = nil
+            publishingVideoFormatDescriptionCache = nil
             return
         }
 
         publishingPixelBufferPool = pixelBufferPool
+        publishingVideoFormatDescriptionCache = nil
         publishingVideoCompositor = RecordingVideoCompositor(
             outputWidth: outputWidth,
             outputHeight: outputHeight,
@@ -1938,15 +1963,32 @@ private struct CameraCapture {
     var output: AVCaptureVideoDataOutput
 }
 
+private struct VideoFormatDescriptionCache {
+    var width: Int
+    var height: Int
+    var pixelFormat: OSType
+    var formatDescription: CMVideoFormatDescription
+
+    func matches(_ pixelBuffer: CVPixelBuffer) -> Bool {
+        width == CVPixelBufferGetWidth(pixelBuffer)
+            && height == CVPixelBufferGetHeight(pixelBuffer)
+            && pixelFormat == CVPixelBufferGetPixelFormatType(pixelBuffer)
+    }
+}
+
 private final class RecordingVideoCompositor {
     private let context = CIContext()
     private let outputRect: CGRect
     private let cameraEnhancements: CameraEnhancementSettings
     private let colorSpace = CGColorSpaceCreateDeviceRGB()
+    private let background: CIImage
+    private lazy var colorControlsFilter: CIFilter? = CIFilter(name: "CIColorControls")
 
     init(outputWidth: Int, outputHeight: Int, cameraEnhancements: CameraEnhancementSettings) {
-        self.outputRect = CGRect(x: 0, y: 0, width: outputWidth, height: outputHeight)
+        let outputRect = CGRect(x: 0, y: 0, width: outputWidth, height: outputHeight)
+        self.outputRect = outputRect
         self.cameraEnhancements = cameraEnhancements
+        self.background = CIImage(color: CIColor(red: 0, green: 0, blue: 0)).cropped(to: outputRect)
     }
 
     func render(
@@ -1954,8 +1996,6 @@ private final class RecordingVideoCompositor {
         cameraPixelBuffer: CVPixelBuffer?,
         to outputPixelBuffer: CVPixelBuffer
     ) {
-        let background = CIImage(color: CIColor(red: 0, green: 0, blue: 0))
-            .cropped(to: outputRect)
         let screen = aspectFill(
             normalized(CIImage(cvPixelBuffer: screenPixelBuffer)),
             in: outputRect
@@ -1997,7 +2037,7 @@ private final class RecordingVideoCompositor {
         }
 
         guard cameraEnhancements.usesAutoLight,
-              let filter = CIFilter(name: "CIColorControls")
+              let filter = colorControlsFilter
         else {
             return image
         }
@@ -2006,7 +2046,9 @@ private final class RecordingVideoCompositor {
         filter.setValue(cameraEnhancements.autoLightAmount * 0.18, forKey: kCIInputBrightnessKey)
         filter.setValue(1 + cameraEnhancements.autoLightAmount * 0.08, forKey: kCIInputContrastKey)
         filter.setValue(1 + cameraEnhancements.autoLightAmount * 0.10, forKey: kCIInputSaturationKey)
-        return filter.outputImage.map(normalized) ?? image
+        let outputImage = filter.outputImage.map(normalized) ?? image
+        filter.setValue(nil, forKey: kCIInputImageKey)
+        return outputImage
     }
 
     private func aspectFill(_ image: CIImage, in targetRect: CGRect) -> CIImage {
@@ -2133,13 +2175,102 @@ final class RTMPAppendBackpressureGate: @unchecked Sendable {
     }
 }
 
+final class OrderedMediaAppendQueue<Element: Sendable>: @unchecked Sendable {
+    typealias Handler = @Sendable (Element) async -> Void
+
+    private final class State: @unchecked Sendable {
+        let lock = NSLock()
+        let gate: RTMPAppendBackpressureGate
+        var isClosed = false
+
+        init(maxPendingAppends: Int) {
+            self.gate = RTMPAppendBackpressureGate(maxPendingAppends: maxPendingAppends)
+        }
+
+        var hasStartedClose: Bool {
+            lock.lock()
+            defer { lock.unlock() }
+            return isClosed
+        }
+
+        func startClose() -> Bool {
+            lock.lock()
+            defer { lock.unlock() }
+
+            guard !isClosed else { return false }
+            isClosed = true
+            return true
+        }
+    }
+
+    private let state: State
+    private let continuation: AsyncStream<Element>.Continuation
+    private let consumerTask: Task<Void, Never>
+
+    init(maxPendingAppends: Int = 3, handler: @escaping Handler) {
+        let state = State(maxPendingAppends: maxPendingAppends)
+        let streamAndContinuation = AsyncStream<Element>.makeStream(
+            of: Element.self,
+            bufferingPolicy: .unbounded
+        )
+
+        self.state = state
+        self.continuation = streamAndContinuation.continuation
+        self.consumerTask = Task {
+            for await item in streamAndContinuation.stream {
+                await handler(item)
+                state.gate.finishAppend()
+            }
+        }
+    }
+
+    func enqueue(_ item: Element) -> Bool {
+        state.lock.lock()
+        defer { state.lock.unlock() }
+
+        guard !state.isClosed, state.gate.tryBeginAppend() else {
+            return false
+        }
+
+        switch continuation.yield(item) {
+        case .enqueued:
+            return true
+        case .dropped, .terminated:
+            state.gate.finishAppend()
+            return false
+        @unknown default:
+            state.gate.finishAppend()
+            return false
+        }
+    }
+
+    var isClosed: Bool {
+        state.hasStartedClose
+    }
+
+    func closeAndWait() async {
+        if state.startClose() {
+            continuation.finish()
+        }
+        await consumerTask.value
+    }
+}
+
 #if MAC_STREAM_HAS_HAISHINKIT
 private final class HaishinKitRTMPPublisher: RTMPPublisher, @unchecked Sendable {
     private let target: RTMPPublishTarget
     private let connection = RTMPConnection()
     private let stream: RTMPStream
     private let mixer = MediaMixer(captureSessionMode: .manual, multiTrackAudioMixingEnabled: true)
-    private let appendGate = RTMPAppendBackpressureGate()
+
+    private struct PendingMediaAppend: @unchecked Sendable {
+        var sampleBuffer: CMSampleBuffer
+        var track: UInt8
+    }
+
+    private lazy var appendQueue = OrderedMediaAppendQueue<PendingMediaAppend> { [mixer = self.mixer] pending in
+        await mixer.append(pending.sampleBuffer, track: pending.track)
+    }
 
     init(target: RTMPPublishTarget) {
         self.target = target
@@ -2189,15 +2320,11 @@ private final class HaishinKitRTMPPublisher: RTMPPublisher, @unchecked Sendable 
     }
 
     func append(_ sampleBuffer: CMSampleBuffer, track: UInt8) -> Bool {
-        guard appendGate.tryBeginAppend() else { return false }
-        Task {
-            defer { appendGate.finishAppend() }
-            await mixer.append(sampleBuffer, track: track)
-        }
-        return true
+        appendQueue.enqueue(PendingMediaAppend(sampleBuffer: sampleBuffer, track: track))
     }
 
     func close() async {
+        await appendQueue.closeAndWait()
         await mixer.removeOutput(stream)
         await mixer.stopRunning()
         _ = try? await stream.close()

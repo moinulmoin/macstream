@@ -355,6 +355,257 @@ func mlxLocalProviderFallsBackWhenRuntimeIsNotLinked() async throws {
 }
 
 @Test
+func openAICompatibleProviderDecodesChatCompletionSetupPlan() async throws {
+    let spy = OpenAICompatibleTransportSpy(
+        response: (
+            try openAICompatibleChatCompletionData(
+                content: #"{"title":"Product Demo","profile":"demo","summary":"Cut from face to screen when the product moves."}"#
+            ),
+            openAICompatibleHTTPResponse(statusCode: 200)
+        )
+    )
+    let provider = OpenAICompatibleLocalIntelligenceProvider(
+        configuration: OpenAICompatibleProviderConfiguration(model: "demo-model"),
+        transport: spy.transport
+    )
+
+    let plan = try await provider.generateSetupPlan(for: "demo stream")
+
+    #expect(plan.title == "Product Demo")
+    #expect(plan.directorProfile.kind == .demo)
+    #expect(plan.scenes == [.face, .screenAndFace, .screenOnly, .brb])
+    #expect(plan.directorRuleSummary == "Cut from face to screen when the product moves.")
+}
+
+@Test
+func openAICompatibleProviderSendsBoundedSetupPrompt() async throws {
+    let spy = OpenAICompatibleTransportSpy(
+        response: (
+            try openAICompatibleChatCompletionData(
+                content: #"{"title":"Coding","profile":"coding","summary":"Keep screen and face visible."}"#
+            ),
+            openAICompatibleHTTPResponse(statusCode: 200)
+        )
+    )
+    let provider = OpenAICompatibleLocalIntelligenceProvider(
+        configuration: OpenAICompatibleProviderConfiguration(
+            baseURL: URL(string: "http://localhost:1234")!,
+            model: "bounded-model"
+        ),
+        transport: spy.transport
+    )
+    let prefix = String(repeating: "a", count: SetupPlanPromptBuilder.maxStreamDescriptionCharacters)
+    let suffix = "SHOULD_NOT_REACH_PROVIDER"
+
+    _ = try await provider.generateSetupPlan(for: prefix + suffix)
+
+    let request = try #require(await spy.capturedRequests().first)
+    let body = try openAICompatibleJSONObject(request.body)
+    let messages = try #require(body["messages"] as? [[String: String]])
+    let userMessage = try #require(messages.last?["content"])
+    #expect(userMessage.contains(prefix))
+    #expect(!userMessage.contains(suffix))
+    #expect(body["model"] as? String == "bounded-model")
+    #expect(body["stream"] as? Bool == false)
+    #expect(request.request.url?.path == "/v1/chat/completions")
+}
+
+@Test
+func openAICompatibleProviderThrowsSetupPlanDecodingErrorForMalformedContent() async throws {
+    let spy = OpenAICompatibleTransportSpy(
+        response: (
+            try openAICompatibleChatCompletionData(content: "no setup json here"),
+            openAICompatibleHTTPResponse(statusCode: 200)
+        )
+    )
+    let provider = OpenAICompatibleLocalIntelligenceProvider(
+        configuration: OpenAICompatibleProviderConfiguration(model: "bad-model"),
+        transport: spy.transport
+    )
+
+    do {
+        _ = try await provider.generateSetupPlan(for: "demo stream")
+        Issue.record("Expected setup plan decoding to fail")
+    } catch is SetupPlanDecodingError {
+    }
+}
+
+@Test
+func openAICompatibleProviderThrowsForHTTPFailure() async throws {
+    let spy = OpenAICompatibleTransportSpy(
+        response: (
+            try openAICompatibleChatCompletionData(
+                content: #"{"title":"Fallback","profile":"balanced","summary":"Should not apply."}"#
+            ),
+            openAICompatibleHTTPResponse(statusCode: 500)
+        )
+    )
+    let provider = OpenAICompatibleLocalIntelligenceProvider(
+        configuration: OpenAICompatibleProviderConfiguration(model: "failing-model"),
+        transport: spy.transport
+    )
+
+    await #expect(throws: Error.self) {
+        _ = try await provider.generateSetupPlan(for: "coding stream")
+    }
+}
+
+@Test
+func openAICompatibleProviderAppliesAuthorizationHeaderOnlyWhenAPIKeyPresent() async throws {
+    let response = (
+        try openAICompatibleChatCompletionData(
+            content: #"{"title":"Demo","profile":"demo","summary":"Show product motion."}"#
+        ),
+        openAICompatibleHTTPResponse(statusCode: 200)
+    )
+    let noKeySpy = OpenAICompatibleTransportSpy(response: response)
+    let keyedSpy = OpenAICompatibleTransportSpy(response: response)
+
+    _ = try await OpenAICompatibleLocalIntelligenceProvider(
+        configuration: OpenAICompatibleProviderConfiguration(model: "demo", apiKey: "   "),
+        transport: noKeySpy.transport
+    ).generateSetupPlan(for: "demo")
+    _ = try await OpenAICompatibleLocalIntelligenceProvider(
+        configuration: OpenAICompatibleProviderConfiguration(model: "demo", apiKey: "dummy-local-key"),
+        transport: keyedSpy.transport
+    ).generateSetupPlan(for: "demo")
+
+    #expect(try #require(await noKeySpy.capturedRequests().first).request.value(forHTTPHeaderField: "Authorization") == nil)
+    #expect(try #require(await keyedSpy.capturedRequests().first).request.value(forHTTPHeaderField: "Authorization") == "Bearer dummy-local-key")
+}
+
+@Test
+func openAICompatibleProviderAppliesRequestTimeout() async throws {
+    let spy = OpenAICompatibleTransportSpy(
+        response: (
+            try openAICompatibleChatCompletionData(
+                content: #"{"title":"Teaching","profile":"teaching","summary":"Keep face visible while explaining."}"#
+            ),
+            openAICompatibleHTTPResponse(statusCode: 200)
+        )
+    )
+    let provider = OpenAICompatibleLocalIntelligenceProvider(
+        configuration: OpenAICompatibleProviderConfiguration(model: "teaching", timeout: 17),
+        transport: spy.transport
+    )
+
+    _ = try await provider.generateSetupPlan(for: "teaching")
+
+    #expect(try #require(await spy.capturedRequests().first).request.timeoutInterval == 17)
+}
+
+@Test
+func openAICompatibleProviderProbeReturnsAvailableForModelsSuccess() async throws {
+    let spy = OpenAICompatibleTransportSpy(
+        response: (Data(), openAICompatibleHTTPResponse(statusCode: 200, path: "/v1/models"))
+    )
+    let provider = OpenAICompatibleLocalIntelligenceProvider(
+        configuration: OpenAICompatibleProviderConfiguration(
+            baseURL: URL(string: "http://localhost:1234/v1")!,
+            model: "probe-model",
+            timeout: 30
+        ),
+        transport: spy.transport
+    )
+
+    let status = await provider.probeCapabilities()
+
+    let request = try #require(await spy.capturedRequests().first)
+    #expect(request.request.httpMethod == "GET")
+    #expect(request.request.url?.path == "/v1/models")
+    #expect(request.body.isEmpty)
+    #expect(request.request.timeoutInterval == OpenAICompatibleLocalIntelligenceProvider.probeTimeout)
+    #expect(status.provider == .openAICompatible)
+    #expect(status.availability == .available)
+}
+
+@Test
+func openAICompatibleProviderProbeReturnsUnavailableForModelsFailure() async {
+    let spy = OpenAICompatibleTransportSpy(
+        response: (Data(), openAICompatibleHTTPResponse(statusCode: 500, path: "/v1/models"))
+    )
+    let provider = OpenAICompatibleLocalIntelligenceProvider(
+        configuration: OpenAICompatibleProviderConfiguration(model: "probe-model"),
+        transport: spy.transport
+    )
+
+    let status = await provider.probeCapabilities()
+
+    #expect(status.provider == .openAICompatible)
+    #expect(status.availability == .unavailable)
+    #expect(status.detail.contains("HTTP 500"))
+}
+
+@Test
+@MainActor
+func openAICompatibleProviderProbeStatusUpdatesStoreWhenProviderIsReplaced() async {
+    let spy = OpenAICompatibleTransportSpy(
+        response: (Data(), openAICompatibleHTTPResponse(statusCode: 200, path: "/v1/models"))
+    )
+    let provider = OpenAICompatibleLocalIntelligenceProvider(
+        configuration: OpenAICompatibleProviderConfiguration(model: "store-model"),
+        transport: spy.transport
+    )
+    let store = StudioStore(intelligenceProvider: provider)
+
+    let status = await provider.probeCapabilities()
+    let accepted = store.setIntelligenceProvider(provider.replacingProbedStatus(status))
+
+    #expect(accepted)
+    #expect(store.localIntelligenceStatus.provider == .openAICompatible)
+    #expect(store.localIntelligenceStatus.availability == .available)
+}
+
+private struct CapturedRequest: Sendable {
+    var request: URLRequest
+    var body: Data
+}
+
+private actor OpenAICompatibleTransportSpy {
+    private var requests: [CapturedRequest] = []
+    private let response: (Data, URLResponse)
+
+    init(response: (Data, URLResponse)) {
+        self.response = response
+    }
+
+    func transport(_ request: URLRequest) async throws -> (Data, URLResponse) {
+        let body = request.httpBody ?? Data()
+        requests.append(CapturedRequest(request: request, body: body))
+        return response
+    }
+
+    func capturedRequests() -> [CapturedRequest] {
+        requests
+    }
+}
+
+private func openAICompatibleChatCompletionData(content: String) throws -> Data {
+    try JSONSerialization.data(withJSONObject: [
+        "choices": [
+            [
+                "message": [
+                    "content": content
+                ]
+            ]
+        ]
+    ])
+}
+
+private func openAICompatibleJSONObject(_ data: Data) throws -> [String: Any] {
+    try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
+}
+
+private func openAICompatibleHTTPResponse(statusCode: Int, path: String = "/v1/chat/completions") -> HTTPURLResponse {
+    HTTPURLResponse(
+        url: URL(string: "http://localhost:1234\(path)")!,
+        statusCode: statusCode,
+        httpVersion: nil,
+        headerFields: nil
+    )!
+}
+
+@Test
 func setupPlanPromptConstrainsModelOutput() {
     let prompt = SetupPlanPromptBuilder().prompt(for: "I teach SwiftUI with screen and camera")
 

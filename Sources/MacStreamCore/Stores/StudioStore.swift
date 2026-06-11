@@ -66,7 +66,7 @@ public final class StudioStore {
 
     private var director = DirectorEngine()
     private let mediaPipeline: any MediaPipeline
-    private let intelligenceProvider: any LocalIntelligenceProvider
+    private var intelligenceProvider: any LocalIntelligenceProvider
     private let captureDeviceProvider: any CaptureDeviceProvider
     private let signalProvider: any SignalProvider
     private let performanceMonitor: any SystemPerformanceMonitor
@@ -1229,6 +1229,23 @@ public final class StudioStore {
         addWarningEventIfNeeded(title: "Settings not saved", detail: detail)
     }
 
+    @discardableResult
+    public func setIntelligenceProvider(_ provider: any LocalIntelligenceProvider) -> Bool {
+        guard !isGeneratingSetupPlan else {
+            addWarningEventIfNeeded(title: "Provider unchanged", detail: "Finish setup generation before changing providers.")
+            return false
+        }
+
+        if let providerChangeBlockedReason {
+            addWarningEventIfNeeded(title: "Provider unchanged", detail: providerChangeBlockedReason)
+            return false
+        }
+
+        intelligenceProvider = provider
+        localIntelligenceStatus = provider.status
+        return true
+    }
+
     public func notePreviewSetupIssue(_ detail: String) {
         addWarningEventIfNeeded(title: "Camera preview unavailable", detail: detail)
     }
@@ -2101,6 +2118,32 @@ public final class StudioStore {
 
         if SetupPlanPromptBuilder.boundedStreamDescription(setupPrompt).isEmpty {
             return "Describe the stream before generating setup rules."
+        }
+
+        return nil
+    }
+
+    private var providerChangeBlockedReason: String? {
+        if isStreamConnecting {
+            return "Finish connecting before generating setup rules."
+        }
+
+        if streamState.isLive {
+            return streamTransport == .preview
+                ? "Stop preview before generating local setup rules."
+                : "Stop streaming before generating local setup rules."
+        }
+
+        if isRecordingStarting {
+            return "Finish recording startup before generating setup rules."
+        }
+
+        if isRecordingStopping {
+            return "Finish recording stop before generating setup rules."
+        }
+
+        if recordingState == .recording {
+            return "Stop recording before generating local setup rules."
         }
 
         return nil

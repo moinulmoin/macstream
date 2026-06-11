@@ -7,6 +7,14 @@ struct SettingsView: View {
     @AppStorage("recordWhileStreaming") private var recordWhileStreaming = false
     @AppStorage("defaultSceneKind") private var defaultSceneKindRaw = SceneKind.brb.rawValue
     @AppStorage("setupPrompt") private var setupPrompt = StudioStore.defaultSetupPrompt
+    @AppStorage("localIntelligenceProviderKind") private var localIntelligenceProviderKindRaw = LocalIntelligenceProviderKind.rules.rawValue
+    @AppStorage("openAICompatibleBaseURL") private var openAICompatibleBaseURL = OpenAICompatibleProviderConfiguration.defaultBaseURL.absoluteString
+    @AppStorage("openAICompatibleModel") private var openAICompatibleModel = OpenAICompatibleProviderConfiguration.defaultModel
+    @AppStorage("openAICompatibleTimeout") private var openAICompatibleTimeout = OpenAICompatibleProviderConfiguration.defaultTimeout
+    @State private var openAICompatibleAPIKey = ""
+    @State private var providerProbeTask: Task<Void, Never>?
+    @State private var providerProbeMessage = "Not checked"
+    @State private var providerApplyPending = false
 
     var body: some View {
         Form {
@@ -63,6 +71,36 @@ struct SettingsView: View {
                 TextField("Stream description", text: setupPromptBinding, axis: .vertical)
                     .lineLimit(2...4)
 
+                Picker("Provider", selection: localIntelligenceProviderKind) {
+                    ForEach(LocalIntelligenceProviderKind.allCases) { providerKind in
+                        Text(providerKind.title).tag(providerKind)
+                    }
+                }
+
+                if selectedLocalIntelligenceProviderKind == .openAICompatible {
+                    TextField("Base URL", text: openAICompatibleBaseURLBinding)
+                        .textContentType(.URL)
+                    TextField("Model", text: openAICompatibleModelBinding)
+                    SecureField("API key", text: openAICompatibleAPIKeyBinding)
+
+                    LabeledContent("Timeout") {
+                        Stepper(
+                            "\(Int(clampedOpenAICompatibleTimeout)) seconds",
+                            value: openAICompatibleTimeoutBinding,
+                            in: openAICompatibleTimeoutRange,
+                            step: 1
+                        )
+                    }
+
+                    Button("Test connection") {
+                        testOpenAICompatibleConnection()
+                    }
+
+                    Text(providerProbeMessage)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+
                 Button {
                     store.generateSetupPlan()
                 } label: {
@@ -80,8 +118,13 @@ struct SettingsView: View {
                 .help(store.setupGenerationStatusDetail)
 
                 LabeledContent("Local model") {
-                    Text(store.localIntelligenceStatus.availability.title)
-                        .foregroundStyle(statusTint(store.localIntelligenceStatus.availability))
+                    VStack(alignment: .trailing, spacing: 2) {
+                        Text(store.localIntelligenceStatus.availability.title)
+                            .foregroundStyle(statusTint(store.localIntelligenceStatus.availability))
+                        Text(store.localIntelligenceStatus.detail)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
                 }
 
                 LabeledContent("Profile") {
@@ -105,6 +148,16 @@ struct SettingsView: View {
         .formStyle(.grouped)
         .padding(20)
         .frame(width: 540)
+        .onAppear {
+            openAICompatibleAPIKey = MacStreamProviderKeychain.loadOpenAICompatibleAPIKey() ?? ""
+            applySelectedIntelligenceProvider()
+        }
+        .onDisappear {
+            providerProbeTask?.cancel()
+        }
+        .onChange(of: providerReapplyTrigger) { _, _ in
+            applyPendingIntelligenceProviderIfNeeded()
+        }
     }
 
     private var displayedDirectorCountdownSeconds: Int {
@@ -174,6 +227,144 @@ struct SettingsView: View {
                 store.applySavedSetupPrompt(boundedPrompt)
             }
         )
+    }
+
+    private var selectedLocalIntelligenceProviderKind: LocalIntelligenceProviderKind {
+        LocalIntelligenceProviderKind(rawValue: localIntelligenceProviderKindRaw) ?? .rules
+    }
+
+    private var localIntelligenceProviderKind: Binding<LocalIntelligenceProviderKind> {
+        Binding(
+            get: { selectedLocalIntelligenceProviderKind },
+            set: { newValue in
+                localIntelligenceProviderKindRaw = newValue.rawValue
+                providerProbeMessage = newValue == .openAICompatible ? "Not checked" : "Rules active"
+                applySelectedIntelligenceProvider()
+            }
+        )
+    }
+
+    private var openAICompatibleBaseURLBinding: Binding<String> {
+        Binding(
+            get: { openAICompatibleBaseURL },
+            set: { newValue in
+                openAICompatibleBaseURL = newValue
+                providerProbeMessage = "Not checked"
+                applySelectedIntelligenceProvider()
+            }
+        )
+    }
+
+    private var openAICompatibleModelBinding: Binding<String> {
+        Binding(
+            get: { openAICompatibleModel },
+            set: { newValue in
+                openAICompatibleModel = newValue
+                providerProbeMessage = "Not checked"
+                applySelectedIntelligenceProvider()
+            }
+        )
+    }
+
+    private var openAICompatibleAPIKeyBinding: Binding<String> {
+        Binding(
+            get: { openAICompatibleAPIKey },
+            set: { newValue in
+                openAICompatibleAPIKey = newValue
+                let saved = newValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                    ? MacStreamProviderKeychain.deleteOpenAICompatibleAPIKey()
+                    : MacStreamProviderKeychain.saveOpenAICompatibleAPIKey(newValue)
+                if !saved {
+                    store.reportPersistenceFailure("OpenAI-compatible API key could not be saved to Keychain.")
+                }
+                providerProbeMessage = "Not checked"
+                applySelectedIntelligenceProvider()
+            }
+        )
+    }
+
+    private var openAICompatibleTimeoutBinding: Binding<Double> {
+        Binding(
+            get: { clampedOpenAICompatibleTimeout },
+            set: { newValue in
+                openAICompatibleTimeout = min(max(newValue, openAICompatibleTimeoutRange.lowerBound), openAICompatibleTimeoutRange.upperBound)
+                providerProbeMessage = "Not checked"
+                applySelectedIntelligenceProvider()
+            }
+        )
+    }
+
+    private var openAICompatibleTimeoutRange: ClosedRange<Double> { 5...120 }
+
+    private var clampedOpenAICompatibleTimeout: Double {
+        min(max(openAICompatibleTimeout, openAICompatibleTimeoutRange.lowerBound), openAICompatibleTimeoutRange.upperBound)
+    }
+
+    private func applySelectedIntelligenceProvider() {
+        providerProbeTask?.cancel()
+        providerProbeTask = nil
+        providerApplyPending = !store.setIntelligenceProvider(makeLocalIntelligenceProviderFromSettings())
+    }
+
+    private func applyPendingIntelligenceProviderIfNeeded() {
+        guard providerApplyPending else { return }
+        providerApplyPending = !store.setIntelligenceProvider(makeLocalIntelligenceProviderFromSettings())
+    }
+
+    private var providerReapplyTrigger: String {
+        [
+            store.isGeneratingSetupPlan.description,
+            store.isStreamConnecting.description,
+            store.isLive.description,
+            store.isRecordingStarting.description,
+            store.isRecordingStopping.description,
+            String(describing: store.recordingState)
+        ].joined(separator: ":")
+    }
+
+    private func makeLocalIntelligenceProviderFromSettings() -> any LocalIntelligenceProvider {
+        switch selectedLocalIntelligenceProviderKind {
+        case .rules:
+            return RuleBasedLocalIntelligenceProvider()
+        case .mlx:
+            return MLXLocalIntelligenceProvider()
+        case .openAICompatible:
+            return makeOpenAICompatibleProviderFromSettings()
+        }
+    }
+
+    private func makeOpenAICompatibleProviderFromSettings() -> OpenAICompatibleLocalIntelligenceProvider {
+        OpenAICompatibleLocalIntelligenceProvider(
+            configuration: OpenAICompatibleProviderConfiguration(
+                baseURL: URL(string: openAICompatibleBaseURL) ?? OpenAICompatibleProviderConfiguration.defaultBaseURL,
+                model: openAICompatibleModel,
+                apiKey: openAICompatibleAPIKey,
+                timeout: clampedOpenAICompatibleTimeout
+            )
+        )
+    }
+
+    private func testOpenAICompatibleConnection() {
+        providerProbeTask?.cancel()
+        providerProbeMessage = "Checking..."
+        let provider = makeOpenAICompatibleProviderFromSettings()
+        let signature = openAICompatibleProviderSettingsSignature
+        providerProbeTask = Task { @MainActor in
+            let status = await provider.probeCapabilities()
+            guard !Task.isCancelled, signature == openAICompatibleProviderSettingsSignature else { return }
+            providerProbeMessage = status.availability == .available ? "Reachable" : status.detail
+            providerApplyPending = !store.setIntelligenceProvider(provider.replacingProbedStatus(status))
+            providerProbeTask = nil
+        }
+    }
+
+    private var openAICompatibleProviderSettingsSignature: String {
+        [
+            openAICompatibleBaseURL,
+            openAICompatibleModel,
+            openAICompatibleAPIKey,
+            clampedOpenAICompatibleTimeout.description
+        ].joined(separator: "\u{1F}")
     }
 
     private func statusTint(_ availability: LocalIntelligenceAvailability) -> Color {

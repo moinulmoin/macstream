@@ -20,6 +20,7 @@ public extension LocalIntelligenceProvider {
 public enum LocalIntelligenceProviderKind: String, CaseIterable, Identifiable, Sendable {
     case rules
     case mlx
+    case openAICompatible
 
     public var id: String { rawValue }
 
@@ -27,6 +28,7 @@ public enum LocalIntelligenceProviderKind: String, CaseIterable, Identifiable, S
         switch self {
         case .rules: "Rule Engine"
         case .mlx: "MLX Local Model"
+        case .openAICompatible: "Local server (OpenAI-compatible)"
         }
     }
 }

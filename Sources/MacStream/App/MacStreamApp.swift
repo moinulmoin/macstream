@@ -25,6 +25,10 @@ struct MacStreamApp: App {
     @AppStorage("cameraDeviceIDPreference") private var savedCameraDeviceID = ""
     @AppStorage("microphoneDeviceIDPreference") private var savedMicrophoneDeviceID = ""
     @AppStorage("cameraEnhancementSettings") private var cameraEnhancementSettingsJSON = ""
+    @AppStorage("localIntelligenceProviderKind") private var localIntelligenceProviderKindRaw = LocalIntelligenceProviderKind.rules.rawValue
+    @AppStorage("openAICompatibleBaseURL") private var openAICompatibleBaseURL = OpenAICompatibleProviderConfiguration.defaultBaseURL.absoluteString
+    @AppStorage("openAICompatibleModel") private var openAICompatibleModel = OpenAICompatibleProviderConfiguration.defaultModel
+    @AppStorage("openAICompatibleTimeout") private var openAICompatibleTimeout = OpenAICompatibleProviderConfiguration.defaultTimeout
     @State private var store = StudioStore(
         mediaPipeline: SystemMediaPipeline(),
         intelligenceProvider: RuleBasedLocalIntelligenceProvider(),
@@ -42,6 +46,7 @@ struct MacStreamApp: App {
                 .frame(minWidth: 1180, minHeight: 760)
                 .task {
                     applyLaunchSetupDefaultsIfNeeded()
+                    applySavedLocalIntelligenceProvider()
                     applySavedDestination()
                     applySavedSourceConfiguration()
                     applySavedScreenCaptureTargetPreference()
@@ -164,6 +169,29 @@ struct MacStreamApp: App {
             defaultSceneKind: SceneKind(rawValue: defaultSceneKindRaw),
             setupPrompt: setupPrompt
         )
+    }
+
+    private func applySavedLocalIntelligenceProvider() {
+        _ = store.setIntelligenceProvider(makeLocalIntelligenceProvider())
+    }
+
+    private func makeLocalIntelligenceProvider() -> any LocalIntelligenceProvider {
+        let kind = LocalIntelligenceProviderKind(rawValue: localIntelligenceProviderKindRaw) ?? .rules
+        switch kind {
+        case .rules:
+            return RuleBasedLocalIntelligenceProvider()
+        case .mlx:
+            return MLXLocalIntelligenceProvider()
+        case .openAICompatible:
+            return OpenAICompatibleLocalIntelligenceProvider(
+                configuration: OpenAICompatibleProviderConfiguration(
+                    baseURL: URL(string: openAICompatibleBaseURL) ?? OpenAICompatibleProviderConfiguration.defaultBaseURL,
+                    model: openAICompatibleModel,
+                    apiKey: MacStreamProviderKeychain.loadOpenAICompatibleAPIKey(),
+                    timeout: openAICompatibleTimeout
+                )
+            )
+        }
     }
 
     private func applySavedDestination() {

@@ -13,6 +13,7 @@ struct PreviewCanvasView: View {
     var screenLevel = 1.0
     var isScreenCaptureReady = true
     var screenCaptureTarget: ScreenCaptureTarget?
+    var onCameraPreviewFailure: (@MainActor (String) -> Void)? = nil
 
     var body: some View {
         GeometryReader { proxy in
@@ -135,7 +136,8 @@ struct PreviewCanvasView: View {
                 CameraPreviewView(
                     configuration: previewConfiguration,
                     cameraEnhancements: cameraEnhancements,
-                    cameraDeviceID: cameraDeviceID
+                    cameraDeviceID: cameraDeviceID,
+                    onSetupFailure: onCameraPreviewFailure
                 )
             }
         }

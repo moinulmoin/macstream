@@ -14,6 +14,8 @@ import VideoToolbox
 public protocol MediaPipeline: Sendable {
     var streamTransport: StreamTransportKind { get }
     var currentHealth: StreamHealth? { get }
+    var recordingFailureDetail: String? { get }
+    var captureSetupWarnings: [String] { get }
     var requiresCaptureReadinessForStart: Bool { get }
     var requiresScreenCaptureVideoForStream: Bool { get }
     var requiresScreenCaptureVideoForRecording: Bool { get }
@@ -30,6 +32,8 @@ public protocol MediaPipeline: Sendable {
 public extension MediaPipeline {
     var streamTransport: StreamTransportKind { .endpointValidation }
     var currentHealth: StreamHealth? { nil }
+    var recordingFailureDetail: String? { nil }
+    var captureSetupWarnings: [String] { [] }
     var requiresCaptureReadinessForStart: Bool { false }
     var requiresScreenCaptureVideoForStream: Bool { false }
     var requiresScreenCaptureVideoForRecording: Bool { false }
@@ -391,6 +395,8 @@ public final class SystemMediaPipeline: NSObject, MediaPipeline, SCStreamOutput,
     private var videoPixelBufferAdaptor: AVAssetWriterInputPixelBufferAdaptor?
     private var audioInput: AVAssetWriterInput?
     private var microphoneInput: AVAssetWriterInput?
+    private var recordingFailureReason: String?
+    private var setupWarnings: [String] = []
     private var rtmpPublisher: RTMPPublisher?
     private var videoCompositor: RecordingVideoCompositor?
     private var publishingVideoCompositor: RecordingVideoCompositor?
@@ -429,6 +435,14 @@ public final class SystemMediaPipeline: NSObject, MediaPipeline, SCStreamOutput,
 
             return mediaHealth
         }
+    }
+
+    public var recordingFailureDetail: String? {
+        queue.sync { recordingFailureReason }
+    }
+
+    public var captureSetupWarnings: [String] {
+        queue.sync { setupWarnings }
     }
 
     public var requiresCaptureReadinessForStart: Bool {
@@ -586,6 +600,12 @@ public final class SystemMediaPipeline: NSObject, MediaPipeline, SCStreamOutput,
             throw MediaPipelineError.alreadyRecording
         }
 
+        queue.sync {
+            self.recordingFailureReason = nil
+            self.setupWarnings = []
+        }
+        var setupWarnings: [String] = []
+
         guard CGPreflightScreenCaptureAccess() || CGRequestScreenCaptureAccess() else {
             throw MediaPipelineError.unavailable("Screen recording permission is required.")
         }
@@ -664,6 +684,7 @@ public final class SystemMediaPipeline: NSObject, MediaPipeline, SCStreamOutput,
                 writer.add(input)
                 audioInput = input
             } else {
+                setupWarnings.append("System audio could not be attached; this recording will not include system audio.")
                 audioInput = nil
             }
         } else {
@@ -677,6 +698,11 @@ public final class SystemMediaPipeline: NSObject, MediaPipeline, SCStreamOutput,
         let microphoneCapture = usesPublishingMicrophoneSession
             ? nil
             : (mediaConfiguration.capturesMicrophone ? await makeMicrophoneCaptureIfAvailable(deviceID: mediaConfiguration.microphoneDeviceID) : nil)
+        if mediaConfiguration.capturesMicrophone,
+           !usesPublishingMicrophoneSession,
+           microphoneCapture == nil {
+            setupWarnings.append("Microphone capture could not be attached; this recording will not include microphone audio.")
+        }
         let hasMicrophoneCapture = usesPublishingMicrophoneSession || microphoneCapture != nil
         let microphoneInput: AVAssetWriterInput?
         if hasMicrophoneCapture {
@@ -694,6 +720,7 @@ public final class SystemMediaPipeline: NSObject, MediaPipeline, SCStreamOutput,
                 writer.add(input)
                 microphoneInput = input
             } else {
+                setupWarnings.append("Microphone audio could not be attached; this recording will not include microphone audio.")
                 microphoneInput = nil
             }
         } else {
@@ -725,7 +752,11 @@ public final class SystemMediaPipeline: NSObject, MediaPipeline, SCStreamOutput,
         let stream = SCStream(filter: selection.filter, configuration: configuration, delegate: nil)
         try stream.addStreamOutput(self, type: .screen, sampleHandlerQueue: queue)
         if mediaConfiguration.capturesSystemAudio {
-            try? stream.addStreamOutput(self, type: .audio, sampleHandlerQueue: queue)
+            do {
+                try stream.addStreamOutput(self, type: .audio, sampleHandlerQueue: queue)
+            } catch {
+                setupWarnings.append("System audio capture could not start; this recording will not include system audio.")
+            }
         }
 
         do {
@@ -752,6 +783,7 @@ public final class SystemMediaPipeline: NSObject, MediaPipeline, SCStreamOutput,
             self.latestCameraPixelBuffer = nil
             self.didStartSession = false
             self.currentURL = outputURL
+            self.setupWarnings = setupWarnings
             self.resetHealth(using: mediaConfiguration)
         }
 
@@ -834,10 +866,26 @@ public final class SystemMediaPipeline: NSObject, MediaPipeline, SCStreamOutput,
             }
 
             if writer.status == .writing {
-                writer.finishWriting {
+                let sendableWriter = SendableAssetWriter(writer)
+                writer.finishWriting { [weak self, sendableWriter] in
+                    if let detail = Self.writerFailureDetail(status: sendableWriter.status, errorDescription: sendableWriter.errorDescription) {
+                        self?.queue.sync {
+                            if self?.recordingFailureReason == nil {
+                                self?.recordingFailureReason = detail
+                            }
+                        }
+                    }
                     continuation.resume()
                 }
                 return
+            }
+
+            if let detail = Self.writerFailureDetail(status: writer.status, errorDescription: writer.error?.localizedDescription) {
+                queue.sync {
+                    if recordingFailureReason == nil {
+                        recordingFailureReason = detail
+                    }
+                }
             }
 
             if Self.shouldCancelWriterOnStop(status: writer.status) {
@@ -850,6 +898,22 @@ public final class SystemMediaPipeline: NSObject, MediaPipeline, SCStreamOutput,
 
     static func shouldCancelWriterOnStop(status: AVAssetWriter.Status) -> Bool {
         status == .unknown
+    }
+
+    static func writerFailureDetail(status: AVAssetWriter.Status, errorDescription: String?) -> String? {
+        guard status == .failed else { return nil }
+        if let errorDescription, !errorDescription.isEmpty {
+            return "Recording failed: \(errorDescription)"
+        }
+        return "Recording failed because the local media writer failed."
+    }
+
+    private func recordWriterFailureIfNeeded(status: AVAssetWriter.Status, errorDescription: String?) {
+        guard recordingFailureReason == nil,
+              let detail = Self.writerFailureDetail(status: status, errorDescription: errorDescription)
+        else { return }
+
+        recordingFailureReason = detail
     }
 
     private var isRecording: Bool {
@@ -1014,7 +1078,11 @@ public final class SystemMediaPipeline: NSObject, MediaPipeline, SCStreamOutput,
         let stream = SCStream(filter: selection.filter, configuration: configuration, delegate: nil)
         try stream.addStreamOutput(self, type: .screen, sampleHandlerQueue: queue)
         if mediaConfiguration.capturesSystemAudio {
-            try? stream.addStreamOutput(self, type: .audio, sampleHandlerQueue: queue)
+            do {
+                try stream.addStreamOutput(self, type: .audio, sampleHandlerQueue: queue)
+            } catch {
+                // Publishing can continue without system audio; recording reports this degradation separately.
+            }
         }
         let usesCompositedPublishing = Self.shouldPublishCompositedVideoSample(sceneKind: mediaConfiguration.sceneKind)
         let publishingOutputWidth = selection.geometry.width(for: mediaConfiguration.maxVideoWidth)
@@ -1321,7 +1389,10 @@ public final class SystemMediaPipeline: NSObject, MediaPipeline, SCStreamOutput,
         }
 
         if outputType == .screen, writer.status == .unknown {
-            guard writer.startWriting() else { return }
+            guard writer.startWriting() else {
+                recordWriterFailureIfNeeded(status: writer.status, errorDescription: writer.error?.localizedDescription)
+                return
+            }
             writer.startSession(atSourceTime: presentationTime)
             didStartSession = true
         }
@@ -1343,11 +1414,15 @@ public final class SystemMediaPipeline: NSObject, MediaPipeline, SCStreamOutput,
             if mediaConfiguration.sceneKind == .screenAndFace {
                 guard appendCompositedVideoSample(sampleBuffer, presentationTime: presentationTime) else {
                     recordDroppedFrameIfNeeded(outputType)
+                    recordWriterFailureIfNeeded(status: writer.status, errorDescription: writer.error?.localizedDescription)
                     return
                 }
                 return
             }
-            videoInput.append(sampleBuffer)
+            if !videoInput.append(sampleBuffer) {
+                recordDroppedFrameIfNeeded(outputType)
+                recordWriterFailureIfNeeded(status: writer.status, errorDescription: writer.error?.localizedDescription)
+            }
         case .audio:
             guard Self.shouldProcessSystemAudioSample(configuration: mediaConfiguration) else {
                 return
@@ -1357,7 +1432,9 @@ public final class SystemMediaPipeline: NSObject, MediaPipeline, SCStreamOutput,
             else {
                 return
             }
-            audioInput.append(sampleBuffer)
+            if !audioInput.append(sampleBuffer) {
+                recordWriterFailureIfNeeded(status: writer.status, errorDescription: writer.error?.localizedDescription)
+            }
         case .microphone:
             break
         @unknown default:
@@ -1768,7 +1845,9 @@ public final class SystemMediaPipeline: NSObject, MediaPipeline, SCStreamOutput,
               microphoneInput.isReadyForMoreMediaData
         else { return }
 
-        microphoneInput.append(sampleBuffer)
+        if !microphoneInput.append(sampleBuffer) {
+            recordWriterFailureIfNeeded(status: writer.status, errorDescription: writer.error?.localizedDescription)
+        }
     }
 
     static func shouldProcessSystemAudioSample(configuration: MediaPipelineConfiguration) -> Bool {
@@ -1831,6 +1910,22 @@ private struct RecordingWriterState {
     var audioInput: AVAssetWriterInput?
     var microphoneInput: AVAssetWriterInput?
     var shouldStopMicrophoneSession: Bool
+}
+
+private struct SendableAssetWriter: @unchecked Sendable {
+    private let writer: AVAssetWriter
+
+    init(_ writer: AVAssetWriter) {
+        self.writer = writer
+    }
+
+    var status: AVAssetWriter.Status {
+        writer.status
+    }
+
+    var errorDescription: String? {
+        writer.error?.localizedDescription
+    }
 }
 
 private struct MicrophoneCapture {

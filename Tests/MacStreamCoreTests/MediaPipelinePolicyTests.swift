@@ -96,6 +96,20 @@ func systemMediaPipelineCancelsRecordingWriterThatNeverStarted() {
 }
 
 @Test
+func systemMediaPipelineReportsRecordingWriterFailureDetail() {
+    let explicit = SystemMediaPipeline.writerFailureDetail(status: .failed, errorDescription: "disk full")
+    #expect(explicit?.contains("disk full") == true)
+
+    let generic = SystemMediaPipeline.writerFailureDetail(status: .failed, errorDescription: nil)
+    #expect(generic == "Recording failed because the local media writer failed.")
+
+    #expect(SystemMediaPipeline.writerFailureDetail(status: .writing, errorDescription: "disk full") == nil)
+    #expect(SystemMediaPipeline.writerFailureDetail(status: .completed, errorDescription: "disk full") == nil)
+    #expect(SystemMediaPipeline.writerFailureDetail(status: .cancelled, errorDescription: "disk full") == nil)
+    #expect(SystemMediaPipeline.writerFailureDetail(status: .unknown, errorDescription: "disk full") == nil)
+}
+
+@Test
 func systemMediaPipelineBuildsUpdatedStreamConfigurationFromCaptureGeometry() {
     let geometry = MediaCaptureGeometry(sourceWidth: 3_024, sourceHeight: 1_964, maxVideoWidth: 1_920)
     let balanced = SystemMediaPipeline.streamConfiguration(

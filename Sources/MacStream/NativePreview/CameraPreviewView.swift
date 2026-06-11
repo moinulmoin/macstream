@@ -8,9 +8,15 @@ struct CameraPreviewView: NSViewRepresentable {
     var configuration = PreviewCaptureConfiguration()
     var cameraEnhancements = CameraEnhancementSettings()
     var cameraDeviceID: String?
+    var onSetupFailure: (@MainActor (String) -> Void)? = nil
 
     func makeCoordinator() -> Coordinator {
-        Coordinator(configuration: configuration, cameraEnhancements: cameraEnhancements, cameraDeviceID: cameraDeviceID)
+        Coordinator(
+            configuration: configuration,
+            cameraEnhancements: cameraEnhancements,
+            cameraDeviceID: cameraDeviceID,
+            onSetupFailure: onSetupFailure
+        )
     }
 
     func makeNSView(context: Context) -> CameraPreviewNSView {
@@ -44,12 +50,20 @@ struct CameraPreviewView: NSViewRepresentable {
         private var requestedCameraEnhancements: CameraEnhancementSettings
         private var requestedDeviceID: String?
         private weak var videoDevice: AVCaptureDevice?
+        private let onSetupFailure: (@MainActor (String) -> Void)?
+        private var lastReportedSetupFailure: String?
 
-        init(configuration: PreviewCaptureConfiguration, cameraEnhancements: CameraEnhancementSettings, cameraDeviceID: String?) {
+        init(
+            configuration: PreviewCaptureConfiguration,
+            cameraEnhancements: CameraEnhancementSettings,
+            cameraDeviceID: String?,
+            onSetupFailure: (@MainActor (String) -> Void)?
+        ) {
             self.requestedPreset = Self.sessionPreset(for: configuration)
             self.requestedFramesPerSecond = Self.frameRateLimit(for: configuration)
             self.requestedCameraEnhancements = cameraEnhancements
             self.requestedDeviceID = cameraDeviceID
+            self.onSetupFailure = onSetupFailure
         }
 
         func start() {
@@ -83,10 +97,18 @@ struct CameraPreviewView: NSViewRepresentable {
                 self.requestedFramesPerSecond = framesPerSecond
                 self.requestedCameraEnhancements = cameraEnhancements
                 self.requestedDeviceID = cameraDeviceID
+
+                if self.wantsRunning, !self.isConfigured {
+                    self.configureAndStartOnQueue()
+                    return
+                }
+
                 guard self.isConfigured else { return }
                 if shouldSwitchDevice {
                     self.reconfigureInput()
                 }
+
+                guard self.isConfigured else { return }
 
                 if let videoDevice = self.videoDevice {
                     if shouldUpdateSession {
@@ -122,31 +144,27 @@ struct CameraPreviewView: NSViewRepresentable {
 
         private func configureAndStart() {
             queue.async { [weak self] in
-                guard let self else { return }
-                guard self.wantsRunning else { return }
+                self?.configureAndStartOnQueue()
+            }
+        }
 
-                if !self.isConfigured {
-                    self.session.beginConfiguration()
-                    self.applyRequestedPreset()
-                    defer { self.session.commitConfiguration() }
+        private func configureAndStartOnQueue() {
+            guard wantsRunning else { return }
 
-                    guard let device = Self.resolveDevice(matching: self.requestedDeviceID),
-                          let input = try? AVCaptureDeviceInput(device: device),
-                          self.session.canAddInput(input)
-                    else {
-                        return
-                    }
+            if !isConfigured {
+                session.beginConfiguration()
+                applyRequestedPreset()
+                defer { session.commitConfiguration() }
 
-                    self.session.addInput(input)
-                    self.videoDevice = device
-                    self.applyRequestedFrameRateLimit(to: device)
-                    self.applyRequestedCameraTuning(to: device)
-                    self.isConfigured = true
+                guard configureInputOnQueue(failureDetail: "Camera preview input could not be created; the preview will retry when camera settings change.") else {
+                    return
                 }
 
-                if self.wantsRunning, !self.session.isRunning {
-                    self.session.startRunning()
-                }
+                isConfigured = true
+            }
+
+            if wantsRunning, !session.isRunning {
+                session.startRunning()
             }
         }
 
@@ -156,18 +174,37 @@ struct CameraPreviewView: NSViewRepresentable {
             for input in session.inputs {
                 session.removeInput(input)
             }
+            isConfigured = false
+            guard configureInputOnQueue(failureDetail: "Camera preview input could not be reconfigured; the preview will retry when camera settings change.") else {
+                return
+            }
+            isConfigured = true
+        }
+
+        private func configureInputOnQueue(failureDetail: String) -> Bool {
             guard let device = Self.resolveDevice(matching: requestedDeviceID),
                   let input = try? AVCaptureDeviceInput(device: device),
                   session.canAddInput(input)
             else {
                 videoDevice = nil
-                return
+                reportSetupFailure(failureDetail)
+                return false
             }
             session.addInput(input)
             videoDevice = device
             applyRequestedPreset()
             applyRequestedFrameRateLimit(to: device)
             applyRequestedCameraTuning(to: device)
+            return true
+        }
+
+        private func reportSetupFailure(_ detail: String) {
+            guard lastReportedSetupFailure != detail else { return }
+            lastReportedSetupFailure = detail
+            guard let onSetupFailure else { return }
+            Task { @MainActor in
+                onSetupFailure(detail)
+            }
         }
 
         private static func resolveDevice(matching id: String?) -> AVCaptureDevice? {

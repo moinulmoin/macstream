@@ -25,6 +25,8 @@ final class FixedSignalProvider: SignalProvider, @unchecked Sendable {
 final class ConfigurableMediaPipeline: MediaPipeline, @unchecked Sendable {
     let streamTransport: StreamTransportKind
     var currentHealth: StreamHealth?
+    var recordingFailureDetail: String?
+    var captureSetupWarnings: [String] = []
     var lastConfiguration: MediaPipelineConfiguration?
     var configurationAtStartStream: MediaPipelineConfiguration?
     var updateCount = 0

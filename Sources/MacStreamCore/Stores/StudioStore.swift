@@ -863,6 +863,9 @@ public final class StudioStore {
                 recordingStartTask = nil
                 recordingStartID = nil
                 recordingState = .recording
+                for warning in mediaPipeline.captureSetupWarnings {
+                    addWarningEventIfNeeded(title: "Recording degraded", detail: warning)
+                }
                 beginCaptureSession(
                     title: "Recording session started",
                     detail: url.lastPathComponent,
@@ -895,13 +898,22 @@ public final class StudioStore {
         isRecordingStopping = true
         Task {
             await mediaPipeline.stopRecording()
+            let failureDetail = mediaPipeline.recordingFailureDetail
             isRecordingStopping = false
-            recordingState = .stopped
+            if let failureDetail {
+                recordingState = .failed(failureDetail)
+            } else {
+                recordingState = .stopped
+            }
             if !streamState.isLive {
                 resetCaptureHealthPressure()
             }
             syncMediaHealthLoop()
-            addEvent(kind: .stream, title: "Recording stopped", detail: "Local archive closed.")
+            if let failureDetail {
+                addWarningEventIfNeeded(title: "Recording failed", detail: failureDetail)
+            } else {
+                addEvent(kind: .stream, title: "Recording stopped", detail: "Local archive closed.")
+            }
             endCaptureSessionIfIdle()
         }
     }
@@ -1217,6 +1229,10 @@ public final class StudioStore {
         addWarningEventIfNeeded(title: "Settings not saved", detail: detail)
     }
 
+    public func notePreviewSetupIssue(_ detail: String) {
+        addWarningEventIfNeeded(title: "Camera preview unavailable", detail: detail)
+    }
+
     public func generateSetupPlan() {
         guard canGenerateSetupPlan else {
             if let setupGenerationBlockedReason {
@@ -1437,6 +1453,10 @@ public final class StudioStore {
     }
 
     private func advanceMediaHealthIfNeeded() {
+        if handleRecordingFailureIfNeeded() {
+            return
+        }
+
         guard shouldRunMediaHealthLoop else {
             stopMediaHealthLoopIfNeeded()
             return
@@ -1444,6 +1464,21 @@ public final class StudioStore {
 
         sampleSystemPressure()
         refreshStreamHealth()
+    }
+
+    @discardableResult
+    private func handleRecordingFailureIfNeeded() -> Bool {
+        guard recordingState == .recording,
+              let detail = mediaPipeline.recordingFailureDetail
+        else {
+            return false
+        }
+
+        addWarningEventIfNeeded(title: "Recording failed", detail: detail)
+        if canStopRecording {
+            stopRecording()
+        }
+        return true
     }
 
     private func addEvent(kind: StudioEventKind, title: String, detail: String) {
@@ -2112,6 +2147,7 @@ public final class StudioStore {
     }
 
     private func refreshStreamHealth() {
+        _ = handleRecordingFailureIfNeeded()
         if var pipelineHealth = mediaPipeline.currentHealth {
             pipelineHealth.audioLevel = latestSignals.speechLevel
             if pipelineHealth.captureFPS == 0 {

@@ -69,7 +69,10 @@ private struct PreviewColumnView: View {
                     isScreenEnabled: store.isSourceEnabled(.screen),
                     screenLevel: store.sourceLevel(.screen),
                     isScreenCaptureReady: store.captureReport.isScreenCapturePermissionGranted,
-                    screenCaptureTarget: store.selectedScreenCaptureTarget
+                    screenCaptureTarget: store.selectedScreenCaptureTarget,
+                    onCameraPreviewFailure: { detail in
+                        store.notePreviewSetupIssue(detail)
+                    }
                 )
 
                 PreviewOutputHUD(store: store)

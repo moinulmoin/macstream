@@ -538,3 +538,124 @@ func studioStoreRedactsDestinationSecretInStreamEvents() async {
     #expect(eventDetails.contains("rtmps://live.example.com/app/****"))
     #expect(!eventDetails.contains("sk_live_secret"))
 }
+
+@Test
+@MainActor
+func startRecordingWithSetupWarningsEmitsWarningEvents() async {
+    let pipeline = ConfigurableMediaPipeline()
+    pipeline.captureSetupWarnings = [
+        "System audio could not be attached; this recording will not include system audio.",
+        "Microphone capture could not be attached; this recording will not include microphone audio."
+    ]
+    let store = StudioStore(mediaPipeline: pipeline)
+
+    store.startRecording()
+    try? await Task.sleep(for: .milliseconds(80))
+
+    #expect(store.recordingState == .recording)
+    #expect(store.events.contains {
+        $0.kind == .warning
+            && $0.title == "Recording degraded"
+            && $0.detail == "System audio could not be attached; this recording will not include system audio."
+    })
+    #expect(store.events.contains {
+        $0.kind == .warning
+            && $0.title == "Recording degraded"
+            && $0.detail == "Microphone capture could not be attached; this recording will not include microphone audio."
+    })
+}
+
+@Test
+@MainActor
+func recordingFailureDetailOnHealthTickTransitionsToFailed() async {
+    let pipeline = ConfigurableMediaPipeline()
+    pipeline.currentHealth = StreamHealth(
+        bitrateKbps: 0,
+        droppedFrames: 0,
+        captureFPS: 30,
+        audioLevel: 0.2,
+        roundTripMs: 0
+    )
+    let store = StudioStore(
+        mediaPipeline: pipeline,
+        preferences: StudioPreferences(performanceMode: .adaptive)
+    )
+
+    store.startRecording()
+    try? await Task.sleep(for: .milliseconds(80))
+    pipeline.recordingFailureDetail = "Recording failed: disk full"
+    try? await Task.sleep(for: .milliseconds(1_200))
+
+    #expect(store.recordingState == .failed("Recording failed: disk full"))
+    #expect(store.events.contains {
+        $0.kind == .warning
+            && $0.title == "Recording failed"
+            && $0.detail == "Recording failed: disk full"
+    })
+    #expect(!store.events.contains {
+        $0.title == "Recording stopped" && $0.detail == "Local archive closed."
+    })
+}
+
+@Test
+@MainActor
+func recordingFailureDuringLiveStreamFailsRecordingOnly() async {
+    let pipeline = ConfigurableMediaPipeline()
+    pipeline.currentHealth = StreamHealth(
+        bitrateKbps: 6_000,
+        droppedFrames: 0,
+        captureFPS: 30,
+        audioLevel: 0.2,
+        roundTripMs: 18
+    )
+    let store = StudioStore(
+        mediaPipeline: pipeline,
+        preferences: StudioPreferences(performanceMode: .adaptive)
+    )
+    store.directorMode = .auto
+
+    store.startStream()
+    try? await Task.sleep(for: .milliseconds(80))
+    store.startRecording()
+    try? await Task.sleep(for: .milliseconds(80))
+    pipeline.recordingFailureDetail = "Recording failed: disk full while streaming"
+
+    store.advanceDirector()
+    try? await Task.sleep(for: .milliseconds(80))
+
+    #expect(store.recordingState == .failed("Recording failed: disk full while streaming"))
+    #expect(store.streamState.isLive)
+    #expect(store.events.contains {
+        $0.kind == .warning
+            && $0.title == "Recording failed"
+            && $0.detail == "Recording failed: disk full while streaming"
+    })
+    #expect(!store.events.contains {
+        $0.title == "Recording stopped" && $0.detail == "Local archive closed."
+    })
+    #expect(!store.events.contains { $0.title == "Offline" })
+}
+
+@Test
+@MainActor
+func stopRecordingWithFailureDetailReportsFailedInsteadOfStopped() async {
+    let pipeline = ConfigurableMediaPipeline()
+    let store = StudioStore(mediaPipeline: pipeline)
+
+    store.startRecording()
+    try? await Task.sleep(for: .milliseconds(80))
+    pipeline.recordingFailureDetail = "Recording failed: writer closed"
+
+    store.stopRecording()
+    try? await Task.sleep(for: .milliseconds(80))
+
+    #expect(store.recordingState == .failed("Recording failed: writer closed"))
+    #expect(store.events.contains {
+        $0.kind == .warning
+            && $0.title == "Recording failed"
+            && $0.detail == "Recording failed: writer closed"
+    })
+    #expect(!store.events.contains {
+        $0.title == "Recording stopped" && $0.detail == "Local archive closed."
+    })
+}

@@ -487,3 +487,144 @@ func studioStoreSkipsRedundantPerformanceConfigurationUpdates() {
     #expect(pipeline.updateCount == 2)
     #expect(provider.updateCount == 2)
 }
+
+@Test
+@MainActor
+func RecommendationExplanationPopulatesOnDemand() async throws {
+    let snapshot = SignalSnapshot(
+        isSpeaking: true,
+        speechLevel: 0.76,
+        screenMotion: 0.08,
+        hasFace: true,
+        activeApplication: "Notes"
+    )
+    let signalProvider = MutableSignalProvider(snapshot: snapshot)
+    let explainingProvider = ExplainingProvider(explanationResult: .success("Cue used quiet-screen speech."))
+    let store = StudioStore(
+        intelligenceProvider: explainingProvider,
+        signalProvider: signalProvider
+    )
+
+    store.advanceDirector()
+    store.explainCurrentRecommendation()
+    for _ in 0..<10 {
+        if store.recommendationExplanation != nil { break }
+        await Task.yield()
+    }
+
+    #expect(store.recommendationExplanation == "Cue used quiet-screen speech.")
+    #expect(explainingProvider.requestedSnapshots.count == 1)
+    let requestedSnapshot = try #require(explainingProvider.requestedSnapshots.first)
+    #expect(requestedSnapshot.speechLevel == snapshot.speechLevel)
+    #expect(requestedSnapshot.screenMotion == snapshot.screenMotion)
+    #expect(requestedSnapshot.activeApplication == snapshot.activeApplication)
+}
+
+@Test
+@MainActor
+func RecommendationExplanationFallsBackToCueReasonOnProviderError() async throws {
+    let signalProvider = MutableSignalProvider(
+        snapshot: SignalSnapshot(
+            isSpeaking: true,
+            speechLevel: 0.76,
+            screenMotion: 0.08,
+            hasFace: true,
+            activeApplication: "Notes"
+        )
+    )
+    let explainingProvider = ExplainingProvider(explanationResult: .failure(TestExplanationError()))
+    let store = StudioStore(
+        intelligenceProvider: explainingProvider,
+        signalProvider: signalProvider
+    )
+
+    store.advanceDirector()
+    let reason = try #require(store.recommendation?.reason)
+    store.explainCurrentRecommendation()
+    for _ in 0..<10 {
+        if store.recommendationExplanation != nil { break }
+        await Task.yield()
+    }
+
+    #expect(store.recommendationExplanation == reason)
+}
+
+@Test
+@MainActor
+func RecommendationExplanationClearsWhenRecommendationChanges() async throws {
+    let firstSnapshot = SignalSnapshot(
+        isSpeaking: true,
+        speechLevel: 0.76,
+        screenMotion: 0.08,
+        hasFace: true,
+        activeApplication: "Notes"
+    )
+    let signalProvider = MutableSignalProvider(snapshot: firstSnapshot)
+    let explainingProvider = ExplainingProvider(explanationResult: .success("First explanation."))
+    let store = StudioStore(
+        intelligenceProvider: explainingProvider,
+        signalProvider: signalProvider
+    )
+
+    store.advanceDirector()
+    store.explainCurrentRecommendation()
+    for _ in 0..<10 {
+        if store.recommendationExplanation != nil { break }
+        await Task.yield()
+    }
+    #expect(store.recommendationExplanation == "First explanation.")
+
+    let secondSnapshot = SignalSnapshot(
+        isSpeaking: true,
+        speechLevel: 0.82,
+        screenMotion: 0.72,
+        hasFace: true,
+        activeApplication: "Xcode"
+    )
+    signalProvider.currentSnapshot = secondSnapshot
+    store.advanceDirector()
+
+    #expect(store.recommendation?.target == .screenAndFace)
+    #expect(store.recommendationExplanation == nil)
+    #expect(store.latestRecommendationSnapshot?.speechLevel == secondSnapshot.speechLevel)
+    #expect(store.latestRecommendationSnapshot?.screenMotion == secondSnapshot.screenMotion)
+    #expect(store.latestRecommendationSnapshot?.activeApplication == secondSnapshot.activeApplication)
+}
+
+@Test
+@MainActor
+func RecommendationExplanationDoesNotMutateSceneState() async {
+    let signalProvider = MutableSignalProvider(
+        snapshot: SignalSnapshot(
+            isSpeaking: true,
+            speechLevel: 0.76,
+            screenMotion: 0.08,
+            hasFace: true,
+            activeApplication: "Notes"
+        )
+    )
+    let explainingProvider = ExplainingProvider(explanationResult: .success("Display-only explanation."))
+    let store = StudioStore(
+        intelligenceProvider: explainingProvider,
+        signalProvider: signalProvider
+    )
+
+    store.advanceDirector()
+    let selectedSceneID = store.selectedSceneID
+    let directorMode = store.directorMode
+    let autoCueRemainingSeconds = store.autoCueRemainingSeconds
+    let recommendationTarget = store.recommendation?.target
+    let eventCount = store.events.count
+
+    store.explainCurrentRecommendation()
+    for _ in 0..<10 {
+        if store.recommendationExplanation != nil { break }
+        await Task.yield()
+    }
+
+    #expect(store.selectedSceneID == selectedSceneID)
+    #expect(store.directorMode == directorMode)
+    #expect(store.autoCueRemainingSeconds == autoCueRemainingSeconds)
+    #expect(store.recommendation?.target == recommendationTarget)
+    #expect(store.events.count == eventCount)
+}

@@ -48,12 +48,141 @@ struct CapturePreflightView: View {
                     .foregroundStyle(.secondary)
             }
 
+            let advice = store.preflightAdvice
+            if !advice.isEmpty {
+                preflightAdviceRows(advice)
+            }
+
             let rows = CapturePermissionRow.rows(from: store.captureReport.devices)
             if !rows.isEmpty {
                 permissionRows(rows)
             }
         }
         .studioCard()
+    }
+
+    private func preflightAdviceRows(_ advice: [PreflightAdvice]) -> some View {
+        VStack(spacing: 10) {
+            ForEach(advice) { item in
+                HStack(alignment: .top, spacing: 10) {
+                    Image(systemName: adviceSymbol(for: item.action))
+                        .foregroundStyle(.secondary)
+                        .frame(width: 18)
+                        .padding(.top, 2)
+
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(item.title)
+                            .font(.callout.weight(.semibold))
+                            .lineLimit(1)
+
+                        Text(item.detail)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(2)
+                    }
+
+                    Spacer(minLength: 8)
+
+                    adviceAction(for: item)
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func adviceAction(for advice: PreflightAdvice) -> some View {
+        switch advice.action {
+        case let .openCaptureSettings(kind):
+            Button {
+                CapturePermissionActions.openSettings(for: kind)
+            } label: {
+                Label("Settings", systemImage: "gearshape")
+                    .font(.caption.weight(.semibold))
+            }
+            .buttonStyle(.bordered)
+            .controlSize(.small)
+            .help("Open \(kind.title.lowercased()) settings")
+        case .rescanCapture:
+            Button {
+                store.scanCaptureDevices()
+            } label: {
+                Label("Check", systemImage: "arrow.clockwise")
+                    .font(.caption.weight(.semibold))
+            }
+            .buttonStyle(.borderedProminent)
+            .controlSize(.small)
+            .disabled(!store.canScanCaptureDevices)
+            .help(store.captureScanBlockedReason ?? "Check capture devices")
+        case let .selectScreenCaptureTarget(target):
+            Button {
+                store.selectScreenCaptureTarget(target)
+            } label: {
+                Label("Select", systemImage: "display")
+                    .font(.caption.weight(.semibold))
+            }
+            .buttonStyle(.bordered)
+            .controlSize(.small)
+            .help("Select \(target.title)")
+        case let .selectCameraDevice(id):
+            Button {
+                store.selectCameraDevice(id: id)
+            } label: {
+                Label("Select", systemImage: "video")
+                    .font(.caption.weight(.semibold))
+            }
+            .buttonStyle(.bordered)
+            .controlSize(.small)
+            .help("Select camera")
+        case let .selectMicrophoneDevice(id):
+            Button {
+                store.selectMicrophoneDevice(id: id)
+            } label: {
+                Label("Select", systemImage: "mic")
+                    .font(.caption.weight(.semibold))
+            }
+            .buttonStyle(.bordered)
+            .controlSize(.small)
+            .help("Select microphone")
+        case .fixSelectedSceneSources:
+            Button {
+                store.enableRecommendedSources()
+            } label: {
+                Label("Fix", systemImage: "slider.horizontal.3")
+                    .font(.caption.weight(.semibold))
+            }
+            .buttonStyle(.borderedProminent)
+            .controlSize(.small)
+            .help("Enable or raise needed sources")
+        case .usePreviewDestination:
+            Button {
+                store.setDestinationMode(.preview)
+            } label: {
+                Label("Use Preview", systemImage: "play.rectangle")
+                    .font(.caption.weight(.semibold))
+            }
+            .buttonStyle(.bordered)
+            .controlSize(.small)
+            .help("Switch to local preview")
+        }
+    }
+
+    private func adviceSymbol(for action: PreflightAdviceAction) -> String {
+        switch action {
+        case .openCaptureSettings:
+            "gearshape"
+        case .rescanCapture:
+            "arrow.clockwise"
+        case .selectScreenCaptureTarget:
+            "display"
+        case .selectCameraDevice:
+            "video"
+        case .selectMicrophoneDevice:
+            "mic"
+        case .fixSelectedSceneSources:
+            "slider.horizontal.3"
+        case .usePreviewDestination:
+            "play.rectangle"
+        }
     }
 
     private func permissionRows(_ rows: [CapturePermissionRow]) -> some View {

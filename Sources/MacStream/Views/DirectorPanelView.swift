@@ -55,6 +55,13 @@ struct DirectorPanelView: View {
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
 
+                if let explanation = store.recommendationExplanation {
+                    Text(explanation)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+
                 if let cueTimingText = cueTimingText(for: recommendation) {
                     Label(cueTimingText, systemImage: "timer")
                         .font(.caption.weight(.semibold))
@@ -72,6 +79,18 @@ struct DirectorPanelView: View {
                         .disabled(!store.canApplyRecommendation)
                         .help(store.recommendationActionBlockedReason ?? "Take cue")
                     }
+
+                    Button {
+                        store.explainCurrentRecommendation()
+                    } label: {
+                        if store.isExplainingRecommendation {
+                            Label("Explaining", systemImage: "hourglass")
+                        } else {
+                            Label("Why this cue?", systemImage: "questionmark.circle")
+                        }
+                    }
+                    .disabled(store.isExplainingRecommendation)
+                    .help("Explain this cue using the signals that produced it")
 
                     Button {
                         store.dismissRecommendation()

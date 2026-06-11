@@ -627,3 +627,49 @@ final class SpyMediaPipeline: MediaPipeline, @unchecked Sendable {
         didStopRecording = true
     }
 }
+
+final class MutableSignalProvider: SignalProvider, @unchecked Sendable {
+    var currentSnapshot: SignalSnapshot
+
+    init(snapshot: SignalSnapshot = SignalSnapshot()) {
+        self.currentSnapshot = snapshot
+    }
+
+    func start() {}
+
+    func stop() {}
+
+    func snapshot() -> SignalSnapshot {
+        currentSnapshot
+    }
+}
+
+final class ExplainingProvider: LocalIntelligenceProvider, @unchecked Sendable {
+    var status = LocalIntelligenceStatus(
+        provider: .rules,
+        availability: .available,
+        detail: "test explanation"
+    )
+    var explanationResult: Result<String, Error>
+    private(set) var requestedSnapshots: [SignalSnapshot] = []
+
+    init(explanationResult: Result<String, Error>) {
+        self.explanationResult = explanationResult
+    }
+
+    func generateSetupPlan(for prompt: String) async throws -> SetupPlan {
+        SetupPlan(
+            title: "Test Plan",
+            scenes: [.face, .screenAndFace, .screenOnly, .brb],
+            directorProfile: .balanced,
+            directorRuleSummary: "test rules"
+        )
+    }
+
+    func explain(_ recommendation: DirectorRecommendation, snapshot: SignalSnapshot) async throws -> String {
+        requestedSnapshots.append(snapshot)
+        return try explanationResult.get()
+    }
+}
+
+struct TestExplanationError: Error {}

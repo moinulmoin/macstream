@@ -23,6 +23,9 @@ public final class StudioStore {
     public private(set) var systemPressure = SystemPressureSnapshot()
     public private(set) var latestSignals = SignalSnapshot()
     public private(set) var recommendation: DirectorRecommendation?
+    public private(set) var latestRecommendationSnapshot: SignalSnapshot?
+    public private(set) var recommendationExplanation: String?
+    public private(set) var isExplainingRecommendation = false
     public private(set) var autoCueRemainingSeconds: Int?
     public private(set) var events: [StudioEvent] = []
     public private(set) var clipMarkers: [ClipMarker] = []
@@ -77,6 +80,8 @@ public final class StudioStore {
     @ObservationIgnored private var streamStartID: UUID?
     @ObservationIgnored private var setupGenerationTask: Task<Void, Never>?
     @ObservationIgnored private var setupGenerationID: UUID?
+    @ObservationIgnored private var recommendationExplanationTask: Task<Void, Never>?
+    @ObservationIgnored private var recommendationExplanationID: UUID?
     @ObservationIgnored private var autoCueTask: Task<Void, Never>?
     @ObservationIgnored private var pendingAutoRecommendation: DirectorRecommendation?
     @ObservationIgnored private var recordingStartTask: Task<Void, Never>?
@@ -273,6 +278,20 @@ public final class StudioStore {
         case .needsAccess, .needsRelaunch:
             return readiness.detail
         }
+    }
+
+    public var preflightAdvice: [PreflightAdvice] {
+        PreflightCoach.advice(
+            report: captureReport,
+            sources: sources,
+            selectedScene: selectedSceneKind,
+            selectedScreenCaptureTarget: selectedScreenCaptureTarget,
+            selectedCameraDeviceID: selectedCameraDeviceID,
+            selectedMicrophoneDeviceID: selectedMicrophoneDeviceID,
+            destination: destination,
+            hasRunInitialCaptureScan: hasRunInitialCaptureScan,
+            isScanningCapture: isScanningCapture
+        )
     }
 
     public var availableScreenCaptureTargets: [ScreenCaptureTarget] {
@@ -647,7 +666,7 @@ public final class StudioStore {
         cancelPendingAutoCue()
         selectedSceneID = scene.id
         director.markSwitchAccepted()
-        recommendation = nil
+        clearRecommendation()
         applyPerformanceConfiguration()
         addEvent(kind: .director, title: "Scene changed", detail: scene.title)
     }
@@ -818,7 +837,7 @@ public final class StudioStore {
         streamStartAttempt = 0
         streamStartMaxAttempts = 1
         isStreamStopping = true
-        recommendation = nil
+        clearRecommendation(cancelAutoCue: false)
         cancelPendingAutoCue()
         stopDirectorLoop()
         Task {
@@ -1099,10 +1118,10 @@ public final class StudioStore {
         nextRecommendation = recommendationApplyingPreferences(nextRecommendation)
         nextRecommendation = recommendationRespectingSceneAvailability(nextRecommendation)
 
-        recommendation = nextRecommendation
-
         if let nextRecommendation {
+            latestRecommendationSnapshot = latestSignals
             if !nextRecommendation.hasSameCue(as: previousRecommendation) {
+                clearRecommendationExplanation()
                 addEvent(
                     kind: nextRecommendation.urgency == .immediate ? .warning : .director,
                     title: nextRecommendation.target == selectedSceneKind ? "Check stream" : "Cue \(nextRecommendation.target.title)",
@@ -1110,7 +1129,14 @@ public final class StudioStore {
                 )
                 maybeAddAutomaticClipMarker(for: nextRecommendation, snapshot: latestSignals)
             }
+        } else {
+            clearRecommendationExplanation()
+            latestRecommendationSnapshot = nil
+        }
 
+        recommendation = nextRecommendation
+
+        if let nextRecommendation {
             if directorMode == .auto && nextRecommendation.target != selectedSceneKind {
                 scheduleAutoCue(for: nextRecommendation)
             } else {
@@ -1127,14 +1153,14 @@ public final class StudioStore {
               let scene = scenes.first(where: { $0.kind == recommendation.target }),
               scene.kind != selectedSceneKind
         else {
-            self.recommendation = nil
+            clearRecommendation(cancelAutoCue: false)
             return
         }
         guard canSelectScene(scene) else {
             if let blockedReason = sceneSelectionBlockedReason(for: scene) {
                 addWarningEventIfNeeded(title: "Cue unavailable", detail: blockedReason)
             }
-            self.recommendation = nil
+            clearRecommendation(cancelAutoCue: false)
             return
         }
 
@@ -1142,7 +1168,7 @@ public final class StudioStore {
         applyPerformanceConfiguration()
         director.markSwitchAccepted()
         addEvent(kind: .director, title: "Accepted cue", detail: scene.title)
-        self.recommendation = nil
+        clearRecommendation(cancelAutoCue: false)
     }
 
     public func dismissRecommendation() {
@@ -1156,8 +1182,42 @@ public final class StudioStore {
             duration: max(TimeInterval(preferences.directorCountdownSeconds), directorProfile.minimumSwitchInterval)
         )
         cancelPendingAutoCue()
-        self.recommendation = nil
+        clearRecommendation(cancelAutoCue: false)
         addEvent(kind: .director, title: "Cue held", detail: "Staying on \(selectedScene.title).")
+    }
+
+    public func explainCurrentRecommendation() {
+        guard !isExplainingRecommendation,
+              let recommendation,
+              let snapshot = latestRecommendationSnapshot
+        else { return }
+
+        let explanationID = UUID()
+        recommendationExplanationID = explanationID
+        isExplainingRecommendation = true
+        recommendationExplanation = nil
+
+        recommendationExplanationTask = Task {
+            defer {
+                if isCurrentRecommendationExplanation(explanationID, recommendation: recommendation) {
+                    isExplainingRecommendation = false
+                    recommendationExplanationTask = nil
+                    recommendationExplanationID = nil
+                }
+            }
+
+            do {
+                let explanation = try await intelligenceProvider.explain(recommendation, snapshot: snapshot)
+                guard isCurrentRecommendationExplanation(explanationID, recommendation: recommendation) else { return }
+                recommendationExplanation = explanation
+                localIntelligenceStatus = intelligenceProvider.status
+            } catch is CancellationError {
+                return
+            } catch {
+                guard isCurrentRecommendationExplanation(explanationID, recommendation: recommendation) else { return }
+                recommendationExplanation = recommendation.reason
+            }
+        }
     }
 
     public func markClip(reason: String = "Marked by operator.") {
@@ -1292,8 +1352,7 @@ public final class StudioStore {
                 }
                 directorProfile = plan.directorProfile
                 director.apply(profile: plan.directorProfile)
-                recommendation = nil
-                cancelPendingAutoCue()
+                clearRecommendation()
                 setupSummary = plan.directorRuleSummary
                 addEvent(kind: .director, title: plan.title, detail: "\(plan.directorProfile.kind.title) profile applied.")
             } catch is CancellationError {
@@ -1389,7 +1448,7 @@ public final class StudioStore {
     private func directorModeDidChange() {
         switch directorMode {
         case .paused:
-            recommendation = nil
+            clearRecommendation()
             stopDirectorLoop()
             syncMediaHealthLoop()
         case .suggest:
@@ -1519,8 +1578,7 @@ public final class StudioStore {
     private func prepareCaptureSessionIfIdle() {
         guard !hasOpenCaptureSession, !canMarkClip else { return }
 
-        recommendation = nil
-        cancelPendingAutoCue()
+        clearRecommendation()
         clipMarkers.removeAll()
         latestClipExportURL = nil
         latestSessionReportURL = nil
@@ -2051,6 +2109,32 @@ public final class StudioStore {
         }
 
         applyRecommendation()
+    }
+
+    private func clearRecommendation(cancelAutoCue: Bool = true) {
+        recommendation = nil
+        latestRecommendationSnapshot = nil
+        clearRecommendationExplanation()
+        if cancelAutoCue {
+            cancelPendingAutoCue()
+        }
+    }
+
+    private func clearRecommendationExplanation() {
+        recommendationExplanationTask?.cancel()
+        recommendationExplanationTask = nil
+        recommendationExplanationID = nil
+        recommendationExplanation = nil
+        isExplainingRecommendation = false
+    }
+
+    private func isCurrentRecommendationExplanation(
+        _ id: UUID,
+        recommendation expectedRecommendation: DirectorRecommendation
+    ) -> Bool {
+        recommendationExplanationID == id
+            && isExplainingRecommendation
+            && recommendation?.hasSameCue(as: expectedRecommendation) == true
     }
 
     private func isCurrentAutoCue(_ recommendation: DirectorRecommendation) -> Bool {

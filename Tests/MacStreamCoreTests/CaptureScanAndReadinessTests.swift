@@ -1023,3 +1023,153 @@ func inputDeviceSelectionIsBlockedWhileStreamIsConnecting() async {
 
     #expect(store.selectedCameraDeviceID == "camera-front")
 }
+
+@Test
+func PreflightCoachReportsMissingPermissionFirst() {
+    let report = CapturePreflightReport(
+        devices: [
+            CaptureDeviceInfo(id: "display-7", kind: .display, name: "Studio Display", permission: .denied),
+            CaptureDeviceInfo(id: "camera-1", kind: .camera, name: "FaceTime Camera", permission: .granted)
+        ],
+        summary: "Screen access needed."
+    )
+    let advice = PreflightCoach.advice(
+        report: report,
+        sources: [
+            StudioSource(kind: .screen),
+            StudioSource(kind: .camera),
+            StudioSource(kind: .microphone)
+        ],
+        selectedScene: .screenAndFace,
+        selectedScreenCaptureTarget: nil,
+        selectedCameraDeviceID: nil,
+        selectedMicrophoneDeviceID: nil,
+        destination: StreamDestination(),
+        hasRunInitialCaptureScan: true,
+        isScanningCapture: false
+    )
+
+    #expect(advice.first?.action == .openCaptureSettings(.display))
+}
+
+@Test
+func PreflightCoachReportsMissingDeviceOrTarget() {
+    let displayTarget = ScreenCaptureTarget(id: "display-7", kind: .display, name: "Studio Display", detail: "3024x1964")
+    let report = CapturePreflightReport(
+        devices: [
+            CaptureDeviceInfo(id: displayTarget.id, kind: .display, name: displayTarget.name, detail: displayTarget.detail, permission: .granted)
+        ],
+        summary: "Capture sources are ready."
+    )
+    let advice = PreflightCoach.advice(
+        report: report,
+        sources: [
+            StudioSource(kind: .screen),
+            StudioSource(kind: .camera),
+            StudioSource(kind: .microphone)
+        ],
+        selectedScene: .screenAndFace,
+        selectedScreenCaptureTarget: displayTarget,
+        selectedCameraDeviceID: nil,
+        selectedMicrophoneDeviceID: "microphone-1",
+        destination: StreamDestination(),
+        hasRunInitialCaptureScan: true,
+        isScanningCapture: false
+    )
+
+    #expect(advice.first?.action == .rescanCapture)
+}
+
+@Test
+func PreflightCoachReportsMutedOrZeroLevelNeededSource() {
+    let report = CapturePreflightReport(
+        devices: [
+            CaptureDeviceInfo(id: "display-7", kind: .display, name: "Studio Display", permission: .granted),
+            CaptureDeviceInfo(id: "camera-1", kind: .camera, name: "FaceTime Camera", permission: .granted),
+            CaptureDeviceInfo(id: "microphone-1", kind: .microphone, name: "Studio Mic", permission: .granted)
+        ],
+        summary: "Capture sources are ready."
+    )
+    let advice = PreflightCoach.advice(
+        report: report,
+        sources: [
+            StudioSource(kind: .screen, level: 0),
+            StudioSource(kind: .camera, isEnabled: false),
+            StudioSource(kind: .microphone)
+        ],
+        selectedScene: .screenAndFace,
+        selectedScreenCaptureTarget: nil,
+        selectedCameraDeviceID: nil,
+        selectedMicrophoneDeviceID: "microphone-1",
+        destination: StreamDestination(),
+        hasRunInitialCaptureScan: true,
+        isScanningCapture: false
+    )
+
+    #expect(advice.first?.action == .fixSelectedSceneSources)
+}
+
+@Test
+func PreflightCoachReportsMissingDestinationAfterCaptureAndSources() {
+    let displayTarget = ScreenCaptureTarget(id: "display-7", kind: .display, name: "Studio Display", detail: "3024x1964")
+    let report = CapturePreflightReport(
+        devices: [
+            CaptureDeviceInfo(id: displayTarget.id, kind: .display, name: displayTarget.name, detail: displayTarget.detail, permission: .granted),
+            CaptureDeviceInfo(id: "camera-1", kind: .camera, name: "FaceTime Camera", permission: .granted),
+            CaptureDeviceInfo(id: "microphone-1", kind: .microphone, name: "Studio Mic", permission: .granted)
+        ],
+        summary: "Capture sources are ready."
+    )
+    var destination = StreamDestination()
+    destination.setRTMPServerURL("rtmps://live.example.com")
+    destination.setRTMPStreamKey("sk_live_secret")
+    let advice = PreflightCoach.advice(
+        report: report,
+        sources: [
+            StudioSource(kind: .screen),
+            StudioSource(kind: .camera),
+            StudioSource(kind: .microphone)
+        ],
+        selectedScene: .screenAndFace,
+        selectedScreenCaptureTarget: displayTarget,
+        selectedCameraDeviceID: "camera-1",
+        selectedMicrophoneDeviceID: "microphone-1",
+        destination: destination,
+        hasRunInitialCaptureScan: true,
+        isScanningCapture: false
+    )
+
+    #expect(advice.first?.action == .usePreviewDestination)
+    #expect(advice.first?.detail == destination.validationError)
+    #expect(advice.first?.detail.contains("sk_live_secret") == false)
+}
+
+@Test
+func PreflightCoachReturnsEmptyWhenAllClear() {
+    let displayTarget = ScreenCaptureTarget(id: "display-7", kind: .display, name: "Studio Display", detail: "3024x1964")
+    let report = CapturePreflightReport(
+        devices: [
+            CaptureDeviceInfo(id: displayTarget.id, kind: .display, name: displayTarget.name, detail: displayTarget.detail, permission: .granted),
+            CaptureDeviceInfo(id: "camera-1", kind: .camera, name: "FaceTime Camera", permission: .granted),
+            CaptureDeviceInfo(id: "microphone-1", kind: .microphone, name: "Studio Mic", permission: .granted)
+        ],
+        summary: "Capture sources are ready."
+    )
+    let advice = PreflightCoach.advice(
+        report: report,
+        sources: [
+            StudioSource(kind: .screen),
+            StudioSource(kind: .camera),
+            StudioSource(kind: .microphone)
+        ],
+        selectedScene: .screenAndFace,
+        selectedScreenCaptureTarget: displayTarget,
+        selectedCameraDeviceID: "camera-1",
+        selectedMicrophoneDeviceID: "microphone-1",
+        destination: StreamDestination(),
+        hasRunInitialCaptureScan: true,
+        isScanningCapture: false
+    )
+
+    #expect(advice.isEmpty)
+}

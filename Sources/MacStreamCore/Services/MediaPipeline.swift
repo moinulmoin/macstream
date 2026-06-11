@@ -116,8 +116,8 @@ public enum StreamPlatformPreset: String, CaseIterable, Identifiable, Sendable {
         }
     }
 
-    /// Prefilled RTMP/RTMPS ingest base; append your stream key after it.
-    /// `nil` when the endpoint is account- or broadcast-specific and must be pasted.
+    /// Prefilled RTMP/RTMPS server URL. The stream key is entered separately.
+    /// `nil` when the server is account- or broadcast-specific and must be pasted.
     public var ingestURL: String? {
         switch self {
         case .twitch: "rtmp://live.twitch.tv/app/"
@@ -127,15 +127,15 @@ public enum StreamPlatformPreset: String, CaseIterable, Identifiable, Sendable {
         }
     }
 
-    /// Where to find the stream key (and any per-account ingest URL).
+    /// Where to find the stream key (and any per-account server URL).
     public var keyHint: String {
         switch self {
-        case .twitch: "Creator Dashboard › Settings › Stream. Paste your key after /app/."
-        case .youtube: "YouTube Studio › Go Live › Stream key."
-        case .facebook: "facebook.com/live/producer › Streaming software. Paste your persistent key."
-        case .kick: "Kick Creator Dashboard › copy your full Server URL + Stream Key (they can change per account)."
-        case .x: "Create a broadcast in X Media Studio Producer, then paste its RTMP URL and key."
-        case .custom: "Paste the full rtmp:// or rtmps:// URL including your stream key."
+        case .twitch: "Creator Dashboard › Settings › Stream. Paste the server URL and stream key separately."
+        case .youtube: "YouTube Studio › Go Live. Paste the stream URL and stream key separately."
+        case .facebook: "facebook.com/live/producer › Streaming software. Paste the Facebook stream key."
+        case .kick: "Kick Creator Dashboard › paste the Server URL and Stream Key separately."
+        case .x: "Create a broadcast in X Media Studio Producer, then paste its server URL and stream key."
+        case .custom: "Paste the RTMP/RTMPS server URL and stream key separately."
         }
     }
 }
@@ -143,16 +143,30 @@ public enum StreamPlatformPreset: String, CaseIterable, Identifiable, Sendable {
 public struct StreamDestination: Equatable, Sendable {
     public var mode: StreamDestinationMode
     public var name: String
-    public var rtmpURL: String
+    public var rtmpServerURL: String
+    public var rtmpStreamKey: String
+
+    public var rtmpURL: String {
+        get {
+            Self.combinedRTMPURL(serverURL: rtmpServerURL, streamKey: rtmpStreamKey)
+        }
+        set {
+            let splitURL = Self.splitRTMPURL(newValue)
+            rtmpServerURL = splitURL.serverURL
+            rtmpStreamKey = splitURL.streamKey
+        }
+    }
 
     public init(
         mode: StreamDestinationMode? = nil,
         name: String = "Preview Session",
         rtmpURL: String = "preview"
     ) {
+        let splitURL = Self.splitRTMPURL(rtmpURL)
         self.mode = mode ?? Self.inferMode(from: rtmpURL)
         self.name = name
-        self.rtmpURL = rtmpURL
+        self.rtmpServerURL = splitURL.serverURL
+        self.rtmpStreamKey = splitURL.streamKey
     }
 
     public var isPreviewSession: Bool {
@@ -208,6 +222,67 @@ public struct StreamDestination: Equatable, Sendable {
         return URLComponents(string: trimmed)?.scheme?.lowercased() == "macstream-preview"
     }
 
+    public mutating func setRTMPServerURL(_ serverURL: String) {
+        mode = .rtmp
+        rtmpServerURL = serverURL.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    public mutating func setRTMPStreamKey(_ streamKey: String) {
+        mode = .rtmp
+        rtmpStreamKey = Self.normalizedStreamKey(streamKey)
+    }
+
+    public static func combinedRTMPURL(serverURL: String, streamKey: String) -> String {
+        let trimmedServerURL = serverURL.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedStreamKey = normalizedStreamKey(streamKey)
+        guard !trimmedServerURL.isEmpty, !trimmedStreamKey.isEmpty else {
+            return trimmedServerURL
+        }
+        return trimmedServerURL.hasSuffix("/")
+            ? "\(trimmedServerURL)\(trimmedStreamKey)"
+            : "\(trimmedServerURL)/\(trimmedStreamKey)"
+    }
+
+    private static func splitRTMPURL(_ rtmpURL: String) -> (serverURL: String, streamKey: String) {
+        let trimmedURL = rtmpURL.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let components = URLComponents(string: trimmedURL),
+              let scheme = components.scheme?.lowercased(),
+              scheme == "rtmp" || scheme == "rtmps",
+              components.host?.isEmpty == false
+        else {
+            return (trimmedURL, "")
+        }
+
+        let pathParts = components.path
+            .split(separator: "/", omittingEmptySubsequences: true)
+            .map(String.init)
+        guard pathParts.count >= 2, let rawStreamKey = pathParts.last, !rawStreamKey.isEmpty else {
+            return (trimmedURL, "")
+        }
+
+        var streamKey = rawStreamKey
+        if let query = components.percentEncodedQuery, !query.isEmpty {
+            streamKey += "?\(query)"
+        }
+        if let fragment = components.percentEncodedFragment, !fragment.isEmpty {
+            streamKey += "#\(fragment)"
+        }
+
+        var serverComponents = components
+        serverComponents.path = "/" + pathParts.dropLast().joined(separator: "/")
+        serverComponents.query = nil
+        serverComponents.fragment = nil
+        guard let serverURL = serverComponents.string else {
+            return (trimmedURL, "")
+        }
+
+        return (serverURL.hasSuffix("/") ? serverURL : "\(serverURL)/", streamKey)
+    }
+
+    private static func normalizedStreamKey(_ streamKey: String) -> String {
+        streamKey.trimmingCharacters(in: .whitespacesAndNewlines)
+            .trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+    }
     public func rtmpPublishTarget() throws -> RTMPPublishTarget {
         guard !isPreviewSession else {
             throw MediaPipelineError.unavailable("Enter an RTMP or RTMPS URL to publish.")

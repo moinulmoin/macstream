@@ -974,6 +974,22 @@ public final class StudioStore {
         destination = nextDestination
     }
 
+
+    public func setRTMPServerURL(_ serverURL: String) {
+        guard canEditDestination else { return }
+        var nextDestination = destination
+        nextDestination.setRTMPServerURL(serverURL)
+        guard nextDestination != destination else { return }
+        destination = nextDestination
+    }
+
+    public func setRTMPStreamKey(_ streamKey: String) {
+        guard canEditDestination else { return }
+        var nextDestination = destination
+        nextDestination.setRTMPStreamKey(streamKey)
+        guard nextDestination != destination else { return }
+        destination = nextDestination
+    }
     public var matchingDestinationPreset: StreamPlatformPreset? {
         guard destination.mode == .rtmp else { return nil }
         let url = destination.rtmpURL.lowercased()

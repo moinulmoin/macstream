@@ -199,7 +199,8 @@ func studioKeepsFrequentControlsInBottomDeck() throws {
     let settingsDestinationModeIndex = try #require(settingsSource.range(of: "Picker(\"Mode\", selection: destinationMode)")?.lowerBound)
     let settingsRTMPDestinationIndex = try #require(settingsSource.range(of: "if store.destination.mode == .rtmp {")?.lowerBound)
     let destinationNameIndex = try #require(settingsSource.range(of: "TextField(\"Name\"")?.lowerBound)
-    let destinationSecureIndex = try #require(settingsSource.range(of: "SecureField(\"RTMP URL / stream key\"")?.lowerBound)
+    let destinationServerIndex = try #require(settingsSource.range(of: "TextField(\"Server URL\"")?.lowerBound)
+    let destinationSecureIndex = try #require(settingsSource.range(of: "SecureField(\"Stream key\"")?.lowerBound)
 
     #expect(previewColumnIndex < previewCanvasIndex)
     #expect(previewCanvasIndex < controlIndex)
@@ -209,8 +210,8 @@ func studioKeepsFrequentControlsInBottomDeck() throws {
     #expect(checklistIndex < destinationIndex)
     #expect(settingsDestinationIndex < settingsDestinationModeIndex)
     #expect(settingsDestinationModeIndex < settingsRTMPDestinationIndex)
-    #expect(settingsRTMPDestinationIndex < destinationNameIndex)
-    #expect(destinationNameIndex < destinationSecureIndex)
+    #expect(destinationNameIndex < destinationServerIndex)
+    #expect(destinationServerIndex < destinationSecureIndex)
     #expect(studioSource.contains("@SceneStorage(\"MacStream.StudioView.isInspectorCollapsed\")"))
     #expect(studioSource.contains("InspectorRailView(store: store)"))
     #expect(studioSource.contains(".frame(width: 52)"))
@@ -367,7 +368,8 @@ func studioKeepsFrequentControlsInBottomDeck() throws {
     #expect(settingsSource.contains("Section(\"Destination\")"))
     #expect(settingsSource.contains("Picker(\"Mode\", selection: destinationMode)"))
     #expect(settingsSource.contains("TextField(\"Name\", text: $store.destination.name)"))
-    #expect(settingsSource.contains("SecureField(\"RTMP URL / stream key\""))
+    #expect(settingsSource.contains("TextField(\"Server URL\", text: rtmpServerURL)"))
+    #expect(settingsSource.contains("SecureField(\"Stream key\", text: rtmpStreamKey)"))
     #expect(settingsSource.contains("private var destinationMode: Binding<StreamDestinationMode>"))
     #expect(settingsSource.contains("Section(\"Setup Rules\")"))
     #expect(settingsSource.contains("@AppStorage(\"setupPrompt\")"))
@@ -390,7 +392,7 @@ func studioKeepsFrequentControlsInBottomDeck() throws {
     #expect(destinationSource.contains("Label(\"Configure\", systemImage: \"gearshape\")"))
     #expect(destinationSource.contains("destinationDetailTint"))
     #expect(!destinationSource.contains("TextField(\"Name\", text: $store.destination.name)"))
-    #expect(!destinationSource.contains("SecureField(\"RTMP URL / stream key\""))
+    #expect(!destinationSource.contains("SecureField(\"Stream key\""))
     #expect(storeSource.contains("public var canScanCaptureDevices"))
     #expect(storeSource.contains("captureScanBlockedReason == nil"))
     #expect(storeSource.contains("Stop preview, stream, or recording before checking capture devices."))
@@ -852,6 +854,26 @@ func rtmpDestinationSplitsConnectionAndStreamName() throws {
 
     #expect(target.connectionURL == "rtmps://live.example.com/app")
     #expect(target.streamName == "sk_live_123")
+}
+
+@Test
+func rtmpDestinationExposesEditableServerURLAndStreamKey() throws {
+    var destination = StreamDestination(
+        name: "Facebook",
+        rtmpURL: "rtmps://live-api-s.facebook.com:443/rtmp/facebook_secret_key"
+    )
+
+    #expect(destination.rtmpServerURL == "rtmps://live-api-s.facebook.com:443/rtmp/")
+    #expect(destination.rtmpStreamKey == "facebook_secret_key")
+
+    destination.setRTMPStreamKey("new_secret")
+
+    #expect(destination.rtmpURL == "rtmps://live-api-s.facebook.com:443/rtmp/new_secret")
+    #expect(try destination.rtmpPublishTarget().streamName == "new_secret")
+
+    destination.setRTMPServerURL("rtmps://backup.example.com/live")
+
+    #expect(destination.rtmpURL == "rtmps://backup.example.com/live/new_secret")
 }
 
 @Test
@@ -3419,6 +3441,20 @@ func applyingDestinationPresetConfiguresRTMPEndpoint() {
     #expect(store.events.contains { $0.title == "Destination preset" && $0.detail == "Twitch" })
 }
 
+
+@Test
+@MainActor
+func editingDestinationServerURLAndStreamKeyBuildsCompleteRTMPEndpoint() {
+    let store = StudioStore(captureDeviceProvider: FixedCaptureDeviceProvider(report: CapturePreflightReport()))
+
+    store.applyDestinationPreset(.facebook)
+    store.setRTMPStreamKey("fb_secret")
+
+    #expect(store.destination.rtmpServerURL == StreamPlatformPreset.facebook.ingestURL)
+    #expect(store.destination.rtmpStreamKey == "fb_secret")
+    #expect(store.destination.rtmpURL == "rtmps://live-api-s.facebook.com:443/rtmp/fb_secret")
+    #expect(store.destination.isReadyToStart)
+}
 @Test
 @MainActor
 func applyingPresetWithoutFixedIngestLeavesURLEditable() {

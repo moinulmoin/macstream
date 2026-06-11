@@ -35,7 +35,11 @@ struct SettingsView: View {
                     TextField("Name", text: $store.destination.name)
                         .disabled(!store.canEditDestination)
 
-                    SecureField("RTMP URL / stream key", text: $store.destination.rtmpURL)
+                    TextField("Server URL", text: rtmpServerURL)
+                        .textContentType(.URL)
+                        .disabled(!store.canEditDestination)
+
+                    SecureField("Stream key", text: rtmpStreamKey)
                         .disabled(!store.canEditDestination)
 
                     Text(store.destination.safeDisplayDetail)
@@ -140,6 +144,20 @@ struct SettingsView: View {
         Binding(
             get: { store.destination.mode },
             set: { store.setDestinationMode($0) }
+        )
+    }
+
+    private var rtmpServerURL: Binding<String> {
+        Binding(
+            get: { store.destination.rtmpServerURL },
+            set: { store.setRTMPServerURL($0) }
+        )
+    }
+
+    private var rtmpStreamKey: Binding<String> {
+        Binding(
+            get: { store.destination.rtmpStreamKey },
+            set: { store.setRTMPStreamKey($0) }
         )
     }
 

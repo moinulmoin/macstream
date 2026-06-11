@@ -10,7 +10,7 @@ struct SourceRackView: View {
             StudioPanelHeader(
                 title: "Sources",
                 systemImage: "slider.horizontal.3",
-                subtitle: "Keep the required inputs armed and balanced before output starts."
+                subtitle: "Choose the inputs you want armed before output starts."
             ) {
                 HStack(spacing: 8) {
                     StudioBadge(title: "\(primarySources.count) primary", systemImage: "switch.2", tint: .secondary)
@@ -57,12 +57,8 @@ struct SourceRackView: View {
                 HStack(alignment: .top, spacing: 10) {
                     Label {
                         VStack(alignment: .leading, spacing: 3) {
-                            HStack(spacing: 6) {
-                                Text(source.title)
-                                    .font(.subheadline.weight(.semibold))
-
-                                StudioBadge(title: store.setupRole(for: source.kind).title, systemImage: nil, tint: setupRoleTint(for: source))
-                            }
+                            Text(source.title)
+                                .font(.subheadline.weight(.semibold))
 
                             Text(source.kind.title)
                                 .font(.caption)
@@ -90,6 +86,10 @@ struct SourceRackView: View {
                 }
 
                 deviceSelector(for: source.kind)
+
+                if source.kind == .microphone, source.isEnabled {
+                    microphoneInputMeter(level: store.latestSignals.speechLevel)
+                }
 
                 if source.kind.supportsLevelControl {
                     HStack(spacing: 8) {
@@ -138,13 +138,37 @@ struct SourceRackView: View {
         "\(Int((source.level * 100).rounded()))%"
     }
 
-    private func setupRoleTint(for source: StudioSource) -> Color {
-        switch store.setupRole(for: source.kind) {
-        case .required: .orange
-        case .recommended: .accentColor
-        case .optional: .secondary
-        case .unused: .secondary
+    private func microphoneInputMeter(level: Double) -> some View {
+        let normalizedLevel = min(max(level, 0), 1)
+        return VStack(alignment: .leading, spacing: 5) {
+            HStack {
+                Text("Input level")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                Spacer()
+                Text("\(Int((normalizedLevel * 100).rounded()))%")
+                    .font(.caption.monospacedDigit())
+                    .foregroundStyle(.secondary)
+            }
+
+            GeometryReader { proxy in
+                ZStack(alignment: .leading) {
+                    Capsule()
+                        .fill(Color.secondary.opacity(0.16))
+                    Capsule()
+                        .fill(LinearGradient(
+                            colors: [.green, .yellow, .orange],
+                            startPoint: .leading,
+                            endPoint: .trailing
+                        ))
+                        .frame(width: max(6, proxy.size.width * normalizedLevel))
+                }
+            }
+            .frame(height: 7)
         }
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(Text("Microphone input level"))
+        .accessibilityValue(Text("\(Int((normalizedLevel * 100).rounded())) percent"))
     }
 
     private func sourceToggleHelp(for source: StudioSource) -> String {
@@ -152,7 +176,7 @@ struct SourceRackView: View {
             return source.isEnabled ? "Turn source off" : "Turn source on"
         }
 
-        return "Switch scenes or stop capture before turning off a required source"
+        return "Stop capture before turning off a source used by the current scene"
     }
 
     private func sourceLevelHelp(for source: StudioSource) -> String {
@@ -164,7 +188,7 @@ struct SourceRackView: View {
             return "Turn source on before adjusting level"
         }
 
-        return "Switch scenes or stop capture before adjusting a required source"
+        return "Stop capture before adjusting a source used by the current scene"
     }
 
     private var refreshDevicesButton: some View {

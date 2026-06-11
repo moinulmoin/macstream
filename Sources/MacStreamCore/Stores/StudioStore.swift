@@ -361,7 +361,7 @@ public final class StudioStore {
             return CaptureReadiness(
                 state: .ready,
                 title: "Ready",
-                detail: "Required capture sources are ready."
+                detail: "Capture sources are ready."
             )
         }
 
@@ -1796,9 +1796,6 @@ public final class StudioStore {
             break
         }
 
-        if selectedSceneKind != .brb, isSourceEnabled(.microphone) {
-            kinds.append(.microphone)
-        }
 
         return kinds
     }

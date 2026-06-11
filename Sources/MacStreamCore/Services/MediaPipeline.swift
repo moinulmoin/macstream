@@ -8,6 +8,7 @@ import Network
 #if MAC_STREAM_HAS_HAISHINKIT
 import HaishinKit
 import RTMPHaishinKit
+import VideoToolbox
 #endif
 
 public protocol MediaPipeline: Sendable {
@@ -413,6 +414,8 @@ public final class SystemMediaPipeline: NSObject, MediaPipeline, SCStreamOutput,
     private var mediaHealth = StreamHealth()
     private var frameWindowStartedAt = Date()
     private var frameWindowCount = 0
+    private var firstPublishingVideoContinuation: CheckedContinuation<Void, any Error>?
+    private var didPublishFirstVideoFrame = false
 
     public override init() {
         self.rtmpPublisherFactory = Self.makeRTMPPublisher
@@ -466,6 +469,8 @@ public final class SystemMediaPipeline: NSObject, MediaPipeline, SCStreamOutput,
         #endif
     }
 
+    private static let firstPublishingVideoFrameTimeout: Duration = .seconds(8)
+
     static let sharesMicrophoneCaptureBetweenStreamAndRecording = true
 
     public func update(configuration: MediaPipelineConfiguration) {
@@ -511,6 +516,7 @@ public final class SystemMediaPipeline: NSObject, MediaPipeline, SCStreamOutput,
 
         let target = try destination.rtmpPublishTarget()
         let publisher = rtmpPublisherFactory(target)
+        try await publisher.configure(configuration: mediaConfiguration)
 
         do {
             try await publisher.connect()
@@ -560,6 +566,9 @@ public final class SystemMediaPipeline: NSObject, MediaPipeline, SCStreamOutput,
             publishingPixelBufferPool = nil
             latestPublishingCameraPixelBuffer = nil
             publishingOwnsMicrophoneSession = false
+            firstPublishingVideoContinuation?.resume(throwing: CancellationError())
+            firstPublishingVideoContinuation = nil
+            didPublishFirstVideoFrame = false
             if self.stream == nil, self.writer == nil {
                 self.mediaHealth = StreamHealth()
             }
@@ -1075,6 +1084,8 @@ public final class SystemMediaPipeline: NSObject, MediaPipeline, SCStreamOutput,
             self.publishingPixelBufferPool = publishingPixelBufferPool
             self.latestPublishingCameraPixelBuffer = nil
             self.publishingOwnsMicrophoneSession = ownsMicrophoneSession
+            self.firstPublishingVideoContinuation = nil
+            self.didPublishFirstVideoFrame = false
             self.resetHealth(using: mediaConfiguration)
         }
 
@@ -1085,6 +1096,7 @@ public final class SystemMediaPipeline: NSObject, MediaPipeline, SCStreamOutput,
             try await stream.startCapture()
             try Task.checkCancellation()
             startMicrophoneSession(microphoneSession)
+            try await waitForFirstPublishingVideoFrame()
         } catch {
             queue.sync {
                 if self.publishingStream === stream {
@@ -1279,13 +1291,19 @@ public final class SystemMediaPipeline: NSObject, MediaPipeline, SCStreamOutput,
             switch outputType {
             case .screen:
                 recordVideoSampleIfNeeded(outputType, isPublishingStream: true)
-                guard Self.shouldPublishStreamSample(isPublishingStream: isPublishingStream, hasPublisher: rtmpPublisher != nil) else {
+                guard Self.shouldPublishScreenStreamSample(
+                    isPublishingStream: isPublishingStream,
+                    hasPublisher: rtmpPublisher != nil,
+                    hasImageBuffer: sampleBuffer.imageBuffer != nil
+                ) else {
                     return
                 }
                 let didPublish = Self.shouldPublishCompositedVideoSample(sceneKind: mediaConfiguration.sceneKind)
                     ? publishCompositedVideoSample(sampleBuffer, presentationTime: presentationTime)
                     : publish(sampleBuffer)
-                if !didPublish {
+                if didPublish {
+                    markFirstPublishingVideoFrameIfNeeded()
+                } else {
                     recordDroppedFrameIfNeeded(outputType)
                 }
             case .audio:
@@ -1354,6 +1372,47 @@ public final class SystemMediaPipeline: NSObject, MediaPipeline, SCStreamOutput,
             break
         @unknown default:
             break
+        }
+    }
+
+    private func waitForFirstPublishingVideoFrame() async throws {
+        try await withThrowingTaskGroup(of: Void.self) { group in
+            group.addTask {
+                try await withCheckedThrowingContinuation { continuation in
+                    self.queue.async {
+                        if self.didPublishFirstVideoFrame {
+                            continuation.resume()
+                        } else {
+                            self.firstPublishingVideoContinuation = continuation
+                        }
+                    }
+                }
+            }
+
+            group.addTask {
+                try await Task.sleep(for: Self.firstPublishingVideoFrameTimeout)
+                throw MediaPipelineError.unavailable("RTMP publisher did not receive video frames.")
+            }
+
+            do {
+                try await group.next()
+                group.cancelAll()
+            } catch {
+                group.cancelAll()
+                queue.async {
+                    self.firstPublishingVideoContinuation = nil
+                }
+                throw error
+            }
+        }
+    }
+
+    private func markFirstPublishingVideoFrameIfNeeded() {
+        queue.async {
+            guard !self.didPublishFirstVideoFrame else { return }
+            self.didPublishFirstVideoFrame = true
+            self.firstPublishingVideoContinuation?.resume()
+            self.firstPublishingVideoContinuation = nil
         }
     }
 
@@ -1492,6 +1551,17 @@ public final class SystemMediaPipeline: NSObject, MediaPipeline, SCStreamOutput,
         guard outputType == .screen else { return }
 
         mediaHealth.droppedFrames += 1
+    }
+
+    static func shouldPublishScreenStreamSample(
+        isPublishingStream: Bool,
+        hasPublisher: Bool,
+        hasImageBuffer: Bool
+    ) -> Bool {
+        hasImageBuffer && shouldPublishStreamSample(
+            isPublishingStream: isPublishingStream,
+            hasPublisher: hasPublisher
+        )
     }
 
     static func shouldPublishCompositedVideoSample(sceneKind: SceneKind) -> Bool {
@@ -1932,9 +2002,14 @@ private extension CMSampleBuffer {
 }
 
 protocol RTMPPublisher: AnyObject, Sendable {
+    func configure(configuration: MediaPipelineConfiguration) async throws
     func connect() async throws
     func append(_ sampleBuffer: CMSampleBuffer) -> Bool
     func close() async
+}
+
+extension RTMPPublisher {
+    func configure(configuration: MediaPipelineConfiguration) async throws {}
 }
 
 final class RTMPAppendBackpressureGate: @unchecked Sendable {
@@ -1974,6 +2049,30 @@ private final class HaishinKitRTMPPublisher: RTMPPublisher, @unchecked Sendable 
         self.stream = RTMPStream(connection: connection)
     }
 
+
+    func configure(configuration: MediaPipelineConfiguration) async throws {
+        let videoWidth = configuration.maxVideoWidth
+        let videoHeight = Int((Double(videoWidth) * 9.0 / 16.0).rounded())
+        try await stream.setVideoSettings(VideoCodecSettings(
+            videoSize: CGSize(width: videoWidth, height: videoHeight),
+            bitRate: configuration.videoBitrate,
+            profileLevel: kVTProfileLevel_H264_Main_AutoLevel as String,
+            scalingMode: .letterbox,
+            bitRateMode: .average,
+            maxKeyFrameIntervalDuration: 2,
+            allowFrameReordering: false,
+            isLowLatencyRateControlEnabled: true,
+            isHardwareAcceleratedEnabled: true,
+            expectedFrameRate: Double(configuration.framesPerSecond)
+        ))
+        try await stream.setAudioSettings(AudioCodecSettings(
+            bitRate: 128_000,
+            downmix: true,
+            sampleRate: 48_000,
+            format: .aac
+        ))
+        await stream.setVideoInputBufferCounts(configuration.queueDepth)
+    }
     func connect() async throws {
         _ = try await connection.connect(target.connectionURL)
         _ = try await stream.publish(target.streamName)

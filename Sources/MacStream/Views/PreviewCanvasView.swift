@@ -92,34 +92,11 @@ struct PreviewCanvasView: View {
             } else if !isScreenCaptureReady {
                 screenCaptureUnavailableLayer
             } else {
-                ZStack(alignment: .topLeading) {
-                    ScreenCapturePreviewView(
-                        configuration: previewConfiguration,
-                        captureTarget: screenCaptureTarget
-                    )
-                    .opacity(screenPreviewOpacity)
-
-                    VStack(alignment: .leading, spacing: 8) {
-                        HStack(spacing: 6) {
-                            Circle().fill(.red).frame(width: 9, height: 9)
-                            Circle().fill(.yellow).frame(width: 9, height: 9)
-                            Circle().fill(.green).frame(width: 9, height: 9)
-                        }
-                        .accessibilityHidden(true)
-
-                        Text(signals.activeApplication)
-                            .font(.system(size: 16, weight: .semibold))
-                            .lineLimit(1)
-                    }
-                    .foregroundStyle(.white)
-                    .padding(18)
-                    .background(.black.opacity(0.42), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-                    .overlay {
-                        RoundedRectangle(cornerRadius: 14, style: .continuous)
-                            .strokeBorder(.white.opacity(0.14), lineWidth: 1)
-                    }
-                    .padding(18)
-                }
+                ScreenCapturePreviewView(
+                    configuration: previewConfiguration,
+                    captureTarget: screenCaptureTarget
+                )
+                .opacity(screenPreviewOpacity)
             }
         }
     }
@@ -155,24 +132,11 @@ struct PreviewCanvasView: View {
             } else if !isCameraCaptureReady {
                 cameraCaptureUnavailableLayer
             } else {
-                ZStack {
-                    CameraPreviewView(
-                        configuration: previewConfiguration,
-                        cameraEnhancements: cameraEnhancements,
-                        cameraDeviceID: cameraDeviceID
-                    )
-
-                    VStack {
-                        Spacer()
-                        Text(signals.isSpeaking ? "Speaking" : "Listening")
-                            .font(.caption.weight(.semibold))
-                            .padding(.horizontal, 9)
-                            .padding(.vertical, 5)
-                            .background(.black.opacity(0.44), in: Capsule())
-                            .padding(10)
-                    }
-                    .foregroundStyle(.white)
-                }
+                CameraPreviewView(
+                    configuration: previewConfiguration,
+                    cameraEnhancements: cameraEnhancements,
+                    cameraDeviceID: cameraDeviceID
+                )
             }
         }
     }

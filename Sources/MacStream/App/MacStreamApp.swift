@@ -339,17 +339,17 @@ struct MacStreamApp: App {
         if store.isLive {
             if store.streamTransport == .preview { return "Stop Preview" }
             if store.streamTransport == .endpointValidation { return "Stop Endpoint Check" }
-            return "Stop Stream"
+            return "Stop Streaming"
         }
         if store.isStreamConnecting {
             if store.streamTransport == .preview { return "Cancel Preview Start" }
             if store.streamTransport == .endpointValidation { return "Cancel Endpoint Check" }
-            return "Cancel Stream Start"
+            return "Cancel Start Streaming"
         }
         if !store.destination.isPreviewSession, store.streamTransport == .endpointValidation {
-            return "Check RTMP Endpoint"
+            return "Check Endpoint"
         }
-        return store.destination.isPreviewSession ? "Start Preview" : "Go Live"
+        return store.destination.isPreviewSession ? "Start Preview" : "Start Streaming"
     }
 
     private var recordingCommandTitle: String {

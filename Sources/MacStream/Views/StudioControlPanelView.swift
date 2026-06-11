@@ -274,18 +274,18 @@ struct StudioControlPanelView: View {
     private var streamActionTitle: String {
         if store.isLive {
             if store.streamTransport == .preview { return "Stop Preview" }
-            if store.streamTransport == .endpointValidation { return "Stop Check" }
-            return "Stop Stream"
+            if store.streamTransport == .endpointValidation { return "Stop Endpoint Check" }
+            return "Stop Streaming"
         }
         if store.isStreamConnecting {
             if store.streamTransport == .preview { return "Cancel Preview" }
-            if store.streamTransport == .endpointValidation { return "Cancel Check" }
-            return "Cancel Stream"
+            if store.streamTransport == .endpointValidation { return "Cancel Endpoint Check" }
+            return "Cancel Streaming"
         }
         if !store.destination.isPreviewSession, store.streamTransport == .endpointValidation {
             return "Check Endpoint"
         }
-        return store.destination.isPreviewSession ? "Start Preview" : "Go Live"
+        return store.destination.isPreviewSession ? "Start Preview" : "Start Streaming"
     }
 
     private var streamActionSymbol: String {
@@ -309,9 +309,9 @@ struct StudioControlPanelView: View {
         }
         if !store.canStartStream { return store.streamStatusDetail }
         if !store.destination.isPreviewSession, store.streamTransport == .endpointValidation {
-            return "Validate RTMP endpoint reachability"
+            return "Check whether the configured endpoint is reachable"
         }
-        return store.destination.isPreviewSession ? "Start local preview" : "Start stream"
+        return store.destination.isPreviewSession ? "Start local preview" : "Start streaming"
     }
 
     private var recordingActionTitle: String {

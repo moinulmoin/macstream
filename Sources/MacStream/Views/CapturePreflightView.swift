@@ -182,7 +182,7 @@ private struct CapturePermissionRow: Identifiable {
                     ($0.kind == .display || $0.kind == .window) && $0.permission != .granted
                 },
                 pluralName: "screen targets",
-                fixedDetail: "Required for display and window capture."
+                fixedDetail: "Used for display and window capture."
             )
         ]
         .compactMap { $0 }

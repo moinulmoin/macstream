@@ -299,13 +299,13 @@ func studioKeepsFrequentControlsInBottomDeck() throws {
     #expect(controlSource.contains("if store.recordingState == .recording { return \"Stop Rec\" }"))
     #expect(studioSource.contains("if store.shouldShowSetupChecklist { return \"checklist.checked\" }"))
     #expect(controlSource.contains("return \"Check Endpoint\""))
-    #expect(controlSource.contains("return \"Stop Check\""))
-    #expect(controlSource.contains("return \"Cancel Check\""))
+    #expect(controlSource.contains("return \"Stop Endpoint Check\""))
+    #expect(controlSource.contains("return \"Cancel Endpoint Check\""))
     #expect(controlSource.contains("return \"Stop Rec\""))
     #expect(controlSource.contains("return \"Cancel Rec\""))
     #expect(controlSource.contains(".minimumScaleFactor(0.78)"))
-    #expect(controlSource.contains("Validate RTMP endpoint reachability"))
-    #expect(appSource.contains("return \"Check RTMP Endpoint\""))
+    #expect(controlSource.contains("Check whether the configured endpoint is reachable"))
+    #expect(appSource.contains("return \"Check Endpoint\""))
     #expect(appSource.contains("return \"Stop Endpoint Check\""))
     #expect(appSource.contains("return \"Cancel Endpoint Check\""))
     #expect(appSource.contains("Window(\"MacStream\", id: \"studio\")"))
@@ -435,8 +435,8 @@ func studioKeepsFrequentControlsInBottomDeck() throws {
     #expect(sourceRackSource.contains("case .optional, .unused:"))
     #expect(sourceRackSource.contains("sourceToggleHelp(for: source)"))
     #expect(sourceRackSource.contains("sourceLevelHelp(for: source)"))
-    #expect(sourceRackSource.contains("Switch scenes or stop capture before turning off a required source"))
-    #expect(sourceRackSource.contains("Switch scenes or stop capture before adjusting a required source"))
+    #expect(sourceRackSource.contains("Stop capture before turning off a source used by the current scene"))
+    #expect(sourceRackSource.contains("Stop capture before adjusting a source used by the current scene"))
     #expect(sourceRackSource.contains("refreshDevicesButton"))
     #expect(sourceRackSource.contains("store.scanCaptureDevices()"))
     #expect(sourceRackSource.contains("private func deviceSelector(for kind: SourceKind)"))
@@ -2574,8 +2574,8 @@ func captureReadinessIgnoresDisabledOptionalSources() async throws {
     try? await Task.sleep(for: .milliseconds(30))
 
     #expect(store.captureReadiness.state == .needsAccess)
-    #expect(store.captureReadiness.detail == "Camera and Microphone need access.")
-    #expect(store.missingRequiredCapturePermissionKinds == [.camera, .microphone])
+    #expect(store.captureReadiness.detail == "Camera needs access.")
+    #expect(store.missingRequiredCapturePermissionKinds == [.camera])
 
     let camera = try #require(store.sources.first { $0.kind == .camera })
     let microphone = try #require(store.sources.first { $0.kind == .microphone })
@@ -2584,7 +2584,7 @@ func captureReadinessIgnoresDisabledOptionalSources() async throws {
 
     #expect(store.captureReadiness.state == .ready)
     #expect(store.captureReadiness.title == "Ready")
-    #expect(store.captureReadiness.detail == "Required capture sources are ready.")
+    #expect(store.captureReadiness.detail == "Capture sources are ready.")
     #expect(store.missingRequiredCapturePermissionKinds.isEmpty)
 }
 
@@ -2605,8 +2605,8 @@ func capturePermissionStateSeparatesPromptableBlockedAndMissingDevices() async {
     store.scanCaptureDevices()
     try? await Task.sleep(for: .milliseconds(30))
 
-    #expect(store.missingRequiredCapturePermissionKinds == [.camera, .microphone])
-    #expect(store.promptableRequiredCapturePermissionKinds == [.microphone])
+    #expect(store.missingRequiredCapturePermissionKinds == [.camera])
+    #expect(store.promptableRequiredCapturePermissionKinds.isEmpty)
     #expect(store.blockedRequiredCapturePermissionKinds == [.camera])
     #expect(store.missingRequiredCaptureDeviceKinds.isEmpty)
 }
@@ -2627,8 +2627,8 @@ func capturePermissionStateSurfacesMissingRequiredHardware() async {
     store.scanCaptureDevices()
     try? await Task.sleep(for: .milliseconds(30))
 
-    #expect(store.missingRequiredCapturePermissionKinds == [.camera, .microphone])
-    #expect(store.promptableRequiredCapturePermissionKinds == [.microphone])
+    #expect(store.missingRequiredCapturePermissionKinds == [.camera])
+    #expect(store.promptableRequiredCapturePermissionKinds.isEmpty)
     #expect(store.blockedRequiredCapturePermissionKinds.isEmpty)
     #expect(store.missingRequiredCaptureDeviceKinds == [.camera])
 }

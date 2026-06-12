@@ -190,9 +190,7 @@ private final class MicrophoneLevelMonitor: @unchecked Sendable {
         lock.unlock()
 
         let input = engine.inputNode
-        let format = input.outputFormat(forBus: 0)
-
-        input.installTap(onBus: 0, bufferSize: 1_024, format: format) { [weak self] buffer, _ in
+        input.installTap(onBus: 0, bufferSize: 1_024, format: MicrophoneTapFormatPolicy.tapFormat()) { [weak self] buffer, _ in
             guard let self else { return }
             let level = Self.normalizedLevel(from: buffer)
             self.update(level: level, isSpeaking: level > 0.18, isUnavailable: false)
@@ -271,6 +269,12 @@ private final class MicrophoneLevelMonitor: @unchecked Sendable {
 struct MicrophonePermissionStartPolicy: Sendable {
     static func shouldStartEngine(isStartRequested: Bool, isPermissionGranted: Bool) -> Bool {
         isStartRequested && isPermissionGranted
+    }
+}
+
+struct MicrophoneTapFormatPolicy: Sendable {
+    static func tapFormat() -> AVAudioFormat? {
+        nil
     }
 }
 

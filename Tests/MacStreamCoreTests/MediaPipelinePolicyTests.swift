@@ -72,6 +72,11 @@ func microphonePermissionGrantStartsOnlyWhenSamplingIsStillRequested() {
 }
 
 @Test
+func microphoneTapUsesInputNodeNativeFormat() {
+    #expect(MicrophoneTapFormatPolicy.tapFormat() == nil)
+}
+
+@Test
 func screenMotionFrameSamplingGateDropsBurstFrames() {
     #expect(ScreenMotionFrameSamplingGate.shouldSample(now: 10, lastSampleTime: nil, interval: 0.25))
     #expect(!ScreenMotionFrameSamplingGate.shouldSample(now: 10.10, lastSampleTime: 10, interval: 0.25))

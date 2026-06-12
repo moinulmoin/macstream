@@ -2274,7 +2274,7 @@ private final class HaishinKitRTMPPublisher: RTMPPublisher, @unchecked Sendable 
 
     init(target: RTMPPublishTarget) {
         self.target = target
-        self.stream = RTMPStream(connection: connection)
+        self.stream = RTMPStream(connection: connection, fcPublishName: target.streamName)
     }
 
 

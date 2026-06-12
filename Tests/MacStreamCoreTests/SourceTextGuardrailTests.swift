@@ -41,6 +41,7 @@ func packagingScriptsSignAppBundleWithStableIdentifier() throws {
     #expect(runScript.contains("BUNDLE_ID=\"com.ideaplexa.macstream\""))
     #expect(!runScript.contains("BUNDLE_ID=\"com.macstream.app\""))
     #expect(runScript.contains("Developer ID Application: Ideaplexa LLC (53P98M92V7)"))
+    #expect(runScript.contains("MAC_STREAM_ENABLE_HAISHINKIT=\"${MAC_STREAM_ENABLE_HAISHINKIT:-1}\""))
     #expect(runScript.contains("MAC_STREAM_CODESIGN_IDENTITY"))
     #expect(runScript.contains("MAC_STREAM_CODESIGN_TIMESTAMP=\"${MAC_STREAM_CODESIGN_TIMESTAMP:-none}\""))
     #expect(runScript.contains("\"$ROOT_DIR/script/package_macos_app.sh\""))

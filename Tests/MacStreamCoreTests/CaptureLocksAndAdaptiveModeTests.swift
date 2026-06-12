@@ -164,6 +164,48 @@ func adaptivePerformanceModeUsesEfficiencyUnderPressure() {
 
 @Test
 @MainActor
+func resourceUsageSnapshotBreaksDownCapturePreviewDirectorAndSignals() {
+    let pipeline = ConfigurableMediaPipeline()
+    let pressure = SystemPressureSnapshot(
+        thermalPressure: .fair,
+        memoryUsedMB: 768,
+        physicalMemoryMB: 16_384,
+        isLowPowerModeEnabled: true
+    )
+    let store = StudioStore(
+        mediaPipeline: pipeline,
+        performanceMonitor: FixedSystemPerformanceMonitor(snapshot: pressure),
+        preferences: StudioPreferences(performanceMode: .responsive)
+    )
+
+    pipeline.currentHealth = StreamHealth(
+        bitrateKbps: 9_500,
+        droppedFrames: 2,
+        captureFPS: 48,
+        roundTripMs: 28
+    )
+    store.startStream()
+    store.advanceDirector()
+
+    let snapshot = store.resourceUsageSnapshot
+    #expect(snapshot.processMemoryMB == 768)
+    #expect(snapshot.memoryUsagePercent == 4)
+    #expect(snapshot.thermalPressure == .fair)
+    #expect(snapshot.isLowPowerModeEnabled)
+    #expect(snapshot.streamTargetFPS == 60)
+    #expect(snapshot.streamActualFPS == 48)
+    #expect(snapshot.streamDroppedFrames == 2)
+    #expect(snapshot.streamBitrateKbps == 9_500)
+    #expect(snapshot.streamQueueDepth == 5)
+    #expect(snapshot.previewTargetFPS == 15)
+    #expect(snapshot.previewMaxDisplayWidth == 1_920)
+    #expect(snapshot.previewQueueDepth == 3)
+    #expect(snapshot.directorSampleIntervalMilliseconds == 500)
+    #expect(snapshot.screenSignalFPS == 8)
+}
+
+@Test
+@MainActor
 func adaptivePerformanceModeUsesEfficiencyWhenCaptureHealthDrops() async {
     let pipeline = ConfigurableMediaPipeline()
     let signalProvider = ConfigurableSignalProvider()

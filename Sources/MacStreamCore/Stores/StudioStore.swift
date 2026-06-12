@@ -210,6 +210,29 @@ public final class StudioStore {
         !isGeneratingSetupPlan && setupGenerationBlockedReason == nil
     }
 
+    public var resourceUsageSnapshot: ResourceUsageSnapshot {
+        let mediaConfiguration = effectivePerformanceMode.mediaConfiguration
+        let previewConfiguration = effectivePerformanceMode.previewCaptureConfiguration
+        let signalConfiguration = effectivePerformanceMode.signalSamplingConfiguration
+
+        return ResourceUsageSnapshot(
+            processMemoryMB: systemPressure.memoryUsedMB,
+            memoryUsagePercent: systemPressure.memoryUsagePercent,
+            thermalPressure: systemPressure.thermalPressure,
+            isLowPowerModeEnabled: systemPressure.isLowPowerModeEnabled,
+            streamTargetFPS: mediaConfiguration.framesPerSecond,
+            streamActualFPS: health.captureFPS,
+            streamDroppedFrames: health.droppedFrames,
+            streamBitrateKbps: health.bitrateKbps,
+            streamQueueDepth: mediaConfiguration.queueDepth,
+            previewTargetFPS: previewConfiguration.framesPerSecond,
+            previewMaxDisplayWidth: previewConfiguration.maxDisplayWidth,
+            previewQueueDepth: previewConfiguration.queueDepth,
+            directorSampleIntervalMilliseconds: effectivePerformanceMode.directorSampleIntervalMilliseconds,
+            screenSignalFPS: signalConfiguration.screenMotionFramesPerSecond
+        )
+    }
+
     public var startBlockedReason: String? {
         streamStartBlockedReason
     }

@@ -337,6 +337,55 @@ public struct SystemPressureSnapshot: Codable, Equatable, Sendable {
     }
 }
 
+public struct ResourceUsageSnapshot: Codable, Equatable, Sendable {
+    public var processMemoryMB: Int
+    public var memoryUsagePercent: Int
+    public var thermalPressure: SystemPressureLevel
+    public var isLowPowerModeEnabled: Bool
+    public var streamTargetFPS: Int
+    public var streamActualFPS: Int
+    public var streamDroppedFrames: Int
+    public var streamBitrateKbps: Int
+    public var streamQueueDepth: Int
+    public var previewTargetFPS: Int
+    public var previewMaxDisplayWidth: Int
+    public var previewQueueDepth: Int
+    public var directorSampleIntervalMilliseconds: Int
+    public var screenSignalFPS: Int
+
+    public init(
+        processMemoryMB: Int,
+        memoryUsagePercent: Int,
+        thermalPressure: SystemPressureLevel,
+        isLowPowerModeEnabled: Bool,
+        streamTargetFPS: Int,
+        streamActualFPS: Int,
+        streamDroppedFrames: Int,
+        streamBitrateKbps: Int,
+        streamQueueDepth: Int,
+        previewTargetFPS: Int,
+        previewMaxDisplayWidth: Int,
+        previewQueueDepth: Int,
+        directorSampleIntervalMilliseconds: Int,
+        screenSignalFPS: Int
+    ) {
+        self.processMemoryMB = processMemoryMB
+        self.memoryUsagePercent = memoryUsagePercent
+        self.thermalPressure = thermalPressure
+        self.isLowPowerModeEnabled = isLowPowerModeEnabled
+        self.streamTargetFPS = streamTargetFPS
+        self.streamActualFPS = streamActualFPS
+        self.streamDroppedFrames = streamDroppedFrames
+        self.streamBitrateKbps = streamBitrateKbps
+        self.streamQueueDepth = streamQueueDepth
+        self.previewTargetFPS = previewTargetFPS
+        self.previewMaxDisplayWidth = previewMaxDisplayWidth
+        self.previewQueueDepth = previewQueueDepth
+        self.directorSampleIntervalMilliseconds = directorSampleIntervalMilliseconds
+        self.screenSignalFPS = screenSignalFPS
+    }
+}
+
 public struct StudioPreferences: Codable, Equatable, Sendable {
     public static let minimumDirectorCountdownSeconds = 1
     public static let maximumDirectorCountdownSeconds = 5

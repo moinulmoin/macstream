@@ -164,15 +164,44 @@ func adaptivePerformanceModeUsesEfficiencyUnderPressure() {
 
 @Test
 @MainActor
-func studioStoreDownshiftsPreviewCaptureWhileRTMPPublishing() {
-    #expect(StudioStore.previewCaptureConfiguration(
-        for: .responsive,
-        isRTMPPublishing: false
-    ) == StudioPerformanceMode.responsive.previewCaptureConfiguration)
-    #expect(StudioStore.previewCaptureConfiguration(
-        for: .responsive,
-        isRTMPPublishing: true
-    ) == StudioPerformanceMode.efficiency.previewCaptureConfiguration)
+func studioStoreUsesMinimalPreviewCaptureWhileRTMPPublishing() {
+    for mode in StudioPerformanceMode.allCases {
+        #expect(StudioStore.previewCaptureConfiguration(
+            for: mode,
+            isRTMPPublishing: false
+        ) == mode.previewCaptureConfiguration)
+        #expect(StudioStore.previewCaptureConfiguration(
+            for: mode,
+            isRTMPPublishing: true
+        ) == StudioPerformanceMode.liveStreamingPreviewConfiguration)
+    }
+
+    #expect(StudioPerformanceMode.liveStreamingPreviewConfiguration.framesPerSecond <= 6)
+    #expect(StudioPerformanceMode.liveStreamingPreviewConfiguration.maxDisplayWidth <= 640)
+    #expect(StudioPerformanceMode.liveStreamingPreviewConfiguration.queueDepth == 1)
+}
+
+@Test
+@MainActor
+func studioStoreReducesSamplingCostWhileRTMPPublishing() {
+    for mode in StudioPerformanceMode.allCases {
+        #expect(StudioStore.signalSamplingConfiguration(
+            for: mode,
+            isRTMPPublishing: false
+        ) == mode.signalSamplingConfiguration)
+        #expect(StudioStore.signalSamplingConfiguration(
+            for: mode,
+            isRTMPPublishing: true
+        ) == StudioPerformanceMode.liveStreamingSignalSamplingConfiguration)
+        #expect(StudioStore.directorSampleIntervalMilliseconds(
+            for: mode,
+            isRTMPPublishing: false
+        ) == mode.directorSampleIntervalMilliseconds)
+        #expect(StudioStore.directorSampleIntervalMilliseconds(
+            for: mode,
+            isRTMPPublishing: true
+        ) >= StudioPerformanceMode.liveStreamingDirectorSampleIntervalMilliseconds)
+    }
 }
 
 @Test
@@ -230,6 +259,31 @@ func resourceUsageSnapshotBreaksDownCapturePreviewDirectorAndSignals() {
     #expect(snapshot.previewQueueDepth == 3)
     #expect(snapshot.directorSampleIntervalMilliseconds == 500)
     #expect(snapshot.screenSignalFPS == 8)
+}
+
+@Test
+@MainActor
+func resourceUsageSnapshotReflectsRTMPPublishingResourcePolicies() async {
+    let signalProvider = ConfigurableSignalProvider()
+    let pipeline = ConfigurableMediaPipeline(streamTransport: .rtmpPublish)
+    let store = StudioStore(
+        mediaPipeline: pipeline,
+        signalProvider: signalProvider,
+        preferences: StudioPreferences(performanceMode: .responsive)
+    )
+    store.destination = StreamDestination(name: "RTMP", rtmpURL: "rtmps://live.example.com/app/sk_live_secret")
+    store.startStream()
+    try? await Task.sleep(for: .milliseconds(50))
+
+    let snapshot = store.resourceUsageSnapshot
+
+    #expect(snapshot.previewTargetFPS == StudioPerformanceMode.liveStreamingPreviewConfiguration.framesPerSecond)
+    #expect(snapshot.previewMaxDisplayWidth == StudioPerformanceMode.liveStreamingPreviewConfiguration.maxDisplayWidth)
+    #expect(snapshot.previewQueueDepth == StudioPerformanceMode.liveStreamingPreviewConfiguration.queueDepth)
+    #expect(snapshot.directorSampleIntervalMilliseconds == StudioPerformanceMode.liveStreamingDirectorSampleIntervalMilliseconds)
+    #expect(snapshot.screenSignalFPS == StudioPerformanceMode.liveStreamingSignalSamplingConfiguration.screenMotionFramesPerSecond)
+    #expect(snapshot.streamTargetFPS == 30)
+    #expect(signalProvider.lastConfiguration?.screenMotionFramesPerSecond == 2)
 }
 
 @Test

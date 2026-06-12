@@ -59,6 +59,33 @@ func systemMediaPipelinePlansPublishingAudioTracks() {
 }
 
 @Test
+func systemMediaPipelineClampsPublishingBitrateToPlatformSafeCeiling() {
+    let fullHD = MediaPipelineConfiguration(maxVideoWidth: 1_920, framesPerSecond: 30, videoBitrate: 8_000_000)
+    #expect(SystemMediaPipeline.publishingVideoBitrateCeiling(configuration: fullHD) == 4_000_000)
+    #expect(SystemMediaPipeline.publishingVideoBitrate(configuration: fullHD) == 4_000_000)
+
+    let hd = MediaPipelineConfiguration(maxVideoWidth: 1_280, framesPerSecond: 30, videoBitrate: 8_000_000)
+    #expect(SystemMediaPipeline.publishingVideoBitrateCeiling(configuration: hd) == 2_500_000)
+    #expect(SystemMediaPipeline.publishingVideoBitrate(configuration: hd) == 2_500_000)
+
+    let hdAtLowerFrameRate = MediaPipelineConfiguration(maxVideoWidth: 1_280, framesPerSecond: 24, videoBitrate: 8_000_000)
+    #expect(SystemMediaPipeline.publishingVideoBitrateCeiling(configuration: hdAtLowerFrameRate) == 2_000_000)
+    #expect(SystemMediaPipeline.publishingVideoBitrate(configuration: hdAtLowerFrameRate) == 2_000_000)
+
+    let tiny = MediaPipelineConfiguration(maxVideoWidth: 320, framesPerSecond: 30, videoBitrate: 8_000_000)
+    #expect(SystemMediaPipeline.publishingVideoBitrateCeiling(configuration: tiny) == 625_000)
+    #expect(SystemMediaPipeline.publishingVideoBitrate(configuration: tiny) == 625_000)
+}
+
+@Test
+func systemMediaPipelinePublishingBitrateLeavesAlreadyLowConfigurationsUntouched() {
+    let lowBitrate = MediaPipelineConfiguration(maxVideoWidth: 1_920, framesPerSecond: 30, videoBitrate: 2_000_000)
+
+    #expect(SystemMediaPipeline.publishingVideoBitrateCeiling(configuration: lowBitrate) == 4_000_000)
+    #expect(SystemMediaPipeline.publishingVideoBitrate(configuration: lowBitrate) == 2_000_000)
+}
+
+@Test
 func systemMediaPipelinePublishingAudioTrackPlanHonorsZeroLevels() {
     var configuration = MediaPipelineConfiguration(capturesSystemAudio: false, capturesMicrophone: true)
     var plan = SystemMediaPipeline.publishingAudioTrackPlan(configuration: configuration)

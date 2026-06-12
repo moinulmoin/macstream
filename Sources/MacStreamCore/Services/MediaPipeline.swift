@@ -2022,6 +2022,27 @@ public final class SystemMediaPipeline: NSObject, MediaPipeline, SCStreamOutput,
         configuration.capturesMicrophone && configuration.microphoneLevel > 0
     }
 
+    static func publishingVideoBitrateCeiling(configuration: MediaPipelineConfiguration) -> Int {
+        let width = configuration.maxVideoWidth
+        let frameRateFactor = Double(min(configuration.framesPerSecond, 30)) / 30.0
+        let widthCeiling: Double
+
+        if width >= 1_920 {
+            widthCeiling = 4_000_000
+        } else if width >= 1_280 {
+            let interpolation = Double(width - 1_280) / Double(1_920 - 1_280)
+            widthCeiling = 2_500_000 + (1_500_000 * interpolation)
+        } else {
+            widthCeiling = 2_500_000 * Double(width) / 1_280
+        }
+
+        return Int((widthCeiling * frameRateFactor).rounded(.down))
+    }
+
+    static func publishingVideoBitrate(configuration: MediaPipelineConfiguration) -> Int {
+        min(configuration.videoBitrate, publishingVideoBitrateCeiling(configuration: configuration))
+    }
+
     static func publishingAudioTrackPlan(
         capturesSystemAudio: Bool,
         capturesMicrophone: Bool
@@ -2516,14 +2537,16 @@ private final class HaishinKitRTMPPublisher: RTMPPublisher, @unchecked Sendable 
     func configure(configuration: MediaPipelineConfiguration) async throws {
         let videoWidth = configuration.maxVideoWidth
         let videoHeight = Int((Double(videoWidth) * 9.0 / 16.0).rounded())
+        let videoBitrate = SystemMediaPipeline.publishingVideoBitrate(configuration: configuration)
         try await stream.setVideoSettings(VideoCodecSettings(
             videoSize: CGSize(width: videoWidth, height: videoHeight),
-            bitRate: configuration.videoBitrate,
+            bitRate: videoBitrate,
             profileLevel: kVTProfileLevel_H264_Baseline_AutoLevel as String,
             scalingMode: .letterbox,
             bitRateMode: .average,
             maxKeyFrameIntervalDuration: 2,
             allowFrameReordering: false,
+            dataRateLimits: [Double(videoBitrate) / 8, 1.0],
             isLowLatencyRateControlEnabled: true,
             isHardwareAcceleratedEnabled: true,
             expectedFrameRate: Double(configuration.framesPerSecond)

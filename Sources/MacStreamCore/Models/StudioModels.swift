@@ -526,6 +526,17 @@ public enum StudioPerformanceMode: String, CaseIterable, Codable, Identifiable, 
     case responsive
 
     public var id: String { rawValue }
+    public static let liveStreamingPreviewConfiguration = PreviewCaptureConfiguration(
+        maxDisplayWidth: 640,
+        framesPerSecond: 5,
+        queueDepth: 1
+    )
+
+    public static let liveStreamingSignalSamplingConfiguration = SignalSamplingConfiguration(
+        screenMotionFramesPerSecond: 2
+    )
+
+    public static let liveStreamingDirectorSampleIntervalMilliseconds = 2_000
 
     public var title: String {
         switch self {

@@ -213,7 +213,10 @@ public final class StudioStore {
     public var resourceUsageSnapshot: ResourceUsageSnapshot {
         let mediaConfiguration = currentMediaPipelineConfiguration
         let previewConfiguration = currentPreviewCaptureConfiguration
-        let signalConfiguration = effectivePerformanceMode.signalSamplingConfiguration
+        let signalConfiguration = Self.signalSamplingConfiguration(
+            for: effectivePerformanceMode,
+            isRTMPPublishing: isRTMPPublishing
+        )
 
         return ResourceUsageSnapshot(
             processMemoryMB: systemPressure.memoryUsedMB,
@@ -230,7 +233,10 @@ public final class StudioStore {
             previewTargetFPS: previewConfiguration.framesPerSecond,
             previewMaxDisplayWidth: previewConfiguration.maxDisplayWidth,
             previewQueueDepth: previewConfiguration.queueDepth,
-            directorSampleIntervalMilliseconds: effectivePerformanceMode.directorSampleIntervalMilliseconds,
+            directorSampleIntervalMilliseconds: Self.directorSampleIntervalMilliseconds(
+                for: effectivePerformanceMode,
+                isRTMPPublishing: isRTMPPublishing
+            ),
             screenSignalFPS: signalConfiguration.screenMotionFramesPerSecond
         )
     }
@@ -1468,7 +1474,10 @@ public final class StudioStore {
                 self?.advanceDirectorIfLive()
                 guard !Task.isCancelled else { break }
 
-                let sleepMilliseconds = self?.effectivePerformanceMode.directorSampleIntervalMilliseconds ?? 1_000
+                let sleepMilliseconds = Self.directorSampleIntervalMilliseconds(
+                    for: self?.effectivePerformanceMode,
+                    isRTMPPublishing: self?.isRTMPPublishing ?? false
+                )
                 try? await Task.sleep(for: .milliseconds(sleepMilliseconds))
             }
         }
@@ -1553,7 +1562,10 @@ public final class StudioStore {
                 self?.advanceMediaHealthIfNeeded()
                 guard !Task.isCancelled else { break }
 
-                let sleepMilliseconds = self?.effectivePerformanceMode.directorSampleIntervalMilliseconds ?? 1_000
+                let sleepMilliseconds = Self.directorSampleIntervalMilliseconds(
+                    for: self?.effectivePerformanceMode,
+                    isRTMPPublishing: self?.isRTMPPublishing ?? false
+                )
                 try? await Task.sleep(for: .milliseconds(sleepMilliseconds))
             }
         }
@@ -1720,7 +1732,10 @@ public final class StudioStore {
     }
 
     private func applyPerformanceConfiguration() {
-        var signalConfiguration = effectivePerformanceMode.signalSamplingConfiguration
+        var signalConfiguration = Self.signalSamplingConfiguration(
+            for: effectivePerformanceMode,
+            isRTMPPublishing: isRTMPPublishing
+        )
         signalConfiguration.isMicrophoneEnabled = isSourceEnabled(.microphone)
         signalConfiguration.isScreenMotionEnabled = isSourceEnabled(.screen) && sourceLevel(.screen) > 0
         signalConfiguration.screenCaptureTarget = selectedScreenCaptureTarget
@@ -2456,8 +2471,26 @@ public final class StudioStore {
         isRTMPPublishing: Bool
     ) -> PreviewCaptureConfiguration {
         isRTMPPublishing
-            ? StudioPerformanceMode.efficiency.previewCaptureConfiguration
+            ? StudioPerformanceMode.liveStreamingPreviewConfiguration
             : mode.previewCaptureConfiguration
+    }
+
+    static func signalSamplingConfiguration(
+        for mode: StudioPerformanceMode,
+        isRTMPPublishing: Bool
+    ) -> SignalSamplingConfiguration {
+        isRTMPPublishing
+            ? StudioPerformanceMode.liveStreamingSignalSamplingConfiguration
+            : mode.signalSamplingConfiguration
+    }
+
+    static func directorSampleIntervalMilliseconds(
+        for mode: StudioPerformanceMode?,
+        isRTMPPublishing: Bool
+    ) -> Int {
+        let interval = mode?.directorSampleIntervalMilliseconds ?? 1_000
+        guard isRTMPPublishing else { return interval }
+        return max(interval, StudioPerformanceMode.liveStreamingDirectorSampleIntervalMilliseconds)
     }
 
     static func mediaConfiguration(

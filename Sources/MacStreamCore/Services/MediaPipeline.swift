@@ -2259,7 +2259,12 @@ final class OrderedMediaAppendQueue<Element: Sendable>: @unchecked Sendable {
 #if MAC_STREAM_HAS_HAISHINKIT
 private final class HaishinKitRTMPPublisher: RTMPPublisher, @unchecked Sendable {
     private let target: RTMPPublishTarget
-    private let connection = RTMPConnection()
+    private let connection = RTMPConnection(
+        fourCcList: nil,
+        videoFourCcInfoMap: nil,
+        audioFourCcInfoMap: nil,
+        capsEx: 0
+    )
     private let stream: RTMPStream
     private let mixer = MediaMixer(captureSessionMode: .manual, multiTrackAudioMixingEnabled: true)
 

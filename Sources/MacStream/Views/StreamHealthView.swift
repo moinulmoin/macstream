@@ -36,10 +36,10 @@ struct StreamHealthView: View {
             }
 
             Grid(alignment: .leading, horizontalSpacing: StudioMetrics.lg, verticalSpacing: StudioMetrics.sm) {
-                metric("Bitrate", "\(store.health.bitrateKbps)", "kbps")
+                metric("Publish", store.health.publishState.title, "")
+                metric("TX", "\(store.health.outboundBytesPerSecond)", "B/s")
                 metric("Frames", "\(store.health.droppedFrames)", "dropped")
                 metric("Capture", "\(store.health.captureFPS)", "fps")
-                metric("Latency", "\(store.health.roundTripMs)", "ms")
                 metric("Thermal", store.systemPressure.thermalPressure.title, "")
                 metric("Memory", "\(store.systemPressure.memoryUsedMB)", "MB")
             }
@@ -71,7 +71,7 @@ struct StreamHealthView: View {
             resourceRow(
                 "Stream",
                 "\(resources.streamActualFPS)/\(resources.streamTargetFPS) fps",
-                "\(resources.streamDroppedFrames) drops • \(resources.streamBitrateKbps) kbps • queue \(resources.streamQueueDepth)"
+                "\(resources.streamPublishState.title) • \(resources.streamDroppedFrames) drops • \(resources.streamBitrateKbps) kbps (\(resources.streamOutboundBytesPerSecond) B/s) • queue \(resources.streamQueueDepth)"
             )
             resourceRow(
                 "Preview",

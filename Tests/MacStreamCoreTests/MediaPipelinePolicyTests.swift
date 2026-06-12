@@ -36,6 +36,58 @@ func systemMediaPipelineSkipsZeroLevelAudioSamples() {
 }
 
 @Test
+func systemMediaPipelinePlansPublishingAudioTracks() {
+    var plan = SystemMediaPipeline.publishingAudioTrackPlan(capturesSystemAudio: true, capturesMicrophone: true)
+    #expect(plan.systemAudio == 0)
+    #expect(plan.microphone == 1)
+    #expect(plan.mainTrack == 0)
+
+    plan = SystemMediaPipeline.publishingAudioTrackPlan(capturesSystemAudio: false, capturesMicrophone: true)
+    #expect(plan.systemAudio == nil)
+    #expect(plan.microphone == 0)
+    #expect(plan.mainTrack == 0)
+
+    plan = SystemMediaPipeline.publishingAudioTrackPlan(capturesSystemAudio: true, capturesMicrophone: false)
+    #expect(plan.systemAudio == 0)
+    #expect(plan.microphone == nil)
+    #expect(plan.mainTrack == 0)
+
+    plan = SystemMediaPipeline.publishingAudioTrackPlan(capturesSystemAudio: false, capturesMicrophone: false)
+    #expect(plan.systemAudio == nil)
+    #expect(plan.microphone == nil)
+    #expect(plan.mainTrack == 0)
+}
+
+@Test
+func systemMediaPipelinePublishingAudioTrackPlanHonorsZeroLevels() {
+    var configuration = MediaPipelineConfiguration(capturesSystemAudio: false, capturesMicrophone: true)
+    var plan = SystemMediaPipeline.publishingAudioTrackPlan(configuration: configuration)
+    #expect(plan.systemAudio == nil)
+    #expect(plan.microphone == 0)
+    #expect(plan.mainTrack == 0)
+
+    configuration = MediaPipelineConfiguration(capturesSystemAudio: true, capturesMicrophone: true)
+    configuration.systemAudioLevel = 0
+    plan = SystemMediaPipeline.publishingAudioTrackPlan(configuration: configuration)
+    #expect(plan.systemAudio == nil)
+    #expect(plan.microphone == 0)
+    #expect(plan.mainTrack == 0)
+
+    configuration.systemAudioLevel = 1
+    configuration.microphoneLevel = 0
+    plan = SystemMediaPipeline.publishingAudioTrackPlan(configuration: configuration)
+    #expect(plan.systemAudio == 0)
+    #expect(plan.microphone == nil)
+    #expect(plan.mainTrack == 0)
+
+    configuration.systemAudioLevel = 0
+    plan = SystemMediaPipeline.publishingAudioTrackPlan(configuration: configuration)
+    #expect(plan.systemAudio == nil)
+    #expect(plan.microphone == nil)
+    #expect(plan.mainTrack == 0)
+}
+
+@Test
 func systemMediaPipelinePublishesOnlyFromPublishingCaptureOutputs() {
     #expect(SystemMediaPipeline.shouldPublishStreamSample(isPublishingStream: true, hasPublisher: true))
     #expect(!SystemMediaPipeline.shouldPublishStreamSample(isPublishingStream: false, hasPublisher: true))
@@ -61,6 +113,37 @@ func systemMediaPipelinePublishesOnlyFromPublishingCaptureOutputs() {
     #expect(!SystemMediaPipeline.shouldPublishCompositedVideoSample(sceneKind: .screenOnly))
     #expect(!SystemMediaPipeline.shouldPublishCompositedVideoSample(sceneKind: .face))
     #expect(!SystemMediaPipeline.shouldPublishCompositedVideoSample(sceneKind: .brb))
+}
+
+@Test
+func rtmpPublisherStatusEventsMapToPublishStateAndFailures() {
+    let connected = RTMPPublisherEvent.connectionStatus(code: "NetConnection.Connect.Success", level: "status")
+    let publishing = RTMPPublisherEvent.streamStatus(code: "NetStream.Publish.Start", level: "status")
+    let badName = RTMPPublisherEvent.streamStatus(code: "NetStream.Publish.BadName", level: "error")
+    let closed = RTMPPublisherEvent.connectionStatus(code: "NetConnection.Connect.Closed", level: "status")
+    let failed = RTMPPublisherEvent.connectionStatus(code: "NetConnection.Connect.Failed", level: "error")
+    let unpublished = RTMPPublisherEvent.streamStatus(code: "NetStream.Unpublish.Success", level: "status")
+
+    #expect(connected.publishState == .handshaking)
+    #expect(publishing.publishState == .publishing)
+    #expect(badName.publishState == .disconnected)
+    #expect(closed.publishState == .disconnected)
+    #expect(failed.publishState == .disconnected)
+    #expect(unpublished.publishState == .disconnected)
+    #expect(publishing.failureReason == nil)
+    #expect(badName.failureReason != nil)
+    #expect(closed.failureReason != nil)
+    #expect(failed.failureReason != nil)
+    #expect(unpublished.failureReason != nil)
+}
+
+@Test
+func rtmpByteDeltaComputesOutboundThroughput() {
+    #expect(SystemMediaPipeline.outboundBytesPerSecond(byteDelta: 3_000, elapsed: 1.5) == 2_000)
+    #expect(SystemMediaPipeline.outboundBitrateKbps(bytesPerSecond: 125_000) == 1_000)
+    #expect(SystemMediaPipeline.outboundBytesPerSecond(byteDelta: 0, elapsed: 1) == 0)
+    #expect(SystemMediaPipeline.outboundBytesPerSecond(byteDelta: 100, elapsed: 0) == 0)
+    #expect(SystemMediaPipeline.outboundBitrateKbps(bytesPerSecond: 0) == 0)
 }
 
 @Test
@@ -112,6 +195,24 @@ func systemMediaPipelineReportsRecordingWriterFailureDetail() {
     #expect(SystemMediaPipeline.writerFailureDetail(status: .completed, errorDescription: "disk full") == nil)
     #expect(SystemMediaPipeline.writerFailureDetail(status: .cancelled, errorDescription: "disk full") == nil)
     #expect(SystemMediaPipeline.writerFailureDetail(status: .unknown, errorDescription: "disk full") == nil)
+}
+
+@Test
+func systemMediaPipelineCapsPublishingCaptureFPSAtRTMPTarget() {
+    let responsive = MediaPipelineConfiguration(maxVideoWidth: 1_920, framesPerSecond: 60, queueDepth: 5)
+    let capped = SystemMediaPipeline.publishingCaptureMediaConfiguration(for: responsive)
+
+    #expect(capped.framesPerSecond == 30)
+
+    let geometry = MediaCaptureGeometry(sourceWidth: 3_024, sourceHeight: 1_964, maxVideoWidth: 1_920)
+    let streamConfiguration = SystemMediaPipeline.publishingStreamConfiguration(
+        geometry: geometry,
+        mediaConfiguration: responsive
+    )
+    #expect(streamConfiguration.minimumFrameInterval == CMTime(value: 1, timescale: 30))
+
+    let efficiency = MediaPipelineConfiguration(maxVideoWidth: 1_280, framesPerSecond: 24, queueDepth: 3)
+    #expect(SystemMediaPipeline.publishingCaptureMediaConfiguration(for: efficiency).framesPerSecond == 24)
 }
 
 @Test

@@ -211,8 +211,8 @@ public final class StudioStore {
     }
 
     public var resourceUsageSnapshot: ResourceUsageSnapshot {
-        let mediaConfiguration = effectivePerformanceMode.mediaConfiguration
-        let previewConfiguration = effectivePerformanceMode.previewCaptureConfiguration
+        let mediaConfiguration = currentMediaPipelineConfiguration
+        let previewConfiguration = currentPreviewCaptureConfiguration
         let signalConfiguration = effectivePerformanceMode.signalSamplingConfiguration
 
         return ResourceUsageSnapshot(
@@ -224,6 +224,8 @@ public final class StudioStore {
             streamActualFPS: health.captureFPS,
             streamDroppedFrames: health.droppedFrames,
             streamBitrateKbps: health.bitrateKbps,
+            streamOutboundBytesPerSecond: health.outboundBytesPerSecond,
+            streamPublishState: health.publishState,
             streamQueueDepth: mediaConfiguration.queueDepth,
             previewTargetFPS: previewConfiguration.framesPerSecond,
             previewMaxDisplayWidth: previewConfiguration.maxDisplayWidth,
@@ -232,6 +234,13 @@ public final class StudioStore {
             screenSignalFPS: signalConfiguration.screenMotionFramesPerSecond
         )
     }
+    public var currentPreviewCaptureConfiguration: PreviewCaptureConfiguration {
+        Self.previewCaptureConfiguration(
+            for: effectivePerformanceMode,
+            isRTMPPublishing: isRTMPPublishing
+        )
+    }
+
 
     public var startBlockedReason: String? {
         streamStartBlockedReason
@@ -672,7 +681,7 @@ public final class StudioStore {
             case .endpointValidation:
                 "Endpoint reachable"
             case .rtmpPublish:
-                "Publishing media"
+                health.publishState == .publishing ? "Publishing media" : health.publishState.title
             }
         case let .degraded(reason):
             reason
@@ -795,9 +804,9 @@ public final class StudioStore {
         streamStartMaxAttempts = retryPolicy.maxAttempts
         prepareCaptureSessionIfIdle()
         sampleSystemPressure()
-        applyPerformanceConfiguration()
         streamTransport = Self.streamTransport(for: startDestination, pipelineTransport: mediaPipeline.streamTransport)
         streamState = .connecting
+        applyPerformanceConfiguration()
         cancelSetupGenerationIfNeeded(
             reason: startDestination.isPreviewSession
                 ? "Stop preview before generating local setup rules."
@@ -823,9 +832,11 @@ public final class StudioStore {
                     title: "Session started",
                     detail: startDestination.safeDisplayDetail
                 )
+                let mediaConfiguration = currentMediaPipelineConfiguration
                 health = mediaPipeline.currentHealth ?? StreamHealth(
-                    bitrateKbps: effectivePerformanceMode.mediaConfiguration.videoBitrate / 1_000,
-                    captureFPS: effectivePerformanceMode.mediaConfiguration.framesPerSecond,
+                    bitrateKbps: streamTransport == .rtmpPublish ? 0 : mediaConfiguration.videoBitrate / 1_000,
+                    publishState: streamTransport == .rtmpPublish ? .handshaking : .publishing,
+                    captureFPS: mediaConfiguration.framesPerSecond,
                     audioLevel: 0.42,
                     roundTripMs: 42
                 )
@@ -841,6 +852,7 @@ public final class StudioStore {
                 streamStartTask = nil
                 streamStartID = nil
                 streamState = .failed(error.localizedDescription)
+                applyPerformanceConfiguration()
                 health = StreamHealth()
                 resetCaptureHealthPressure()
                 cancelPendingAutoCue()
@@ -867,6 +879,7 @@ public final class StudioStore {
             await mediaPipeline.stopStream()
             isStreamStopping = false
             streamState = .offline
+            applyPerformanceConfiguration()
             health = StreamHealth()
             resetCaptureHealthPressure()
             syncMediaHealthLoop()
@@ -1552,7 +1565,7 @@ public final class StudioStore {
     }
 
     private func advanceMediaHealthIfNeeded() {
-        if handleRecordingFailureIfNeeded() {
+        if handleStreamFailureIfNeeded() || handleRecordingFailureIfNeeded() {
             return
         }
 
@@ -1576,6 +1589,35 @@ public final class StudioStore {
         addWarningEventIfNeeded(title: "Recording failed", detail: detail)
         if canStopRecording {
             stopRecording()
+        }
+        return true
+    }
+
+    @discardableResult
+    private func handleStreamFailureIfNeeded() -> Bool {
+        guard streamState.isLive,
+              !isStreamStopping,
+              let detail = mediaPipeline.streamFailureDetail
+        else {
+            return false
+        }
+
+        let shouldStopOwnedRecording = recordingOwnedByStream
+        addWarningEventIfNeeded(title: "Stream failed", detail: detail)
+        isStreamStopping = true
+        streamState = .failed(detail)
+        health = StreamHealth()
+        resetCaptureHealthPressure()
+        cancelPendingAutoCue()
+        stopDirectorLoop()
+        Task {
+            await mediaPipeline.stopStream()
+            isStreamStopping = false
+            syncMediaHealthLoop()
+            if shouldStopOwnedRecording {
+                stopRecording()
+            }
+            endCaptureSessionIfIdle()
         }
         return true
     }
@@ -1687,7 +1729,7 @@ public final class StudioStore {
             lastAppliedSignalConfiguration = signalConfiguration
         }
 
-        var mediaConfiguration = effectivePerformanceMode.mediaConfiguration
+        var mediaConfiguration = currentMediaPipelineConfiguration
         let systemAudioLevel = sourceLevel(.systemAudio)
         let microphoneLevel = sourceLevel(.microphone)
         mediaConfiguration.systemAudioLevel = systemAudioLevel
@@ -1699,6 +1741,10 @@ public final class StudioStore {
         mediaConfiguration.cameraEnhancements = preferences.cameraEnhancements
         mediaConfiguration.cameraDeviceID = selectedCameraDeviceID
         mediaConfiguration.microphoneDeviceID = selectedMicrophoneDeviceID
+        mediaConfiguration = Self.mediaConfiguration(
+            mediaConfiguration,
+            constrainedForRTMPPublishing: isRTMPPublishing
+        )
         if mediaConfiguration != lastAppliedMediaConfiguration {
             mediaPipeline.update(configuration: mediaConfiguration)
             lastAppliedMediaConfiguration = mediaConfiguration
@@ -2297,11 +2343,14 @@ public final class StudioStore {
     }
 
     private func refreshStreamHealth() {
-        _ = handleRecordingFailureIfNeeded()
+        if handleStreamFailureIfNeeded() || handleRecordingFailureIfNeeded() {
+            return
+        }
+        let mediaConfiguration = currentMediaPipelineConfiguration
         if var pipelineHealth = mediaPipeline.currentHealth {
             pipelineHealth.audioLevel = latestSignals.speechLevel
             if pipelineHealth.captureFPS == 0 {
-                pipelineHealth.captureFPS = effectivePerformanceMode.mediaConfiguration.framesPerSecond
+                pipelineHealth.captureFPS = mediaConfiguration.framesPerSecond
             }
             health = pipelineHealth
             applyCaptureHealthPressure()
@@ -2309,10 +2358,12 @@ public final class StudioStore {
         }
 
         health.audioLevel = latestSignals.speechLevel
-        health.bitrateKbps = streamState.isLive
-            ? (effectivePerformanceMode.mediaConfiguration.videoBitrate / 1_000) + Int(latestSignals.screenMotion * 350)
+        health.bitrateKbps = streamState.isLive && streamTransport != .rtmpPublish
+            ? (mediaConfiguration.videoBitrate / 1_000) + Int(latestSignals.screenMotion * 350)
             : 0
-        health.captureFPS = effectivePerformanceMode.mediaConfiguration.framesPerSecond
+        health.outboundBytesPerSecond = 0
+        health.publishState = streamState.isLive ? .publishing : .disconnected
+        health.captureFPS = mediaConfiguration.framesPerSecond
         health.droppedFrames = latestSignals.isScreenFrozen ? health.droppedFrames + 12 : max(health.droppedFrames - 1, 0)
         applyCaptureHealthPressure()
     }
@@ -2380,10 +2431,43 @@ public final class StudioStore {
 
     private var captureHealthTargetFPS: Int {
         if preferences.performanceMode == .adaptive {
-            return StudioPerformanceMode.balanced.mediaConfiguration.framesPerSecond
+            return Self.mediaConfiguration(
+                StudioPerformanceMode.balanced.mediaConfiguration,
+                constrainedForRTMPPublishing: isRTMPPublishing
+            ).framesPerSecond
         }
 
-        return effectivePerformanceMode.mediaConfiguration.framesPerSecond
+        return currentMediaPipelineConfiguration.framesPerSecond
+    }
+
+    private var currentMediaPipelineConfiguration: MediaPipelineConfiguration {
+        Self.mediaConfiguration(
+            effectivePerformanceMode.mediaConfiguration,
+            constrainedForRTMPPublishing: isRTMPPublishing
+        )
+    }
+
+    private var isRTMPPublishing: Bool {
+        streamTransport == .rtmpPublish && (isStreamConnecting || streamState.isLive)
+    }
+
+    static func previewCaptureConfiguration(
+        for mode: StudioPerformanceMode,
+        isRTMPPublishing: Bool
+    ) -> PreviewCaptureConfiguration {
+        isRTMPPublishing
+            ? StudioPerformanceMode.efficiency.previewCaptureConfiguration
+            : mode.previewCaptureConfiguration
+    }
+
+    static func mediaConfiguration(
+        _ configuration: MediaPipelineConfiguration,
+        constrainedForRTMPPublishing isRTMPPublishing: Bool
+    ) -> MediaPipelineConfiguration {
+        guard isRTMPPublishing else { return configuration }
+        var constrainedConfiguration = configuration
+        constrainedConfiguration.framesPerSecond = min(configuration.framesPerSecond, 30)
+        return constrainedConfiguration
     }
 
     private func setHealthDegradation(_ reason: String) {

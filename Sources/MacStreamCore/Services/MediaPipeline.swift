@@ -1,4 +1,5 @@
 import Foundation
+import OSLog
 @preconcurrency import AVFoundation
 import CoreGraphics
 import CoreImage
@@ -15,6 +16,7 @@ public protocol MediaPipeline: Sendable {
     var streamTransport: StreamTransportKind { get }
     var currentHealth: StreamHealth? { get }
     var recordingFailureDetail: String? { get }
+    var streamFailureDetail: String? { get }
     var captureSetupWarnings: [String] { get }
     var requiresCaptureReadinessForStart: Bool { get }
     var requiresScreenCaptureVideoForStream: Bool { get }
@@ -33,6 +35,7 @@ public extension MediaPipeline {
     var streamTransport: StreamTransportKind { .endpointValidation }
     var currentHealth: StreamHealth? { nil }
     var recordingFailureDetail: String? { nil }
+    var streamFailureDetail: String? { nil }
     var captureSetupWarnings: [String] { [] }
     var requiresCaptureReadinessForStart: Bool { false }
     var requiresScreenCaptureVideoForStream: Bool { false }
@@ -396,6 +399,7 @@ public final class SystemMediaPipeline: NSObject, MediaPipeline, SCStreamOutput,
     private var audioInput: AVAssetWriterInput?
     private var microphoneInput: AVAssetWriterInput?
     private var recordingFailureReason: String?
+    private var streamFailureReason: String?
     private var setupWarnings: [String] = []
     private var rtmpPublisher: RTMPPublisher?
     private var videoCompositor: RecordingVideoCompositor?
@@ -413,6 +417,11 @@ public final class SystemMediaPipeline: NSObject, MediaPipeline, SCStreamOutput,
     private var frameWindowCount = 0
     private var firstPublishingVideoContinuation: CheckedContinuation<Void, any Error>?
     private var didPublishFirstVideoFrame = false
+    private var rtmpPublisherEventTask: Task<Void, Never>?
+    private var rtmpPublisherHealthTask: Task<Void, Never>?
+    private var lastRTMPByteCount: Int64?
+    private var lastRTMPByteSampledAt: Date?
+    private var publishingAudioTrackPlan: (systemAudio: UInt8?, microphone: UInt8?, mainTrack: UInt8) = (nil, nil, 0)
 
     public override init() {
         self.rtmpPublisherFactory = Self.makeRTMPPublisher
@@ -441,6 +450,10 @@ public final class SystemMediaPipeline: NSObject, MediaPipeline, SCStreamOutput,
     public var recordingFailureDetail: String? {
         queue.sync { recordingFailureReason }
     }
+    public var streamFailureDetail: String? {
+        queue.sync { streamFailureReason }
+    }
+
 
     public var captureSetupWarnings: [String] {
         queue.sync { setupWarnings }
@@ -474,6 +487,7 @@ public final class SystemMediaPipeline: NSObject, MediaPipeline, SCStreamOutput,
         #endif
     }
 
+    private static let rtmpLogger = Logger(subsystem: "com.ideaplexa.macstream", category: "rtmp")
     private static let firstPublishingVideoFrameTimeout: Duration = .seconds(8)
 
     static let sharesMicrophoneCaptureBetweenStreamAndRecording = true
@@ -522,6 +536,7 @@ public final class SystemMediaPipeline: NSObject, MediaPipeline, SCStreamOutput,
         let target = try destination.rtmpPublishTarget()
         let publisher = rtmpPublisherFactory(target)
         try await publisher.configure(configuration: mediaConfiguration)
+        startRTMPPublisherObservation(for: publisher)
 
         do {
             try await publisher.connect()
@@ -538,6 +553,7 @@ public final class SystemMediaPipeline: NSObject, MediaPipeline, SCStreamOutput,
                 }
             }
         } catch {
+            stopRTMPPublisherObservation()
             await publisher.close()
             throw error
         }
@@ -561,6 +577,12 @@ public final class SystemMediaPipeline: NSObject, MediaPipeline, SCStreamOutput,
             }
 
             rtmpPublisher = nil
+            publishingAudioTrackPlan = (nil, nil, 0)
+            rtmpPublisherEventTask?.cancel()
+            rtmpPublisherEventTask = nil
+            rtmpPublisherHealthTask?.cancel()
+            rtmpPublisherHealthTask = nil
+            streamFailureReason = nil
             publishingStream = nil
             publishingCaptureGeometry = nil
             publishingCameraSession = nil
@@ -575,8 +597,14 @@ public final class SystemMediaPipeline: NSObject, MediaPipeline, SCStreamOutput,
             firstPublishingVideoContinuation?.resume(throwing: CancellationError())
             firstPublishingVideoContinuation = nil
             didPublishFirstVideoFrame = false
+            lastRTMPByteCount = nil
+            lastRTMPByteSampledAt = nil
             if self.stream == nil, self.writer == nil {
                 self.mediaHealth = StreamHealth()
+            } else {
+                self.mediaHealth.publishState = .disconnected
+                self.mediaHealth.outboundBytesPerSecond = 0
+                self.mediaHealth.bitrateKbps = 0
             }
             return PublishingCaptureState(
                 stream: stream,
@@ -1070,9 +1098,7 @@ public final class SystemMediaPipeline: NSObject, MediaPipeline, SCStreamOutput,
             maxWidth: mediaConfiguration.maxVideoWidth,
             unavailableReason: "No display or window is available for RTMP publishing."
         )
-        let configuration = SCStreamConfiguration()
-        Self.configureStream(
-            configuration,
+        let configuration = Self.publishingStreamConfiguration(
             geometry: selection.geometry,
             mediaConfiguration: mediaConfiguration
         )
@@ -1131,6 +1157,8 @@ public final class SystemMediaPipeline: NSObject, MediaPipeline, SCStreamOutput,
             ownsMicrophoneSession = false
         }
 
+        let audioTrackPlan = Self.publishingAudioTrackPlan(configuration: mediaConfiguration)
+
         try Task.checkCancellation()
 
         queue.sync {
@@ -1140,6 +1168,7 @@ public final class SystemMediaPipeline: NSObject, MediaPipeline, SCStreamOutput,
             self.publishingCameraOutput = cameraCapture?.output
             self.publishingMicrophoneSession = microphoneSession
             self.publishingMicrophoneOutput = microphoneOutput
+            self.publishingAudioTrackPlan = audioTrackPlan
             self.publishingVideoCompositor = publishingVideoCompositor
             self.publishingPixelBufferPool = publishingPixelBufferPool
             self.publishingVideoFormatDescriptionCache = nil
@@ -1169,6 +1198,7 @@ public final class SystemMediaPipeline: NSObject, MediaPipeline, SCStreamOutput,
                     self.publishingPixelBufferPool = nil
                     self.publishingVideoFormatDescriptionCache = nil
                     self.latestPublishingCameraPixelBuffer = nil
+                    self.publishingAudioTrackPlan = (nil, nil, 0)
                 }
                 if self.publishingMicrophoneSession === microphoneSession {
                     self.publishingMicrophoneSession = nil
@@ -1228,7 +1258,7 @@ public final class SystemMediaPipeline: NSObject, MediaPipeline, SCStreamOutput,
         if let publishingStream, let publishingCaptureGeometry {
             updates.append(ActiveStreamConfigurationUpdate(
                 stream: publishingStream,
-                configuration: Self.streamConfiguration(
+                configuration: Self.publishingStreamConfiguration(
                     geometry: publishingCaptureGeometry,
                     mediaConfiguration: configuration
                 )
@@ -1369,9 +1399,11 @@ public final class SystemMediaPipeline: NSObject, MediaPipeline, SCStreamOutput,
                     recordDroppedFrameIfNeeded(outputType)
                 }
             case .audio:
-                guard Self.shouldProcessSystemAudioSample(configuration: mediaConfiguration) else { return }
+                guard Self.shouldProcessSystemAudioSample(configuration: mediaConfiguration),
+                      let track = publishingAudioTrackPlan.systemAudio
+                else { return }
                 if Self.shouldPublishStreamSample(isPublishingStream: isPublishingStream, hasPublisher: rtmpPublisher != nil) {
-                    _ = publish(sampleBuffer, track: 0)
+                    _ = publish(sampleBuffer, track: track)
                 }
             case .microphone:
                 break
@@ -1444,6 +1476,94 @@ public final class SystemMediaPipeline: NSObject, MediaPipeline, SCStreamOutput,
         @unknown default:
             break
         }
+    }
+
+    private func startRTMPPublisherObservation(for publisher: any RTMPPublisher) {
+        let events = publisher.events
+        let eventTask = Task { [weak self] in
+            for await event in events {
+                Self.rtmpLogger.info("RTMP status \(event.statusCode, privacy: .public)")
+                self?.handleRTMPPublisherEvent(event, publisher: publisher)
+            }
+        }
+        let healthTask = Task { [weak self] in
+            while !Task.isCancelled {
+                await self?.sampleRTMPThroughput(from: publisher)
+                try? await Task.sleep(for: .seconds(1))
+            }
+        }
+
+        queue.sync {
+            self.rtmpPublisherEventTask?.cancel()
+            self.rtmpPublisherHealthTask?.cancel()
+            self.rtmpPublisherEventTask = eventTask
+            self.rtmpPublisherHealthTask = healthTask
+            self.streamFailureReason = nil
+            self.lastRTMPByteCount = nil
+            self.lastRTMPByteSampledAt = nil
+            self.mediaHealth.publishState = .handshaking
+            self.mediaHealth.outboundBytesPerSecond = 0
+            self.mediaHealth.bitrateKbps = 0
+        }
+    }
+
+    private func stopRTMPPublisherObservation() {
+        queue.sync {
+            self.rtmpPublisherEventTask?.cancel()
+            self.rtmpPublisherEventTask = nil
+            self.rtmpPublisherHealthTask?.cancel()
+            self.rtmpPublisherHealthTask = nil
+            self.lastRTMPByteCount = nil
+            self.lastRTMPByteSampledAt = nil
+            self.mediaHealth.publishState = .disconnected
+            self.mediaHealth.outboundBytesPerSecond = 0
+            self.mediaHealth.bitrateKbps = 0
+        }
+    }
+
+    private func handleRTMPPublisherEvent(_ event: RTMPPublisherEvent, publisher: any RTMPPublisher) {
+        queue.sync {
+            if let publishState = event.publishState {
+                self.mediaHealth.publishState = publishState
+            }
+            guard self.rtmpPublisher === publisher || self.rtmpPublisher == nil else {
+                return
+            }
+            if let failureReason = event.failureReason {
+                self.streamFailureReason = failureReason
+                self.mediaHealth.publishState = .disconnected
+            }
+        }
+    }
+
+    private func sampleRTMPThroughput(from publisher: any RTMPPublisher) async {
+        let byteCount = await publisher.currentByteCount()
+        let sampledAt = Date()
+        queue.sync {
+            guard self.rtmpPublisher === publisher else { return }
+
+            if let previousByteCount = self.lastRTMPByteCount,
+               let previousSampledAt = self.lastRTMPByteSampledAt {
+                let byteDelta = max(0, byteCount - previousByteCount)
+                let elapsed = sampledAt.timeIntervalSince(previousSampledAt)
+                let bytesPerSecond = Self.outboundBytesPerSecond(byteDelta: byteDelta, elapsed: elapsed)
+                self.mediaHealth.outboundBytesPerSecond = bytesPerSecond
+                self.mediaHealth.bitrateKbps = Self.outboundBitrateKbps(bytesPerSecond: bytesPerSecond)
+            }
+
+            self.lastRTMPByteCount = byteCount
+            self.lastRTMPByteSampledAt = sampledAt
+        }
+    }
+
+    static func outboundBytesPerSecond(byteDelta: Int64, elapsed: TimeInterval) -> Int64 {
+        guard byteDelta > 0, elapsed > 0 else { return 0 }
+        return Int64((Double(byteDelta) / elapsed).rounded())
+    }
+
+    static func outboundBitrateKbps(bytesPerSecond: Int64) -> Int {
+        guard bytesPerSecond > 0 else { return 0 }
+        return Int((Double(bytesPerSecond) * 8 / 1_000).rounded())
     }
 
     private func waitForFirstPublishingVideoFrame() async throws {
@@ -1610,7 +1730,8 @@ public final class SystemMediaPipeline: NSObject, MediaPipeline, SCStreamOutput,
 
     private func resetHealth(using configuration: MediaPipelineConfiguration) {
         mediaHealth = StreamHealth(
-            bitrateKbps: configuration.videoBitrate / 1_000,
+            bitrateKbps: 0,
+            publishState: .handshaking,
             captureFPS: 0
         )
         frameWindowStartedAt = Date()
@@ -1728,6 +1849,24 @@ public final class SystemMediaPipeline: NSObject, MediaPipeline, SCStreamOutput,
             mediaConfiguration: mediaConfiguration
         )
         return configuration
+    }
+
+    static func publishingStreamConfiguration(
+        geometry: MediaCaptureGeometry,
+        mediaConfiguration: MediaPipelineConfiguration
+    ) -> SCStreamConfiguration {
+        streamConfiguration(
+            geometry: geometry,
+            mediaConfiguration: publishingCaptureMediaConfiguration(for: mediaConfiguration)
+        )
+    }
+
+    static func publishingCaptureMediaConfiguration(
+        for configuration: MediaPipelineConfiguration
+    ) -> MediaPipelineConfiguration {
+        var captureConfiguration = configuration
+        captureConfiguration.framesPerSecond = min(configuration.framesPerSecond, 30)
+        return captureConfiguration
     }
 
     private static func configureStream(
@@ -1859,8 +1998,8 @@ public final class SystemMediaPipeline: NSObject, MediaPipeline, SCStreamOutput,
         if Self.shouldPublishMicrophoneOutputSample(
             isPublishingOutput: isPublishingMicrophoneOutput(output),
             hasPublisher: rtmpPublisher != nil
-        ) {
-            _ = publish(sampleBuffer, track: 1)
+        ), let track = publishingAudioTrackPlan.microphone {
+            _ = publish(sampleBuffer, track: track)
         }
 
         guard let writer,
@@ -1881,6 +2020,30 @@ public final class SystemMediaPipeline: NSObject, MediaPipeline, SCStreamOutput,
 
     static func shouldProcessMicrophoneAudioSample(configuration: MediaPipelineConfiguration) -> Bool {
         configuration.capturesMicrophone && configuration.microphoneLevel > 0
+    }
+
+    static func publishingAudioTrackPlan(
+        capturesSystemAudio: Bool,
+        capturesMicrophone: Bool
+    ) -> (systemAudio: UInt8?, microphone: UInt8?, mainTrack: UInt8) {
+        let systemAudioTrack: UInt8? = capturesSystemAudio ? 0 : nil
+        let microphoneTrack: UInt8?
+        if capturesMicrophone {
+            microphoneTrack = capturesSystemAudio ? 1 : 0
+        } else {
+            microphoneTrack = nil
+        }
+        let mainTrack = systemAudioTrack ?? microphoneTrack ?? 0
+        return (systemAudioTrack, microphoneTrack, mainTrack)
+    }
+
+    static func publishingAudioTrackPlan(
+        configuration: MediaPipelineConfiguration
+    ) -> (systemAudio: UInt8?, microphone: UInt8?, mainTrack: UInt8) {
+        publishingAudioTrackPlan(
+            capturesSystemAudio: shouldProcessSystemAudioSample(configuration: configuration),
+            capturesMicrophone: shouldProcessMicrophoneAudioSample(configuration: configuration)
+        )
     }
 
     static func shouldProcessMicrophoneOutputSample(
@@ -2135,19 +2298,73 @@ private extension CMSampleBuffer {
     }
 }
 
+enum RTMPPublisherEvent: Equatable, Sendable {
+    case connectionStatus(code: String, level: String)
+    case streamStatus(code: String, level: String)
+
+    var statusCode: String {
+        switch self {
+        case let .connectionStatus(code, _), let .streamStatus(code, _):
+            code
+        }
+    }
+
+    var publishState: RTMPPublishState? {
+        switch statusCode {
+        case "NetConnection.Connect.Success":
+            .handshaking
+        case "NetStream.Publish.Start":
+            .publishing
+        case "NetConnection.Connect.Closed",
+             "NetConnection.Connect.Failed",
+             "NetStream.Publish.BadName",
+             "NetStream.Unpublish.Success":
+            .disconnected
+        default:
+            nil
+        }
+    }
+
+    var failureReason: String? {
+        switch statusCode {
+        case "NetConnection.Connect.Closed":
+            "RTMP connection closed by the server."
+        case "NetConnection.Connect.Failed":
+            "RTMP connection failed."
+        case "NetStream.Publish.BadName":
+            "RTMP publish was rejected because the stream name or key is invalid."
+        case "NetStream.Unpublish.Success":
+            "RTMP publishing was unpublished by the server."
+        default:
+            nil
+        }
+    }
+}
+
 protocol RTMPPublisher: AnyObject, Sendable {
+    var events: AsyncStream<RTMPPublisherEvent> { get }
+
     func configure(configuration: MediaPipelineConfiguration) async throws
     func connect() async throws
     func append(_ sampleBuffer: CMSampleBuffer, track: UInt8) -> Bool
+    func currentByteCount() async -> Int64
     func close() async
 }
 
 extension RTMPPublisher {
+    var events: AsyncStream<RTMPPublisherEvent> {
+        AsyncStream { continuation in
+            continuation.finish()
+        }
+    }
+
     func configure(configuration: MediaPipelineConfiguration) async throws {}
 
     func append(_ sampleBuffer: CMSampleBuffer) -> Bool {
         append(sampleBuffer, track: 0)
     }
+
+    func currentByteCount() async -> Int64 { 0 }
 }
 
 final class RTMPAppendBackpressureGate: @unchecked Sendable {
@@ -2267,6 +2484,9 @@ private final class HaishinKitRTMPPublisher: RTMPPublisher, @unchecked Sendable 
     )
     private let stream: RTMPStream
     private let mixer = MediaMixer(captureSessionMode: .manual, multiTrackAudioMixingEnabled: true)
+    private let eventStream: AsyncStream<RTMPPublisherEvent>
+    private let eventContinuation: AsyncStream<RTMPPublisherEvent>.Continuation
+    private var statusTasks: [Task<Void, Never>] = []
 
     private struct PendingMediaAppend: @unchecked Sendable {
         var sampleBuffer: CMSampleBuffer
@@ -2279,7 +2499,17 @@ private final class HaishinKitRTMPPublisher: RTMPPublisher, @unchecked Sendable 
 
     init(target: RTMPPublishTarget) {
         self.target = target
+        let events = AsyncStream.makeStream(
+            of: RTMPPublisherEvent.self,
+            bufferingPolicy: .unbounded
+        )
+        self.eventStream = events.stream
+        self.eventContinuation = events.continuation
         self.stream = RTMPStream(connection: connection, fcPublishName: target.streamName)
+    }
+
+    var events: AsyncStream<RTMPPublisherEvent> {
+        eventStream
     }
 
 
@@ -2311,15 +2541,24 @@ private final class HaishinKitRTMPPublisher: RTMPPublisher, @unchecked Sendable 
         videoMixerSettings.mainTrack = 0
         await mixer.setVideoMixerSettings(videoMixerSettings)
 
+        let audioTrackPlan = SystemMediaPipeline.publishingAudioTrackPlan(configuration: configuration)
         var audioMixerSettings = AudioMixerSettings(sampleRate: 48_000, channels: 2)
-        audioMixerSettings.tracks[0] = .default
-        audioMixerSettings.tracks[1] = .default
+        audioMixerSettings.mainTrack = audioTrackPlan.mainTrack
+        if let systemAudioTrack = audioTrackPlan.systemAudio {
+            audioMixerSettings.tracks[systemAudioTrack] = .default
+        }
+        if let microphoneTrack = audioTrackPlan.microphone {
+            audioMixerSettings.tracks[microphoneTrack] = .default
+        }
         await mixer.setAudioMixerSettings(audioMixerSettings)
         await mixer.addOutput(stream)
         await mixer.startRunning()
     }
 
     func connect() async throws {
+        let connectionStatus = await connection.status
+        let streamStatus = await stream.status
+        startStatusTasks(connectionStatus: connectionStatus, streamStatus: streamStatus)
         _ = try await connection.connect(target.connectionURL)
         _ = try await stream.publish(target.streamName, type: .live)
     }
@@ -2327,13 +2566,39 @@ private final class HaishinKitRTMPPublisher: RTMPPublisher, @unchecked Sendable 
     func append(_ sampleBuffer: CMSampleBuffer, track: UInt8) -> Bool {
         appendQueue.enqueue(PendingMediaAppend(sampleBuffer: sampleBuffer, track: track))
     }
+    func currentByteCount() async -> Int64 {
+        await Int64(stream.info.byteCount)
+    }
+
+    private func startStatusTasks(
+        connectionStatus: AsyncStream<RTMPStatus>,
+        streamStatus: AsyncStream<RTMPStatus>
+    ) {
+        guard statusTasks.isEmpty else { return }
+        statusTasks = [
+            Task { [eventContinuation] in
+                for await status in connectionStatus {
+                    eventContinuation.yield(.connectionStatus(code: status.code, level: status.level))
+                }
+            },
+            Task { [eventContinuation] in
+                for await status in streamStatus {
+                    eventContinuation.yield(.streamStatus(code: status.code, level: status.level))
+                }
+            }
+        ]
+    }
+
 
     func close() async {
         await appendQueue.closeAndWait()
+        statusTasks.forEach { $0.cancel() }
+        statusTasks.removeAll()
         await mixer.removeOutput(stream)
         await mixer.stopRunning()
         _ = try? await stream.close()
         _ = try? await connection.close()
+        eventContinuation.finish()
     }
 }
 #endif

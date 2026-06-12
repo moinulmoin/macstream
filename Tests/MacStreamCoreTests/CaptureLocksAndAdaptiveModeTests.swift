@@ -164,6 +164,34 @@ func adaptivePerformanceModeUsesEfficiencyUnderPressure() {
 
 @Test
 @MainActor
+func studioStoreDownshiftsPreviewCaptureWhileRTMPPublishing() {
+    #expect(StudioStore.previewCaptureConfiguration(
+        for: .responsive,
+        isRTMPPublishing: false
+    ) == StudioPerformanceMode.responsive.previewCaptureConfiguration)
+    #expect(StudioStore.previewCaptureConfiguration(
+        for: .responsive,
+        isRTMPPublishing: true
+    ) == StudioPerformanceMode.efficiency.previewCaptureConfiguration)
+}
+
+@Test
+@MainActor
+func studioStoreCapsRTMPPublishingMediaFPS() {
+    let responsive = StudioPerformanceMode.responsive.mediaConfiguration
+    let capped = StudioStore.mediaConfiguration(responsive, constrainedForRTMPPublishing: true)
+
+    #expect(capped.framesPerSecond == 30)
+    #expect(capped.maxVideoWidth == responsive.maxVideoWidth)
+    #expect(capped.videoBitrate == responsive.videoBitrate)
+    #expect(StudioStore.mediaConfiguration(
+        StudioPerformanceMode.efficiency.mediaConfiguration,
+        constrainedForRTMPPublishing: true
+    ).framesPerSecond == 24)
+}
+
+@Test
+@MainActor
 func resourceUsageSnapshotBreaksDownCapturePreviewDirectorAndSignals() {
     let pipeline = ConfigurableMediaPipeline()
     let pressure = SystemPressureSnapshot(

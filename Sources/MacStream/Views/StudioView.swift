@@ -86,13 +86,7 @@ private struct PreviewColumnView: View {
     }
 
     private var previewConfiguration: PreviewCaptureConfiguration {
-        guard store.streamTransport == .rtmpPublish,
-              store.isStreamConnecting || store.streamState.isLive
-        else {
-            return store.effectivePerformanceMode.previewCaptureConfiguration
-        }
-
-        return StudioPerformanceMode.efficiency.previewCaptureConfiguration
+        store.currentPreviewCaptureConfiguration
     }
 }
 

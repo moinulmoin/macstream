@@ -244,8 +244,24 @@ public enum RecordingState: Equatable, Sendable {
     }
 }
 
+public enum RTMPPublishState: String, Codable, Equatable, Sendable {
+    case disconnected
+    case handshaking
+    case publishing
+
+    public var title: String {
+        switch self {
+        case .disconnected: "Disconnected"
+        case .handshaking: "Handshaking"
+        case .publishing: "Publishing"
+        }
+    }
+}
+
 public struct StreamHealth: Codable, Equatable, Sendable {
     public var bitrateKbps: Int
+    public var outboundBytesPerSecond: Int64
+    public var publishState: RTMPPublishState
     public var droppedFrames: Int
     public var captureFPS: Int
     public var audioLevel: Double
@@ -253,12 +269,16 @@ public struct StreamHealth: Codable, Equatable, Sendable {
 
     public init(
         bitrateKbps: Int = 0,
+        outboundBytesPerSecond: Int64 = 0,
+        publishState: RTMPPublishState = .disconnected,
         droppedFrames: Int = 0,
         captureFPS: Int = 60,
         audioLevel: Double = 0,
         roundTripMs: Int = 0
     ) {
         self.bitrateKbps = bitrateKbps
+        self.outboundBytesPerSecond = outboundBytesPerSecond
+        self.publishState = publishState
         self.droppedFrames = droppedFrames
         self.captureFPS = captureFPS
         self.audioLevel = audioLevel
@@ -346,6 +366,8 @@ public struct ResourceUsageSnapshot: Codable, Equatable, Sendable {
     public var streamActualFPS: Int
     public var streamDroppedFrames: Int
     public var streamBitrateKbps: Int
+    public var streamOutboundBytesPerSecond: Int64
+    public var streamPublishState: RTMPPublishState
     public var streamQueueDepth: Int
     public var previewTargetFPS: Int
     public var previewMaxDisplayWidth: Int
@@ -362,6 +384,8 @@ public struct ResourceUsageSnapshot: Codable, Equatable, Sendable {
         streamActualFPS: Int,
         streamDroppedFrames: Int,
         streamBitrateKbps: Int,
+        streamOutboundBytesPerSecond: Int64 = 0,
+        streamPublishState: RTMPPublishState = .disconnected,
         streamQueueDepth: Int,
         previewTargetFPS: Int,
         previewMaxDisplayWidth: Int,
@@ -377,6 +401,8 @@ public struct ResourceUsageSnapshot: Codable, Equatable, Sendable {
         self.streamActualFPS = streamActualFPS
         self.streamDroppedFrames = streamDroppedFrames
         self.streamBitrateKbps = streamBitrateKbps
+        self.streamOutboundBytesPerSecond = streamOutboundBytesPerSecond
+        self.streamPublishState = streamPublishState
         self.streamQueueDepth = streamQueueDepth
         self.previewTargetFPS = previewTargetFPS
         self.previewMaxDisplayWidth = previewMaxDisplayWidth

@@ -35,6 +35,7 @@ struct MacStreamApp: App {
         signalProvider: SystemSignalProvider(),
         performanceMonitor: MacSystemPerformanceMonitor()
     )
+    @State private var updater = SparkleUpdater()
     @State private var didApplyLaunchSetupDefaults = false
     @State private var destinationSaveTask: Task<Void, Never>?
     @State private var sourceConfigurationSaveTask: Task<Void, Never>?
@@ -95,6 +96,9 @@ struct MacStreamApp: App {
         }
         .windowStyle(.titleBar)
         .commands {
+            CommandGroup(after: .appInfo) {
+                CheckForUpdatesCommand(updater: updater)
+            }
             CommandGroup(after: .newItem) {
                 Button(streamCommandTitle) {
                     if store.canStopStream {
@@ -136,7 +140,7 @@ struct MacStreamApp: App {
         }
 
         Settings {
-            SettingsView(store: store)
+            SettingsView(store: store, updater: updater)
                 .onChange(of: store.destination) { _, newDestination in
                     scheduleDestinationSave(newDestination)
                 }

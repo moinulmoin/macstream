@@ -46,7 +46,9 @@ let package = Package(
         .executable(name: "MacStream", targets: ["MacStream"]),
         .library(name: "MacStreamCore", targets: ["MacStreamCore"])
     ],
-    dependencies: packageDependencies,
+    dependencies: packageDependencies + [
+        .package(url: "https://github.com/sparkle-project/Sparkle", from: "2.9.3")
+    ],
     targets: [
         .target(
             name: "MacStreamCore",
@@ -55,7 +57,10 @@ let package = Package(
         ),
         .executableTarget(
             name: "MacStream",
-            dependencies: ["MacStreamCore"]
+            dependencies: [
+                "MacStreamCore",
+                .product(name: "Sparkle", package: "Sparkle")
+            ]
         ),
         .testTarget(
             name: "MacStreamCoreTests",

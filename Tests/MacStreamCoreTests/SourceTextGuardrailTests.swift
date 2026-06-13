@@ -264,7 +264,7 @@ func studioKeepsFrequentControlsInBottomDeck() throws {
     #expect(appSource.contains("try? await Task.sleep(for: Self.persistenceDebounceDuration)"))
     #expect(appSource.contains("MacStreamDestinationKeychain.loadRTMPURL()"))
     #expect(appSource.contains("store.reportPersistenceFailure"))
-    #expect(appSource.contains("SettingsView(store: store)"))
+    #expect(appSource.contains("SettingsView(store: store, updater: updater)"))
     #expect(directorSource.contains("private var compactDirectorPanel"))
     #expect(directorSource.contains("private func expandedDirectorPanel(for recommendation: DirectorRecommendation)"))
     #expect(directorSource.contains("Label(\"No cue pending\", systemImage: \"checkmark.circle.fill\")"))
@@ -556,7 +556,9 @@ func releaseAutomationDefinesSignedNotarizedMacPipeline() throws {
     #expect(infoPlist.contains("LSApplicationCategoryType"))
     #expect(entitlements.contains("com.apple.security.device.camera"))
     #expect(entitlements.contains("com.apple.security.device.audio-input"))
-    #expect(docs.contains("MacStream does not ship Sparkle or another in-app updater yet."))
+    #expect(release.contains("SPARKLE_PRIVATE_KEY"))
+    #expect(release.contains("sign_update"))
+    #expect(docs.contains("Sparkle"))
 }
 
 @Test

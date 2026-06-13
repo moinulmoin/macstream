@@ -38,5 +38,13 @@
   <string>MacStream uses the microphone to monitor speech and broadcast audio.</string>
   <key>NSAudioCaptureUsageDescription</key>
   <string>MacStream captures Mac audio when system audio is enabled for local recordings and broadcasts.</string>
+  <key>SUFeedURL</key>
+  <string>https://raw.githubusercontent.com/moinulmoin/macstream/main/appcast.xml</string>
+  <key>SUPublicEDKey</key>
+  <string>REPLACE_WITH_SPARKLE_PUBLIC_ED_KEY</string>
+  <key>SUEnableAutomaticChecks</key>
+  <true/>
+  <key>SUScheduledCheckInterval</key>
+  <integer>86400</integer>
 </dict>
 </plist>

@@ -41,6 +41,7 @@ MAC_STREAM_CODESIGN_IDENTITY
 MAC_STREAM_APPLE_ID
 MAC_STREAM_APPLE_TEAM_ID
 MAC_STREAM_APP_SPECIFIC_PASSWORD
+SPARKLE_PRIVATE_KEY
 ```
 
 `MAC_STREAM_CODESIGN_IDENTITY` should be the full Developer ID Application identity, for example:
@@ -51,7 +52,29 @@ Developer ID Application: Ideaplexa LLC (53P98M92V7)
 
 `MAC_STREAM_MACOS_CERTIFICATE_P12_BASE64` is the base64-encoded `.p12` Developer ID Application certificate. `MAC_STREAM_APP_SPECIFIC_PASSWORD` is an Apple app-specific password for the Apple ID that can submit notarization requests for `MAC_STREAM_APPLE_TEAM_ID`.
 
-MacStream does not ship Sparkle or another in-app updater yet. For now, release delivery is GitHub Releases plus a SHA256 checksum.
+MacStream ships Sparkle auto-updates. Releases are delivered from GitHub Releases via an EdDSA-signed appcast (`appcast.xml` at the repo root), in addition to the release zip and SHA256 checksum on GitHub.
+
+## Sparkle Auto-Updates
+
+### One-time setup
+
+1. Download the Sparkle 2.9.3 tools release and run `./bin/generate_keys`. This stores the **private** key in the login Keychain and prints the **public** key.
+2. Paste the printed public key into `Resources/Info.plist` under `SUPublicEDKey`, replacing the `REPLACE_WITH_SPARKLE_PUBLIC_ED_KEY` placeholder. The public key is safe to commit.
+3. Export the private key for CI: `./bin/generate_keys -x sparkle_private_key.txt`, then store the file contents as the GitHub Actions secret `SPARKLE_PRIVATE_KEY`. **Never** commit the private key.
+
+`SUFeedURL` in `Resources/Info.plist` points to:
+
+```text
+https://raw.githubusercontent.com/moinulmoin/macstream/main/appcast.xml
+```
+
+### Per-release flow
+
+When you push a `vX.Y.Z` tag, `.github/workflows/release.yml` still Developer-ID signs and notarizes `MacStream.app` as today. It also signs the release zip with Sparkle’s `sign_update` and appends a signed `<item>` to `appcast.xml`, then commits `appcast.xml` back to `main`.
+
+Auto-update in the app only works after at least one Sparkle-signed release exists on that feed (for example, re-cut `v0.1.0` through the pipeline). Installed builds must remain Developer-ID signed and notarized — the release workflow already handles that.
+
+In-app UX: **Settings → About & Updates** includes **Check for Updates…**, and a daily automatic background check is enabled (`SUEnableAutomaticChecks`).
 
 ## Pre-Release Checks
 

@@ -1,8 +1,10 @@
 import SwiftUI
+import AppKit
 import MacStreamCore
 
 struct SettingsView: View {
     @Bindable var store: StudioStore
+    var updater: SparkleUpdater
     @AppStorage("directorCountdownSeconds") private var directorCountdownSeconds = 2.0
     @AppStorage("recordWhileStreaming") private var recordWhileStreaming = false
     @AppStorage("defaultSceneKind") private var defaultSceneKindRaw = SceneKind.brb.rawValue
@@ -17,6 +19,42 @@ struct SettingsView: View {
     @State private var providerApplyPending = false
 
     var body: some View {
+        TabView {
+            generalTab
+                .tabItem {
+                    Label("General", systemImage: "gearshape")
+                }
+
+            destinationTab
+                .tabItem {
+                    Label("Destination", systemImage: "dot.radiowaves.left.and.right")
+                }
+
+            aiSetupTab
+                .tabItem {
+                    Label("AI Setup", systemImage: "wand.and.stars")
+                }
+
+            aboutTab
+                .tabItem {
+                    Label("About", systemImage: "info.circle")
+                }
+        }
+        .frame(width: 580)
+        .frame(minHeight: 420)
+        .onAppear {
+            openAICompatibleAPIKey = MacStreamProviderKeychain.loadOpenAICompatibleAPIKey() ?? ""
+            applySelectedIntelligenceProvider()
+        }
+        .onDisappear {
+            providerProbeTask?.cancel()
+        }
+        .onChange(of: providerReapplyTrigger) { _, _ in
+            applyPendingIntelligenceProviderIfNeeded()
+        }
+    }
+
+    private var generalTab: some View {
         Form {
             Section("Startup") {
                 Picker("Startup scene", selection: $defaultSceneKindRaw) {
@@ -27,6 +65,25 @@ struct SettingsView: View {
                 }
             }
 
+            Section("Stream Behavior") {
+                Toggle("Record while streaming", isOn: recordWhileStreamingBinding)
+
+                LabeledContent("Cue countdown") {
+                    Stepper(
+                        "\(displayedDirectorCountdownSeconds) seconds",
+                        value: directorCountdownBinding,
+                        in: directorCountdownRange,
+                        step: 1
+                    )
+                }
+            }
+        }
+        .formStyle(.grouped)
+        .padding(StudioMetrics.lg)
+    }
+
+    private var destinationTab: some View {
+        Form {
             Section("Destination") {
                 Picker("Mode", selection: destinationMode) {
                     ForEach(StreamDestinationMode.allCases) { mode in
@@ -66,7 +123,13 @@ struct SettingsView: View {
                         .foregroundStyle(.secondary)
                 }
             }
+        }
+        .formStyle(.grouped)
+        .padding(StudioMetrics.lg)
+    }
 
+    private var aiSetupTab: some View {
+        Form {
             Section("Setup Rules") {
                 TextField("Stream description", text: setupPromptBinding, axis: .vertical)
                     .lineLimit(2...4)
@@ -131,33 +194,58 @@ struct SettingsView: View {
                     Text(store.directorProfile.kind.title)
                 }
             }
-
-            Section("Stream Behavior") {
-                Toggle("Record while streaming", isOn: recordWhileStreamingBinding)
-
-                LabeledContent("Cue countdown") {
-                    Stepper(
-                        "\(displayedDirectorCountdownSeconds) seconds",
-                        value: directorCountdownBinding,
-                        in: directorCountdownRange,
-                        step: 1
-                    )
-                }
-            }
         }
         .formStyle(.grouped)
-        .padding(20)
-        .frame(width: 540)
-        .onAppear {
-            openAICompatibleAPIKey = MacStreamProviderKeychain.loadOpenAICompatibleAPIKey() ?? ""
-            applySelectedIntelligenceProvider()
+        .padding(StudioMetrics.lg)
+    }
+
+    private var aboutTab: some View {
+        VStack(spacing: StudioMetrics.lg) {
+            Group {
+                if let icon = NSApp.applicationIconImage {
+                    Image(nsImage: icon)
+                        .resizable()
+                        .interpolation(.high)
+                        .frame(width: 64, height: 64)
+                } else {
+                    Image(systemName: "app.gift")
+                        .font(.system(size: 48))
+                        .foregroundStyle(StudioPalette.accent)
+                        .frame(width: 64, height: 64)
+                }
+            }
+
+            Text("MacStream")
+                .font(.title2.weight(.semibold))
+                .foregroundStyle(.primary)
+
+            Text(settingsVersionLine)
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+
+            Button("Check for Updates…") {
+                updater.checkForUpdates()
+            }
+            .buttonStyle(StudioPrimaryButtonStyle())
+            .disabled(!updater.canCheckForUpdates)
+
+            VStack(spacing: StudioMetrics.sm) {
+                Link("View on GitHub", destination: URL(string: "https://github.com/moinulmoin/macstream")!)
+                    .font(.subheadline)
+
+                Link("Releases", destination: URL(string: "https://github.com/moinulmoin/macstream/releases")!)
+                    .font(.subheadline)
+            }
+            .padding(.top, StudioMetrics.xs)
         }
-        .onDisappear {
-            providerProbeTask?.cancel()
-        }
-        .onChange(of: providerReapplyTrigger) { _, _ in
-            applyPendingIntelligenceProviderIfNeeded()
-        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .padding(StudioMetrics.xl)
+    }
+
+    private var settingsVersionLine: String {
+        let short = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "—"
+        let build = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "—"
+        return "Version \(short) (\(build))"
     }
 
     private var displayedDirectorCountdownSeconds: Int {

@@ -80,6 +80,7 @@ you get a polished Mac control room built around the actual solo-creator workflo
 - Stream keys stored in Keychain and redacted in UI, logs, events, and exports
 - Live capture health monitoring: TX bytes/sec, dropped frames, capture FPS
 - Rich stream state: `offline → connecting → live → degraded → failed`
+- In-app auto-update via Sparkle — **Check for Updates…** in **Settings → About & Updates**, with updates delivered from EdDSA-signed GitHub Releases (`appcast.xml`)
 
 ### Deterministic AI Director
 

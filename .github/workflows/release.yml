@@ -36,6 +36,9 @@ jobs:
       release_version: ${{ steps.version.outputs.release_version }}
       artifact_name: ${{ steps.artifact.outputs.artifact_name }}
       sha256: ${{ steps.artifact.outputs.sha256 }}
+      bundle_version: ${{ github.run_number }}
+      ed_signature: ${{ steps.sparkle_sign.outputs.ed_signature }}
+      ed_length: ${{ steps.sparkle_sign.outputs.ed_length }}
     env:
       APP_NAME: MacStream
       BUNDLE_ID: com.ideaplexa.macstream
@@ -102,6 +105,7 @@ jobs:
           MAC_STREAM_APPLE_ID: ${{ secrets.MAC_STREAM_APPLE_ID }}
           MAC_STREAM_APPLE_TEAM_ID: ${{ secrets.MAC_STREAM_APPLE_TEAM_ID }}
           MAC_STREAM_APP_SPECIFIC_PASSWORD: ${{ secrets.MAC_STREAM_APP_SPECIFIC_PASSWORD }}
+          SPARKLE_PRIVATE_KEY: ${{ secrets.SPARKLE_PRIVATE_KEY }}
         run: |
           set -euo pipefail
           required=(
@@ -111,6 +115,7 @@ jobs:
             MAC_STREAM_APPLE_ID
             MAC_STREAM_APPLE_TEAM_ID
             MAC_STREAM_APP_SPECIFIC_PASSWORD
+            SPARKLE_PRIVATE_KEY
           )
 
           for name in "${required[@]}"; do
@@ -198,6 +203,28 @@ jobs:
             echo "zip_path=$zip_path"
             echo "sha256=$sha256"
             echo "sha256_path=$PWD/dist/$artifact_name.sha256"
+          } >>"$GITHUB_OUTPUT"
+
+      - name: Sign update for Sparkle appcast
+        id: sparkle_sign
+        shell: bash
+        env:
+          SPARKLE_PRIVATE_KEY: ${{ secrets.SPARKLE_PRIVATE_KEY }}
+          ZIP_PATH: ${{ steps.artifact.outputs.zip_path }}
+        run: |
+          set -euo pipefail
+          curl -fsSL -o "$RUNNER_TEMP/Sparkle.tar.xz" https://github.com/sparkle-project/Sparkle/releases/download/2.9.3/Sparkle-2.9.3.tar.xz
+          tar -xf "$RUNNER_TEMP/Sparkle.tar.xz" -C "$RUNNER_TEMP"
+          SIG_ATTRS="$(printf '%s' "$SPARKLE_PRIVATE_KEY" | "$RUNNER_TEMP/Sparkle/bin/sign_update" --ed-key-file - "$ZIP_PATH")"
+          ed_signature="$(printf '%s' "$SIG_ATTRS" | sed -n 's/.*sparkle:edSignature="\([^"]*\)".*/\1/p')"
+          ed_length="$(printf '%s' "$SIG_ATTRS" | sed -n 's/.*length="\([^"]*\)".*/\1/p')"
+          if [[ -z "$ed_signature" || -z "$ed_length" ]]; then
+            echo "Failed to parse Sparkle sign_update output: $SIG_ATTRS" >&2
+            exit 2
+          fi
+          {
+            echo "ed_signature=$ed_signature"
+            echo "ed_length=$ed_length"
           } >>"$GITHUB_OUTPUT"
 
       - name: Upload workflow artifact
@@ -293,3 +320,86 @@ jobs:
               --title "MacStream $RELEASE_VERSION" \
               --notes-file "$NOTES_PATH"
           fi
+
+      - name: Update Sparkle appcast on main
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Commit Sparkle appcast
+        shell: bash
+        env:
+          RELEASE_VERSION: ${{ needs.macos.outputs.release_version }}
+          ARTIFACT_NAME: ${{ needs.macos.outputs.artifact_name }}
+          BUNDLE_VERSION: ${{ needs.macos.outputs.bundle_version }}
+          ED_SIGNATURE: ${{ needs.macos.outputs.ed_signature }}
+          ED_LENGTH: ${{ needs.macos.outputs.ed_length }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          short_version="${RELEASE_VERSION#v}"
+          pub_date="$(LC_ALL=C date -u '+%a, %d %b %Y %H:%M:%S +0000')"
+          enclosure_url="https://github.com/${GITHUB_REPOSITORY}/releases/download/${RELEASE_VERSION}/${ARTIFACT_NAME}"
+          release_link="https://github.com/${GITHUB_REPOSITORY}/releases/tag/${RELEASE_VERSION}"
+          python3 - "$short_version" "$BUNDLE_VERSION" "$pub_date" "$enclosure_url" "$release_link" "$ED_SIGNATURE" "$ED_LENGTH" "$RELEASE_VERSION" <<'PY'
+          import sys
+          import xml.etree.ElementTree as ET
+
+          short_version, bundle_version, pub_date, enclosure_url, release_link, ed_signature, ed_length, release_version = sys.argv[1:9]
+          sparkle_ns = "http://www.andymatuschak.org/xml-namespaces/sparkle"
+          ET.register_namespace("sparkle", sparkle_ns)
+
+          path = "appcast.xml"
+          tree = ET.parse(path)
+          root = tree.getroot()
+          channel = root.find("channel")
+          if channel is None:
+              raise SystemExit("appcast.xml: missing <channel>")
+
+          def sparkle_tag(local):
+              return f"{{{sparkle_ns}}}{local}"
+
+          for item in list(channel.findall("item")):
+              sv = item.find(sparkle_tag("shortVersionString"))
+              if sv is not None and (sv.text or "").strip() == short_version:
+                  channel.remove(item)
+
+          item = ET.Element("item")
+          ET.SubElement(item, "title").text = f"MacStream {release_version}"
+          ET.SubElement(item, "link").text = release_link
+          ET.SubElement(item, sparkle_tag("version")).text = bundle_version
+          ET.SubElement(item, sparkle_tag("shortVersionString")).text = short_version
+          ET.SubElement(item, "pubDate").text = pub_date
+          ET.SubElement(
+              item,
+              "enclosure",
+              {
+                  "url": enclosure_url,
+                  sparkle_tag("edSignature"): ed_signature,
+                  "length": ed_length,
+                  "type": "application/octet-stream",
+              },
+          )
+          ET.SubElement(item, sparkle_tag("minimumSystemVersion")).text = "26.0"
+
+          first_item = channel.find("item")
+          if first_item is not None:
+              index = list(channel).index(first_item)
+              channel.insert(index, item)
+          else:
+              channel.append(item)
+
+          tree.write(path, encoding="utf-8", xml_declaration=True)
+          PY
+
+          if git diff --quiet -- appcast.xml; then
+            echo "appcast.xml unchanged; skipping push"
+            exit 0
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add appcast.xml
+          git commit -m "chore: publish Sparkle appcast for ${RELEASE_VERSION}"
+          git push origin HEAD:main

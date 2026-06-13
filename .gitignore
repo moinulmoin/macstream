@@ -7,3 +7,7 @@ DerivedData/
 *.p12
 *.keychain-db
 .release/
+
+# AI coding-tool footprints (keep these out of the repo)
+.codex/
+.commandcode/

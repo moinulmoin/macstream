@@ -630,14 +630,27 @@ final class SpyMediaPipeline: MediaPipeline, @unchecked Sendable {
 
 final class MutableSignalProvider: SignalProvider, @unchecked Sendable {
     var currentSnapshot: SignalSnapshot
+    var lastConfiguration: SignalSamplingConfiguration?
+    var updateCount = 0
+    var startCount = 0
+    var stopCount = 0
 
     init(snapshot: SignalSnapshot = SignalSnapshot()) {
         self.currentSnapshot = snapshot
     }
 
-    func start() {}
+    func update(configuration: SignalSamplingConfiguration) {
+        updateCount += 1
+        lastConfiguration = configuration
+    }
 
-    func stop() {}
+    func start() {
+        startCount += 1
+    }
+
+    func stop() {
+        stopCount += 1
+    }
 
     func snapshot() -> SignalSnapshot {
         currentSnapshot

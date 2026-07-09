@@ -18,37 +18,24 @@ struct PreviewCanvasView: View {
 
     var body: some View {
         GeometryReader { proxy in
+            let canvasLayout = StudioCanvasLayout(size: proxy.size, settings: layoutSettings)
+
             ZStack {
                 canvasBackground
 
-                switch scene.kind {
-                case .face:
-                    zoomedCameraFill
-                case .screenAndFace:
-                    screenAndWebcamLayout(in: proxy.size)
-                case .screenOnly:
-                    zoomedScreenFill
-                case .brb:
-                    brbLayer
-                }
-
-                VStack {
-                    HStack {
-                        Label(scene.title, systemImage: scene.kind.symbolName)
-                            .font(.headline)
-                            .padding(.horizontal, 12)
-                            .padding(.vertical, 8)
-                            .background(.black.opacity(0.42), in: Capsule())
-                            .overlay {
-                                Capsule()
-                                    .strokeBorder(.white.opacity(0.14), lineWidth: 1)
-                            }
-                        Spacer()
+                Group {
+                    switch scene.kind {
+                    case .face:
+                        zoomedCameraFill
+                    case .screenAndFace:
+                        screenAndWebcamLayout(in: canvasLayout)
+                    case .screenOnly:
+                        zoomedScreenFill
+                    case .brb:
+                        brbLayer
                     }
-                    Spacer()
                 }
-                .foregroundStyle(.white)
-                .padding(16)
+                .padding(canvasLayout.canvasInset)
             }
         }
         .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
@@ -159,22 +146,22 @@ struct PreviewCanvasView: View {
         }
     }
 
-    private func screenAndWebcamLayout(in size: CGSize) -> some View {
+    private func screenAndWebcamLayout(in layout: StudioCanvasLayout) -> some View {
         Group {
             if layoutSettings.preset.isSplit {
-                splitScreenAndWebcamLayout(in: size)
+                splitScreenAndWebcamLayout(in: layout)
             } else {
-                pictureInPictureLayout(in: size)
+                pictureInPictureLayout(in: layout)
             }
         }
     }
 
-    private func splitScreenAndWebcamLayout(in size: CGSize) -> some View {
-        HStack(spacing: 0) {
+    private func splitScreenAndWebcamLayout(in layout: StudioCanvasLayout) -> some View {
+        HStack(spacing: layout.sourceGap) {
             sourceFrame {
                 zoomedScreenFill
             }
-            .frame(width: max(1, size.width * layoutSettings.preset.screenFraction))
+            .frame(width: layout.splitScreenRect.width)
 
             sourceFrame {
                 zoomedCameraFill
@@ -183,8 +170,12 @@ struct PreviewCanvasView: View {
         }
     }
 
-    private func pictureInPictureLayout(in size: CGSize) -> some View {
-        ZStack {
+    private func pictureInPictureLayout(in layout: StudioCanvasLayout) -> some View {
+        let pipRect = layout.pictureInPictureRect
+        let trailingPadding = layout.contentRect.maxX - pipRect.maxX
+        let bottomPadding = pipRect.minY - layout.contentRect.minY
+
+        return ZStack {
             zoomedScreenFill
 
             sourceFrame {
@@ -192,7 +183,7 @@ struct PreviewCanvasView: View {
                     pictureInPictureCamera
                 }
             }
-            .frame(width: min(size.width * 0.28, 260), height: min(size.height * 0.28, 170))
+            .frame(width: pipRect.width, height: pipRect.height)
             .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
             .overlay {
                 RoundedRectangle(cornerRadius: 14, style: .continuous)
@@ -200,7 +191,8 @@ struct PreviewCanvasView: View {
             }
             .shadow(color: .black.opacity(0.35), radius: 18, y: 8)
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
-            .padding(18)
+            .padding(.trailing, trailingPadding)
+            .padding(.bottom, bottomPadding)
         }
     }
 

@@ -1,3 +1,4 @@
+import CoreGraphics
 import Foundation
 
 public enum SceneKind: String, CaseIterable, Codable, Identifiable, Sendable {
@@ -573,17 +574,17 @@ public enum StudioPreviewRenderQuality: String, CaseIterable, Codable, Identifia
 
     public var title: String {
         switch self {
-        case .automatic: "Auto"
-        case .half: "Half"
-        case .full: "Full"
+        case .automatic: "Balanced"
+        case .half: "Performance"
+        case .full: "Sharp"
         }
     }
 
     public var detailTitle: String {
         switch self {
-        case .automatic: "Live-aware preview"
-        case .half: "Lower-cost preview"
-        case .full: "Full-quality preview"
+        case .automatic: "Balanced preview"
+        case .half: "Performance preview"
+        case .full: "Sharp preview"
         }
     }
 }
@@ -658,9 +659,16 @@ public enum StudioBackgroundStyle: String, CaseIterable, Codable, Identifiable, 
 public struct StudioLayoutSettings: Codable, Equatable, Sendable {
     public static let minimumSourceZoom = 0.75
     public static let maximumSourceZoom = 2.0
+    public static let minimumCanvasPadding = 0.0
+    public static let maximumCanvasPadding = 0.12
 
     public var preset: StudioLayoutPreset
     public var backgroundStyle: StudioBackgroundStyle
+    public var canvasPadding: Double {
+        didSet {
+            canvasPadding = Self.normalizedCanvasPadding(canvasPadding)
+        }
+    }
     public var screenZoom: Double {
         didSet {
             screenZoom = Self.normalizedSourceZoom(screenZoom)
@@ -675,6 +683,7 @@ public struct StudioLayoutSettings: Codable, Equatable, Sendable {
     private enum CodingKeys: String, CodingKey {
         case preset
         case backgroundStyle
+        case canvasPadding
         case screenZoom
         case webcamZoom
     }
@@ -682,11 +691,13 @@ public struct StudioLayoutSettings: Codable, Equatable, Sendable {
     public init(
         preset: StudioLayoutPreset = .pictureInPicture,
         backgroundStyle: StudioBackgroundStyle = .black,
+        canvasPadding: Double = 0.04,
         screenZoom: Double = 1,
         webcamZoom: Double = 1
     ) {
         self.preset = preset
         self.backgroundStyle = backgroundStyle
+        self.canvasPadding = Self.normalizedCanvasPadding(canvasPadding)
         self.screenZoom = Self.normalizedSourceZoom(screenZoom)
         self.webcamZoom = Self.normalizedSourceZoom(webcamZoom)
     }
@@ -696,6 +707,7 @@ public struct StudioLayoutSettings: Codable, Equatable, Sendable {
         self.init(
             preset: try container.decodeIfPresent(StudioLayoutPreset.self, forKey: .preset) ?? .pictureInPicture,
             backgroundStyle: try container.decodeIfPresent(StudioBackgroundStyle.self, forKey: .backgroundStyle) ?? .black,
+            canvasPadding: try container.decodeIfPresent(Double.self, forKey: .canvasPadding) ?? 0.04,
             screenZoom: try container.decodeIfPresent(Double.self, forKey: .screenZoom) ?? 1,
             webcamZoom: try container.decodeIfPresent(Double.self, forKey: .webcamZoom) ?? 1
         )
@@ -704,6 +716,73 @@ public struct StudioLayoutSettings: Codable, Equatable, Sendable {
     public static func normalizedSourceZoom(_ zoom: Double) -> Double {
         let clamped = min(max(zoom, minimumSourceZoom), maximumSourceZoom)
         return (clamped * 100).rounded() / 100
+    }
+
+    public static func normalizedCanvasPadding(_ padding: Double) -> Double {
+        let clamped = min(max(padding, minimumCanvasPadding), maximumCanvasPadding)
+        return (clamped * 100).rounded() / 100
+    }
+}
+
+public struct StudioCanvasLayout: Equatable, Sendable {
+    public var outputRect: CGRect
+    public var contentRect: CGRect
+    public var canvasInset: CGFloat
+    public var sourceGap: CGFloat
+    public var settings: StudioLayoutSettings
+
+    public init(size: CGSize, settings: StudioLayoutSettings) {
+        let safeSize = CGSize(width: max(1, size.width), height: max(1, size.height))
+        self.outputRect = CGRect(origin: .zero, size: safeSize)
+        self.settings = settings
+        self.canvasInset = min(safeSize.width, safeSize.height) * settings.canvasPadding
+
+        let contentWidth = max(1, safeSize.width - (canvasInset * 2))
+        let contentHeight = max(1, safeSize.height - (canvasInset * 2))
+        self.contentRect = CGRect(
+            x: canvasInset,
+            y: canvasInset,
+            width: contentWidth,
+            height: contentHeight
+        )
+
+        if settings.preset.isSplit, canvasInset > 0 {
+            self.sourceGap = max(8, min(contentWidth, contentHeight) * settings.canvasPadding * 0.6)
+        } else {
+            self.sourceGap = 0
+        }
+    }
+
+    public var splitScreenRect: CGRect {
+        let screenWidth = max(1, (contentRect.width - sourceGap) * settings.preset.screenFraction)
+        return CGRect(
+            x: contentRect.minX,
+            y: contentRect.minY,
+            width: screenWidth,
+            height: contentRect.height
+        )
+    }
+
+    public var splitWebcamRect: CGRect {
+        let x = splitScreenRect.maxX + sourceGap
+        return CGRect(
+            x: x,
+            y: contentRect.minY,
+            width: max(1, contentRect.maxX - x),
+            height: contentRect.height
+        )
+    }
+
+    public var pictureInPictureRect: CGRect {
+        let margin = max(18, contentRect.width * 0.018)
+        let width = min(contentRect.width * 0.28, 360)
+        let height = width * 9 / 16
+        return CGRect(
+            x: contentRect.maxX - width - margin,
+            y: contentRect.minY + margin,
+            width: width,
+            height: min(height, max(1, contentRect.height - (margin * 2)))
+        )
     }
 }
 
@@ -850,17 +929,20 @@ public struct SignalSamplingConfiguration: Equatable, Sendable {
     public var screenMotionFramesPerSecond: Int
     public var isMicrophoneEnabled: Bool
     public var isScreenMotionEnabled: Bool
+    public var isActivityContextEnabled: Bool
     public var screenCaptureTarget: ScreenCaptureTarget?
 
     public init(
         screenMotionFramesPerSecond: Int = 4,
         isMicrophoneEnabled: Bool = true,
         isScreenMotionEnabled: Bool = true,
+        isActivityContextEnabled: Bool = true,
         screenCaptureTarget: ScreenCaptureTarget? = nil
     ) {
         self.screenMotionFramesPerSecond = max(1, screenMotionFramesPerSecond)
         self.isMicrophoneEnabled = isMicrophoneEnabled
         self.isScreenMotionEnabled = isScreenMotionEnabled
+        self.isActivityContextEnabled = isActivityContextEnabled
         self.screenCaptureTarget = screenCaptureTarget
     }
 }

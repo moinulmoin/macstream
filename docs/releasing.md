@@ -12,9 +12,8 @@ vMAJOR.MINOR.PATCH
 
 Examples:
 
-- `v0.1.0` for the first MVP release.
-- `v0.1.1` for a small fix.
 - `v0.2.0` for a meaningful MVP feature step.
+- `v0.2.1` for a small fix.
 
 ## GitHub Actions Release
 
@@ -72,7 +71,7 @@ https://raw.githubusercontent.com/moinulmoin/macstream/main/appcast.xml
 
 When you push a `vX.Y.Z` tag, `.github/workflows/release.yml` still Developer-ID signs and notarizes `MacStream.app` as today. It also signs the release zip with Sparkle’s `sign_update` and appends a signed `<item>` to `appcast.xml`, then commits `appcast.xml` back to `main`.
 
-Auto-update in the app only works after at least one Sparkle-signed release exists on that feed (for example, re-cut `v0.1.0` through the pipeline). Installed builds must remain Developer-ID signed and notarized — the release workflow already handles that.
+Auto-update in the app only works after at least one Sparkle-signed release exists on that feed (for example, cut `v0.2.0` through the pipeline after the public key is committed). Installed builds must remain Developer-ID signed and notarized — the release workflow already handles that.
 
 In-app UX: **Settings → About & Updates** includes **Check for Updates…**, and a daily automatic background check is enabled (`SUEnableAutomaticChecks`).
 
@@ -152,7 +151,7 @@ shasum -a 256 dist/MacStream-vX.Y.Z-macos-arm64.zip
 The CI packaging helper can be smoke-tested locally with ad-hoc signing. This does not notarize and does not replace the GitHub Actions release path:
 
 ```bash
-MAC_STREAM_VERSION=0.1.0 \
+MAC_STREAM_VERSION=0.2.0 \
 MAC_STREAM_BUILD_NUMBER=1 \
 MAC_STREAM_BUILD_CONFIGURATION=release \
 MAC_STREAM_BUILD_ARCH="$(uname -m)" \
@@ -168,7 +167,7 @@ To locally simulate release signing, provide `MAC_STREAM_CODESIGN_IDENTITY` and 
 MAC_STREAM_CODESIGN_IDENTITY="Developer ID Application: Ideaplexa LLC (53P98M92V7)" \
 MAC_STREAM_REQUIRE_DEVELOPER_ID=1 \
 MAC_STREAM_REQUIRE_HARDENED_RUNTIME=1 \
-MAC_STREAM_VERSION=0.1.0 \
+MAC_STREAM_VERSION=0.2.0 \
 MAC_STREAM_BUILD_NUMBER=1 \
 ./script/package_macos_app.sh
 ```

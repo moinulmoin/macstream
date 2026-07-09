@@ -69,20 +69,28 @@ public final class SystemSignalProvider: SignalProvider, @unchecked Sendable {
         let screenSnapshot = configuration.isScreenMotionEnabled
             ? screenMotion.snapshot()
             : ScreenMotionSnapshot(motion: 0, isFrozen: false, isUnavailable: true)
-        let idleSeconds = CGEventSource.secondsSinceLastEventType(.combinedSessionState, eventType: .mouseMoved)
-        let keyboardIdle = CGEventSource.secondsSinceLastEventType(.combinedSessionState, eventType: .keyDown)
-        let activeApplication = NSWorkspace.shared.frontmostApplication?.localizedName ?? "Unknown"
+        let activityContext = configuration.isActivityContextEnabled
+            ? Self.activityContextSnapshot()
+            : (activeApplication: "Source monitor", idleSeconds: 0)
 
         return SignalSnapshot(
             isSpeaking: microphoneSnapshot.isSpeaking,
             speechLevel: microphoneSnapshot.level,
             screenMotion: screenSnapshot.motion,
             hasFace: true,
-            activeApplication: activeApplication,
-            idleSeconds: min(idleSeconds, keyboardIdle),
+            activeApplication: activityContext.activeApplication,
+            idleSeconds: activityContext.idleSeconds,
             isScreenFrozen: screenSnapshot.isFrozen,
             isMicMuted: microphoneSnapshot.isUnavailable
         )
+    }
+
+    private static func activityContextSnapshot() -> (activeApplication: String, idleSeconds: Double) {
+        let idleSeconds = CGEventSource.secondsSinceLastEventType(.combinedSessionState, eventType: .mouseMoved)
+        let keyboardIdle = CGEventSource.secondsSinceLastEventType(.combinedSessionState, eventType: .keyDown)
+        let activeApplication = NSWorkspace.shared.frontmostApplication?.localizedName ?? "Unknown"
+
+        return (activeApplication, min(idleSeconds, keyboardIdle))
     }
 
     private func currentConfiguration() -> SignalSamplingConfiguration {

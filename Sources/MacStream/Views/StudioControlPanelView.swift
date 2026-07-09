@@ -40,6 +40,12 @@ struct StudioControlPanelView: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .studioCard(padding: StudioMetrics.cardPadding, cornerRadius: StudioMetrics.cardRadius)
+        .task {
+            store.startSourceMonitoring()
+        }
+        .onDisappear {
+            store.stopSourceMonitoring()
+        }
     }
 
     private var horizontalControls: some View {
@@ -51,15 +57,15 @@ struct StudioControlPanelView: View {
 
             controlDivider
 
-            controlGroup("Director", systemImage: "sparkles") {
-                directorControls
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
+            outputControls
+                .frame(maxWidth: .infinity, alignment: .leading)
 
             controlDivider
 
-            outputControls
-                .frame(maxWidth: .infinity, alignment: .leading)
+            controlGroup("Mic", systemImage: "waveform") {
+                microphoneControls
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
 
             controlDivider
 
@@ -84,15 +90,15 @@ struct StudioControlPanelView: View {
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
 
-                controlGroup("Director", systemImage: "sparkles") {
-                    directorControls
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
+                outputControls
+                    .frame(maxWidth: .infinity, alignment: .leading)
             }
 
             HStack(alignment: .top, spacing: StudioMetrics.lg) {
-                outputControls
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                controlGroup("Mic", systemImage: "waveform") {
+                    microphoneControls
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
 
                 controlGroup("Output", systemImage: "speedometer") {
                     performanceControls
@@ -119,21 +125,6 @@ struct StudioControlPanelView: View {
         .accessibilityLabel(Text("Scene deck"))
         .accessibilityValue(Text(store.selectedScene.title))
         .accessibilityHint(Text("Choose the scene shown in the preview and output."))
-    }
-
-    private var directorControls: some View {
-        Picker("Director Mode", selection: $store.directorMode) {
-            ForEach(DirectorMode.allCases) { mode in
-                Text(mode.title).tag(mode)
-            }
-        }
-        .pickerStyle(.segmented)
-        .labelsHidden()
-        .controlSize(.small)
-        .help("Choose how MacStream handles director cues")
-        .accessibilityLabel(Text("Director mode"))
-        .accessibilityValue(Text(store.directorMode.title))
-        .accessibilityHint(Text("Paused disables cues, Suggest asks before switching, Auto can switch after the countdown."))
     }
 
     private var outputControls: some View {
@@ -181,6 +172,16 @@ struct StudioControlPanelView: View {
                 .accessibilityHint(Text(recordingActionHelp))
             }
         }
+    }
+
+    private var microphoneControls: some View {
+        MicrophoneLevelMeterView(
+            level: store.latestSignals.speechLevel,
+            title: "Input",
+            detail: microphoneDetail,
+            isActive: isMicrophoneMeterActive
+        )
+        .help(microphoneHelp)
     }
 
     private var performanceControls: some View {
@@ -281,6 +282,27 @@ struct StudioControlPanelView: View {
 
     private var performanceMenuTitle: String {
         "\(outputResolutionTitle) \(outputFrameRateTitle) · \(store.preferences.previewRenderQuality.title) preview"
+    }
+
+    private var microphoneDetail: String {
+        if !store.isSourceEnabled(.microphone) { return "Off" }
+        if store.sourceLevel(.microphone) <= 0 { return "Muted" }
+        if store.selectedMicrophoneDeviceID == nil { return "No input" }
+        if store.latestSignals.isMicMuted { return "No signal" }
+        return "\(Int((store.latestSignals.speechLevel * 100).rounded()))%"
+    }
+
+    private var isMicrophoneMeterActive: Bool {
+        store.isSourceEnabled(.microphone)
+            && store.sourceLevel(.microphone) > 0
+            && store.selectedMicrophoneDeviceID != nil
+    }
+
+    private var microphoneHelp: String {
+        if !store.isSourceEnabled(.microphone) { return "Turn the microphone source on in Sources." }
+        if store.sourceLevel(.microphone) <= 0 { return "Raise the microphone source level in Sources." }
+        if store.selectedMicrophoneDeviceID == nil { return "Choose a microphone in Sources or Capture preflight." }
+        return "Live microphone input level."
     }
 
     private var performanceMenuSymbol: String {

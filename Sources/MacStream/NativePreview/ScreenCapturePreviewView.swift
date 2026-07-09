@@ -1,7 +1,6 @@
 import AppKit
-import CoreGraphics
-import CoreImage
-import CoreMedia
+@preconcurrency import AVFoundation
+@preconcurrency import CoreMedia
 import MacStreamCore
 @preconcurrency import ScreenCaptureKit
 import SwiftUI
@@ -24,23 +23,20 @@ struct ScreenCapturePreviewView: NSViewRepresentable {
 }
 
 final class ScreenCapturePreviewNSView: NSView {
-    private let previewLayer = CALayer()
-    private let controller = ScreenCapturePreviewController()
+    private let previewLayer: AVSampleBufferDisplayLayer
+    private let controller: ScreenCapturePreviewController
 
     init(configuration: PreviewCaptureConfiguration, captureTarget: ScreenCaptureTarget?) {
+        let previewLayer = AVSampleBufferDisplayLayer()
+        self.previewLayer = previewLayer
+        self.controller = ScreenCapturePreviewController(renderer: previewLayer.sampleBufferRenderer)
         super.init(frame: .zero)
         wantsLayer = true
         layer?.backgroundColor = NSColor.black.cgColor
-        previewLayer.contentsGravity = .resizeAspectFill
+        previewLayer.backgroundColor = NSColor.black.cgColor
+        previewLayer.videoGravity = .resizeAspectFill
         layer?.addSublayer(previewLayer)
         controller.update(configuration: configuration, captureTarget: captureTarget)
-
-        controller.onFrame = { [weak self, weak controller] image in
-            Task { @MainActor in
-                self?.previewLayer.contents = image
-                controller?.markFrameDelivered()
-            }
-        }
     }
 
     required init?(coder: NSCoder) {
@@ -71,10 +67,8 @@ final class ScreenCapturePreviewNSView: NSView {
 }
 
 private final class ScreenCapturePreviewController: NSObject, SCStreamOutput, @unchecked Sendable {
-    var onFrame: (@Sendable (CGImage) -> Void)?
-
+    private let renderer: AVSampleBufferVideoRenderer
     private let queue = DispatchQueue(label: "com.macstream.screen-preview.frames", qos: .userInitiated)
-    private let ciContext = CIContext(options: [.cacheIntermediates: false])
     private var configuration = PreviewCaptureConfiguration()
     private var captureTarget: ScreenCaptureTarget?
     private var stream: SCStream?
@@ -83,7 +77,11 @@ private final class ScreenCapturePreviewController: NSObject, SCStreamOutput, @u
     private var isRunning = false
     private var lastFrameTime = CFAbsoluteTimeGetCurrent()
     private var frameInterval = 1.0 / 12.0
-    private var isFrameDeliveryPending = false
+
+    init(renderer: AVSampleBufferVideoRenderer) {
+        self.renderer = renderer
+        super.init()
+    }
 
     func update(configuration: PreviewCaptureConfiguration, captureTarget: ScreenCaptureTarget?) {
         queue.async { [weak self] in
@@ -144,7 +142,7 @@ private final class ScreenCapturePreviewController: NSObject, SCStreamOutput, @u
             self.captureGeometry = nil
             self.isStarting = false
             self.isRunning = false
-            self.isFrameDeliveryPending = false
+            self.renderer.flush()
 
             Task {
                 try? await stream?.stopCapture()
@@ -217,7 +215,7 @@ private final class ScreenCapturePreviewController: NSObject, SCStreamOutput, @u
 
             self.stream = stream
             self.captureGeometry = captureGeometry
-            self.isFrameDeliveryPending = false
+            self.renderer.flush()
         }
     }
 
@@ -252,7 +250,7 @@ private final class ScreenCapturePreviewController: NSObject, SCStreamOutput, @u
     private func restartCapture(using stream: SCStream) {
         self.stream = nil
         self.captureGeometry = nil
-        self.isFrameDeliveryPending = false
+        renderer.flush()
 
         Task {
             try? await stream.stopCapture()
@@ -318,7 +316,7 @@ private final class ScreenCapturePreviewController: NSObject, SCStreamOutput, @u
               self.stream === stream,
               outputType == .screen,
               sampleBuffer.isValid,
-              let pixelBuffer = sampleBuffer.imageBuffer
+              sampleBuffer.imageBuffer != nil
         else {
             return
         }
@@ -327,21 +325,15 @@ private final class ScreenCapturePreviewController: NSObject, SCStreamOutput, @u
         guard now - lastFrameTime >= frameInterval else { return }
         lastFrameTime = now
 
-        guard !isFrameDeliveryPending, let onFrame else { return }
-
-        let image = CIImage(cvPixelBuffer: pixelBuffer)
-        guard let cgImage = ciContext.createCGImage(image, from: image.extent) else {
-            return
-        }
-
-        isFrameDeliveryPending = true
-        onFrame(cgImage)
+        render(sampleBuffer)
     }
 
-    func markFrameDelivered() {
-        queue.async { [weak self] in
-            self?.isFrameDeliveryPending = false
+    private func render(_ sampleBuffer: CMSampleBuffer) {
+        if renderer.status == .failed || renderer.requiresFlushToResumeDecoding {
+            renderer.flush()
         }
+        guard renderer.isReadyForMoreMediaData else { return }
+        renderer.enqueue(sampleBuffer)
     }
 }
 

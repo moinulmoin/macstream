@@ -2255,19 +2255,20 @@ private final class RecordingVideoCompositor {
     ) {
         let screenImage = normalized(CIImage(cvPixelBuffer: screenPixelBuffer))
         let cameraImage = cameraPixelBuffer.map { enhancedCameraImage(from: $0) }
+        let canvasLayout = StudioCanvasLayout(size: outputRect.size, settings: layoutSettings)
         var composed = background
 
         if layoutSettings.preset.isSplit {
-            let screenRect = splitScreenRect()
-            let webcamRect = splitWebcamRect(screenRect: screenRect)
+            let screenRect = canvasLayout.splitScreenRect.integral
+            let webcamRect = canvasLayout.splitWebcamRect.integral
             composed = renderSource(screenImage, in: screenRect, zoom: layoutSettings.screenZoom)
                 .composited(over: composed)
             composed = renderCamera(cameraImage, in: webcamRect)
                 .composited(over: composed)
         } else {
-            composed = renderSource(screenImage, in: outputRect, zoom: layoutSettings.screenZoom)
+            composed = renderSource(screenImage, in: canvasLayout.contentRect.integral, zoom: layoutSettings.screenZoom)
                 .composited(over: composed)
-            composed = renderCamera(cameraImage, in: pictureInPictureRect())
+            composed = renderCamera(cameraImage, in: canvasLayout.pictureInPictureRect.integral)
                 .composited(over: composed)
         }
 
@@ -2309,30 +2310,12 @@ private final class RecordingVideoCompositor {
         case .black:
             CIColor(red: 0, green: 0, blue: 0)
         case .studio:
-            CIColor(red: 0.05, green: 0.06, blue: 0.09)
+            CIColor(red: 0.06, green: 0.07, blue: 0.10)
         case .stage:
-            CIColor(red: 0.02, green: 0.03, blue: 0.04)
+            CIColor(red: 0.08, green: 0.02, blue: 0.04)
         case .warm:
-            CIColor(red: 0.10, green: 0.07, blue: 0.05)
+            CIColor(red: 0.14, green: 0.10, blue: 0.06)
         }
-    }
-
-    private func splitScreenRect() -> CGRect {
-        CGRect(
-            x: outputRect.minX,
-            y: outputRect.minY,
-            width: outputRect.width * layoutSettings.preset.screenFraction,
-            height: outputRect.height
-        ).integral
-    }
-
-    private func splitWebcamRect(screenRect: CGRect) -> CGRect {
-        CGRect(
-            x: screenRect.maxX,
-            y: outputRect.minY,
-            width: outputRect.maxX - screenRect.maxX,
-            height: outputRect.height
-        ).integral
     }
 
     private func enhancedCameraImage(from pixelBuffer: CVPixelBuffer) -> CIImage {
@@ -2392,17 +2375,6 @@ private final class RecordingVideoCompositor {
         ))
     }
 
-    private func pictureInPictureRect() -> CGRect {
-        let margin = max(18, outputRect.width * 0.018)
-        let width = min(outputRect.width * 0.28, 360)
-        let height = width * 9 / 16
-        return CGRect(
-            x: outputRect.maxX - width - margin,
-            y: margin,
-            width: width,
-            height: height
-        ).integral
-    }
 }
 
 private struct ActiveStreamConfigurationUpdate {

@@ -55,31 +55,23 @@ private struct PreviewColumnView: View {
 
     var body: some View {
         VStack(spacing: 14) {
-            SessionStatusStripView(store: store)
-            OutputTrustStripView(store: store)
-
-            ZStack(alignment: .topTrailing) {
-                PreviewCanvasView(
-                    scene: store.selectedScene,
-                    signals: store.latestSignals,
-                    previewConfiguration: previewConfiguration,
-                    cameraEnhancements: store.preferences.cameraEnhancements,
-                    layoutSettings: store.preferences.layoutSettings,
-                    cameraDeviceID: store.selectedCameraDeviceID,
-                    isCameraEnabled: store.isSourceEnabled(.camera),
-                    isCameraCaptureReady: store.captureReport.hasGrantedPermission(for: .camera),
-                    isScreenEnabled: store.isSourceEnabled(.screen),
-                    screenLevel: store.sourceLevel(.screen),
-                    isScreenCaptureReady: store.captureReport.isScreenCapturePermissionGranted,
-                    screenCaptureTarget: store.selectedScreenCaptureTarget,
-                    onCameraPreviewFailure: { detail in
-                        store.notePreviewSetupIssue(detail)
-                    }
-                )
-
-                PreviewOutputHUD(store: store)
-                    .padding(16)
-            }
+            PreviewCanvasView(
+                scene: store.selectedScene,
+                signals: store.latestSignals,
+                previewConfiguration: previewConfiguration,
+                cameraEnhancements: store.preferences.cameraEnhancements,
+                layoutSettings: store.preferences.layoutSettings,
+                cameraDeviceID: store.selectedCameraDeviceID,
+                isCameraEnabled: store.isSourceEnabled(.camera),
+                isCameraCaptureReady: store.captureReport.hasGrantedPermission(for: .camera),
+                isScreenEnabled: store.isSourceEnabled(.screen),
+                screenLevel: store.sourceLevel(.screen),
+                isScreenCaptureReady: store.captureReport.isScreenCapturePermissionGranted,
+                screenCaptureTarget: store.selectedScreenCaptureTarget,
+                onCameraPreviewFailure: { detail in
+                    store.notePreviewSetupIssue(detail)
+                }
+            )
             .frame(maxWidth: .infinity, maxHeight: .infinity)
 
             StudioControlPanelView(store: store)
@@ -92,151 +84,13 @@ private struct PreviewColumnView: View {
     }
 }
 
-private struct OutputTrustStripView: View {
-    var store: StudioStore
-
-    var body: some View {
-        ViewThatFits(in: .horizontal) {
-            HStack(spacing: 8) {
-                transportBadge
-                sceneBadge
-                targetBadge
-                outputBadge
-                previewBadge
-            }
-
-            VStack(alignment: .leading, spacing: 8) {
-                HStack(spacing: 8) {
-                    transportBadge
-                    sceneBadge
-                    targetBadge
-                }
-                HStack(spacing: 8) {
-                    outputBadge
-                    previewBadge
-                }
-            }
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .studioCard(padding: 10, cornerRadius: 14)
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel(Text("Output summary"))
-        .accessibilityValue(Text(outputAccessibilityValue))
-    }
-
-    private var transportBadge: some View {
-        StudioBadge(title: store.streamTransport.title, systemImage: transportSymbol, tint: transportTint)
-    }
-
-    private var sceneBadge: some View {
-        StudioBadge(
-            title: "\(store.selectedScene.title) · \(store.preferences.layoutSettings.preset.shortTitle)",
-            systemImage: store.selectedScene.kind.symbolName,
-            tint: .secondary
-        )
-    }
-
-    private var targetBadge: some View {
-        StudioBadge(title: captureTargetTitle, systemImage: captureTargetSymbol, tint: .secondary)
-    }
-
-    private var outputBadge: some View {
-        StudioBadge(title: outputTitle, systemImage: outputSymbol, tint: .secondary)
-    }
-
-    private var previewBadge: some View {
-        StudioBadge(title: previewTitle, systemImage: "eye", tint: previewTint)
-    }
-
-    private var transportSymbol: String {
-        switch store.streamTransport {
-        case .preview: "play.circle"
-        case .endpointValidation: "network"
-        case .rtmpPublish: "antenna.radiowaves.left.and.right"
-        }
-    }
-
-    private var transportTint: Color {
-        switch store.streamState {
-        case .offline: .secondary
-        case .connecting: StudioPalette.warning
-        case .live: StudioPalette.success
-        case .degraded, .failed: StudioPalette.live
-        }
-    }
-
-    private var captureTargetTitle: String {
-        guard usesScreenCapture else {
-            return "No screen"
-        }
-
-        guard let target = store.selectedScreenCaptureTarget else {
-            return "No target"
-        }
-
-        return Self.boundedTitle(target.name, limit: 28)
-    }
-
-    private var captureTargetSymbol: String {
-        guard usesScreenCapture else {
-            return "display.slash"
-        }
-
-        return switch store.selectedScreenCaptureTarget?.kind {
-        case .display: "display"
-        case .window: "macwindow"
-        case nil: "display.trianglebadge.exclamationmark"
-        }
-    }
-
-    private var usesScreenCapture: Bool {
-        switch store.selectedSceneKind {
-        case .screenAndFace, .screenOnly:
-            true
-        case .face, .brb:
-            false
-        }
-    }
-
-    private var outputTitle: String {
-        "\(store.currentOutputResolutionWidth)w · \(store.currentOutputFrameRate) FPS"
-    }
-
-    private var outputSymbol: String {
-        store.canEditOutputCaptureSettings ? "rectangle.dashed" : "lock.fill"
-    }
-
-    private var previewTitle: String {
-        "Preview \(store.preferences.previewRenderQuality.title)"
-    }
-
-    private var previewTint: Color {
-        switch store.preferences.previewRenderQuality {
-        case .automatic: .secondary
-        case .half: StudioPalette.warning
-        case .full: StudioPalette.info
-        }
-    }
-
-    private var outputAccessibilityValue: String {
-        "\(store.streamTransport.title). \(store.selectedScene.title). \(captureTargetTitle). \(outputTitle). \(store.preferences.previewRenderQuality.detailTitle)."
-    }
-
-    private static func boundedTitle(_ title: String, limit: Int) -> String {
-        guard title.count > limit else {
-            return title
-        }
-
-        return "\(title.prefix(max(1, limit - 3)))..."
-    }
-}
-
 private struct InspectorView: View {
     var store: StudioStore
+    @SceneStorage("MacStream.InspectorView.selectedTab") private var selectedTabRaw = InspectorTab.live.rawValue
 
     var body: some View {
         VStack(spacing: 14) {
-            InspectorHeaderView(store: store)
+            InspectorTabBarView(selection: selectedTabBinding)
 
             ScrollViewReader { scrollProxy in
                 ScrollView {
@@ -245,15 +99,19 @@ private struct InspectorView: View {
                             .frame(height: 0)
                             .id(InspectorPanelID.detailTop)
 
-                        if store.shouldShowSetupChecklist {
-                            setupDetailPanels
-                        } else {
-                            operatingPanels
-                        }
+                        rightSidebarPanels
                     }
                     .padding(.bottom, 18)
                 }
                 .onChange(of: store.shouldShowSetupChecklist) { _, _ in
+                    if store.shouldShowSetupChecklist {
+                        selectedTabRaw = InspectorTab.live.rawValue
+                    }
+                    withAnimation(.snappy(duration: 0.18)) {
+                        scrollProxy.scrollTo(InspectorPanelID.detailTop, anchor: .top)
+                    }
+                }
+                .onChange(of: selectedTabRaw) { _, _ in
                     withAnimation(.snappy(duration: 0.18)) {
                         scrollProxy.scrollTo(InspectorPanelID.detailTop, anchor: .top)
                     }
@@ -261,6 +119,42 @@ private struct InspectorView: View {
             }
         }
         .padding(18)
+    }
+
+    @ViewBuilder
+    private var rightSidebarPanels: some View {
+        switch selectedTab {
+        case .live:
+            livePanels
+        case .layout:
+            LayoutComposerView(store: store)
+        case .sources:
+            SourceRackView(store: store)
+            CapturePreflightView(store: store)
+        case .health:
+            LiveStatusPanelView(store: store)
+            StreamHealthView(store: store)
+            DestinationView(store: store)
+            EventLogView(
+                events: store.events,
+                clipMarkers: store.clipMarkers,
+                latestClipExportURL: store.latestClipExportURL,
+                latestSessionReportURL: store.latestSessionReportURL
+            ) {
+                store.exportClipMarkers()
+            } exportReport: {
+                store.exportSessionReport()
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var livePanels: some View {
+        if store.shouldShowSetupChecklist {
+            setupDetailPanels
+        } else {
+            LiveStatusPanelView(store: store)
+        }
     }
 
     @ViewBuilder
@@ -279,24 +173,15 @@ private struct InspectorView: View {
         }
     }
 
-    @ViewBuilder
-    private var operatingPanels: some View {
-        DirectorPanelView(store: store)
-        LayoutComposerView(store: store)
-        StreamHealthView(store: store)
-        DestinationView(store: store)
-        CapturePreflightView(store: store)
-        SourceRackView(store: store)
-        EventLogView(
-            events: store.events,
-            clipMarkers: store.clipMarkers,
-            latestClipExportURL: store.latestClipExportURL,
-            latestSessionReportURL: store.latestSessionReportURL
-        ) {
-            store.exportClipMarkers()
-        } exportReport: {
-            store.exportSessionReport()
-        }
+    private var selectedTab: InspectorTab {
+        InspectorTab(rawValue: selectedTabRaw) ?? .live
+    }
+
+    private var selectedTabBinding: Binding<InspectorTab> {
+        Binding(
+            get: { selectedTab },
+            set: { selectedTabRaw = $0.rawValue }
+        )
     }
 }
 
@@ -304,56 +189,107 @@ private enum InspectorPanelID: Hashable {
     case detailTop
 }
 
-private struct InspectorHeaderView: View {
+private enum InspectorTab: String, CaseIterable, Identifiable {
+    case live
+    case layout
+    case sources
+    case health
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .live: "Live"
+        case .layout: "Layout"
+        case .sources: "Sources"
+        case .health: "Health"
+        }
+    }
+
+    var symbolName: String {
+        switch self {
+        case .live: "dot.radiowaves.left.and.right"
+        case .layout: "rectangle.split.2x1"
+        case .sources: "slider.horizontal.3"
+        case .health: "waveform.path.ecg"
+        }
+    }
+}
+
+private struct InspectorTabBarView: View {
+    @Binding var selection: InspectorTab
+
+    var body: some View {
+        Picker("Sidebar", selection: $selection) {
+            ForEach(InspectorTab.allCases) { tab in
+                Label(tab.title, systemImage: tab.symbolName)
+                    .tag(tab)
+            }
+        }
+        .pickerStyle(.segmented)
+        .labelsHidden()
+        .accessibilityLabel(Text("Sidebar section"))
+    }
+}
+
+private struct LiveStatusPanelView: View {
     var store: StudioStore
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            HStack(alignment: .top, spacing: 12) {
-                VStack(alignment: .leading, spacing: 4) {
-                    Label(headerTitle, systemImage: headerSymbol)
-                        .font(.headline)
-
-                    Text(headerDetail)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(2)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-
-                Spacer(minLength: 10)
-
+            StudioPanelHeader(
+                title: "Live",
+                systemImage: "dot.radiowaves.left.and.right",
+                subtitle: statusDetail
+            ) {
                 StudioBadge(title: statusTitle, systemImage: statusSymbol, tint: statusTint, isFilled: statusIsFilled)
             }
 
             HStack(spacing: 8) {
-                StudioBadge(title: store.streamState.title, systemImage: streamSymbol, tint: streamTint)
-                StudioBadge(title: store.recordingState.title, systemImage: "record.circle", tint: recordingTint)
+                statusTile("Stream", value: streamTitle, symbol: streamSymbol, tint: streamTint)
+                statusTile("Record", value: recordingTitle, symbol: recordingSymbol, tint: recordingTint)
+            }
+
+            MicrophoneLevelMeterView(
+                level: store.latestSignals.speechLevel,
+                title: "Mic",
+                detail: microphoneDetail,
+                isActive: isMicrophoneMeterActive
+            )
+
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 8) {
+                    outputBadge
+                    previewBadge
+                }
+                VStack(alignment: .leading, spacing: 8) {
+                    outputBadge
+                    previewBadge
+                }
             }
         }
         .studioCard()
         .accessibilityElement(children: .combine)
-        .accessibilityLabel(Text(headerTitle))
-        .accessibilityValue(Text("\(store.streamState.title). \(store.recordingState.title). \(headerDetail)"))
+        .accessibilityLabel(Text("Live status"))
+        .accessibilityValue(Text("\(streamTitle). \(recordingTitle). \(outputTitle). \(previewTitle)."))
     }
 
-    private var headerTitle: String {
-        if store.shouldShowSetupChecklist { return "Preflight" }
-        if store.isLive { return "On Air" }
-        if store.recordingState == .recording { return "Recording" }
-        if hasStreamFailure || store.recordingState.isFailed { return "Needs Attention" }
-        return "Director Ready"
-    }
-
-    private var headerDetail: String {
-        if store.shouldShowSetupChecklist {
-            if let nextItem = store.nextSetupChecklistItem {
-                return "Next: \(nextItem.title). \(nextItem.detail)"
-            }
-
-            return "\(store.completedSetupItemCount)/\(max(store.totalSetupItemCount, 1)) setup checks are ready."
+    private func statusTile(_ title: String, value: String, symbol: String, tint: Color) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Label(title, systemImage: symbol)
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(tint)
+            Text(value)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(10)
+        .background(Color.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+    }
 
+    private var statusDetail: String {
         if store.isLive || store.isStreamConnecting || hasStreamFailure {
             return store.streamStatusDetail
         }
@@ -362,21 +298,10 @@ private struct InspectorHeaderView: View {
             return store.recordingStatusDetail
         }
 
-        return "AI director is watching motion, speech, app focus, and idle time."
-    }
-
-    private var headerSymbol: String {
-        if store.shouldShowSetupChecklist { return "checklist.checked" }
-        if store.isLive { return "dot.radiowaves.left.and.right" }
-        if store.recordingState == .recording { return "record.circle" }
-        if hasStreamFailure || store.recordingState.isFailed { return "exclamationmark.triangle.fill" }
-        return "sparkles.tv"
+        return "\(store.selectedScene.title) with \(store.preferences.layoutSettings.preset.shortTitle) layout."
     }
 
     private var statusTitle: String {
-        if store.shouldShowSetupChecklist {
-            return "\(store.completedSetupItemCount)/\(max(store.totalSetupItemCount, 1)) ready"
-        }
         if store.isLive { return "Live" }
         if store.isStreamConnecting { return "Starting" }
         if store.recordingState == .recording { return "Rec" }
@@ -386,7 +311,6 @@ private struct InspectorHeaderView: View {
     }
 
     private var statusSymbol: String {
-        if store.shouldShowSetupChecklist { return "arrow.right.circle.fill" }
         if store.isLive { return "record.circle.fill" }
         if store.isStreamConnecting || store.isRecordingStarting || store.isRecordingStopping { return "hourglass.circle.fill" }
         if store.recordingState == .recording { return "record.circle.fill" }
@@ -398,7 +322,6 @@ private struct InspectorHeaderView: View {
         if store.isLive { return StudioPalette.live }
         if store.recordingState == .recording { return StudioPalette.recording }
         if store.isStreamConnecting || store.isRecordingStarting || store.isRecordingStopping { return StudioPalette.warning }
-        if store.shouldShowSetupChecklist { return StudioPalette.warning }
         if hasStreamFailure || store.recordingState.isFailed { return StudioPalette.live }
         return StudioPalette.success
     }
@@ -412,8 +335,18 @@ private struct InspectorHeaderView: View {
         return false
     }
 
+    private var streamTitle: String {
+        if store.isLive { return store.streamTransport == .preview ? "Preview Live" : "Live" }
+        if store.isStreamConnecting { return "Starting" }
+        if hasStreamFailure { return "Failed" }
+        return store.streamTransport == .preview ? "Preview Ready" : "Ready"
+    }
+
     private var streamSymbol: String {
-        switch store.streamTransport {
+        if store.isLive { return "record.circle.fill" }
+        if store.isStreamConnecting { return "hourglass.circle.fill" }
+        if hasStreamFailure { return "exclamationmark.triangle.fill" }
+        return switch store.streamTransport {
         case .preview: "play.circle"
         case .endpointValidation: "network"
         case .rtmpPublish: "antenna.radiowaves.left.and.right"
@@ -429,117 +362,12 @@ private struct InspectorHeaderView: View {
         }
     }
 
-    private var recordingTint: Color {
-        switch store.recordingState {
-        case .stopped: .secondary
-        case .starting: StudioPalette.warning
-        case .recording: StudioPalette.recording
-        case .failed: StudioPalette.live
-        }
-    }
-}
-
-private struct SessionStatusStripView: View {
-    var store: StudioStore
-
-    var body: some View {
-        HStack(alignment: .center, spacing: 14) {
-            VStack(alignment: .leading, spacing: 3) {
-                Text("MacStream Studio")
-                    .font(.title3.weight(.semibold))
-
-                Text("\(store.selectedScene.title) · \(store.selectedScene.subtitle)")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-            }
-
-            Spacer(minLength: 12)
-
-            ViewThatFits(in: .horizontal) {
-                badgeRow
-                compactBadgeRow
-            }
-        }
-        .studioCard(padding: 12, cornerRadius: 16)
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel(Text("Studio session status"))
-        .accessibilityValue(Text(sessionAccessibilityValue))
-    }
-
-    private var badgeRow: some View {
-        HStack(spacing: 8) {
-            if store.isLive {
-                StudioStatusDot(tint: StudioPalette.live, pulsing: true)
-            }
-            streamBadge
-            recordingBadge
-            StudioBadge(title: store.directorMode.title, systemImage: "sparkles", tint: directorTint)
-            StudioBadge(title: store.effectivePerformanceMode.title, systemImage: "speedometer", tint: .secondary)
-        }
-    }
-
-    private var compactBadgeRow: some View {
-        VStack(alignment: .trailing, spacing: 6) {
-            HStack(spacing: 8) {
-                if store.isLive {
-                    StudioStatusDot(tint: StudioPalette.live, pulsing: true)
-                }
-                streamBadge
-                recordingBadge
-            }
-            HStack(spacing: 8) {
-                StudioBadge(title: store.directorMode.title, systemImage: "sparkles", tint: directorTint)
-                StudioBadge(title: store.effectivePerformanceMode.title, systemImage: "speedometer", tint: .secondary)
-            }
-        }
-    }
-
-    private var streamBadge: some View {
-        StudioBadge(
-            title: streamTitle,
-            systemImage: streamSymbol,
-            tint: streamTint,
-            isFilled: store.isLive
-        )
-    }
-
-    private var recordingBadge: some View {
-        StudioBadge(
-            title: recordingTitle,
-            systemImage: recordingSymbol,
-            tint: recordingTint,
-            isFilled: store.recordingState == .recording
-        )
-    }
-
-    private var streamTitle: String {
-        if store.isLive { return store.streamTransport == .preview ? "Preview Live" : "Live" }
-        if store.isStreamConnecting { return "Starting" }
-        if hasStreamFailure { return "Stream Failed" }
-        return store.streamTransport == .preview ? "Preview Ready" : "Stream Ready"
-    }
-
-    private var streamSymbol: String {
-        if store.isLive { return "record.circle.fill" }
-        if store.isStreamConnecting { return "hourglass.circle.fill" }
-        if hasStreamFailure { return "exclamationmark.triangle.fill" }
-        return store.streamTransport == .preview ? "play.circle" : "antenna.radiowaves.left.and.right"
-    }
-
-    private var streamTint: Color {
-        if store.isLive { return StudioPalette.live }
-        if store.isStreamConnecting { return StudioPalette.warning }
-        if hasStreamFailure { return StudioPalette.live }
-        return .secondary
-    }
-
     private var recordingTitle: String {
         if store.recordingState == .recording { return "Recording" }
-        if store.isRecordingStarting { return "Starting Rec" }
-        if store.isRecordingStopping { return "Stopping Rec" }
-        if store.recordingState.isFailed { return "Rec Failed" }
-        return "Record Ready"
+        if store.isRecordingStarting { return "Starting" }
+        if store.isRecordingStopping { return "Stopping" }
+        if store.recordingState.isFailed { return "Failed" }
+        return "Ready"
     }
 
     private var recordingSymbol: String {
@@ -550,49 +378,20 @@ private struct SessionStatusStripView: View {
     }
 
     private var recordingTint: Color {
-        if store.recordingState == .recording { return StudioPalette.recording }
-        if store.isRecordingStarting || store.isRecordingStopping { return StudioPalette.warning }
-        if store.recordingState.isFailed { return StudioPalette.live }
-        return .secondary
-    }
-
-    private var directorTint: Color {
-        switch store.directorMode {
-        case .paused: .secondary
-        case .suggest: StudioPalette.info
-        case .auto: StudioPalette.accent
+        switch store.recordingState {
+        case .stopped: .secondary
+        case .starting: StudioPalette.warning
+        case .recording: StudioPalette.recording
+        case .failed: StudioPalette.live
         }
     }
 
-    private var hasStreamFailure: Bool {
-        if case .failed = store.streamState { return true }
-        return false
+    private var outputBadge: some View {
+        StudioBadge(title: outputTitle, systemImage: outputSymbol, tint: .secondary)
     }
 
-    private var sessionAccessibilityValue: String {
-        "\(streamTitle). \(recordingTitle). Director \(store.directorMode.title). Performance \(store.effectivePerformanceMode.title)."
-    }
-}
-
-private struct PreviewOutputHUD: View {
-    var store: StudioStore
-
-    var body: some View {
-        VStack(alignment: .trailing, spacing: 8) {
-            StudioBadge(title: outputTitle, systemImage: outputSymbol, tint: .secondary)
-            StudioBadge(title: previewTitle, systemImage: "eye", tint: .secondary)
-
-            if store.isLive || store.isStreamConnecting {
-                StudioBadge(title: streamTitle, systemImage: streamSymbol, tint: streamTint, isFilled: store.isLive)
-            }
-
-            if store.recordingState == .recording || store.isRecordingStarting || store.isRecordingStopping {
-                StudioBadge(title: recordingTitle, systemImage: recordingSymbol, tint: recordingTint, isFilled: store.recordingState == .recording)
-            }
-        }
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel(Text("Output overlay"))
-        .accessibilityValue(Text(hudAccessibilityValue))
+    private var previewBadge: some View {
+        StudioBadge(title: previewTitle, systemImage: "eye", tint: .secondary)
     }
 
     private var outputTitle: String {
@@ -607,55 +406,18 @@ private struct PreviewOutputHUD: View {
         "Preview \(store.preferences.previewRenderQuality.title)"
     }
 
-    private var hudAccessibilityValue: String {
-        var parts = [outputTitle, previewTitle]
-
-        if store.isLive || store.isStreamConnecting {
-            parts.append(streamTitle)
-        }
-
-        if store.recordingState == .recording || store.isRecordingStarting || store.isRecordingStopping {
-            parts.append(recordingTitle)
-        }
-
-        return parts.joined(separator: ". ")
+    private var microphoneDetail: String {
+        if !store.isSourceEnabled(.microphone) { return "Off" }
+        if store.sourceLevel(.microphone) <= 0 { return "Muted" }
+        if store.selectedMicrophoneDeviceID == nil { return "No input" }
+        if store.latestSignals.isMicMuted { return "No signal" }
+        return "\(Int((store.latestSignals.speechLevel * 100).rounded()))%"
     }
 
-    private var streamTitle: String {
-        if store.isLive { return store.streamTransport == .preview ? "Preview Live" : "Live" }
-        if store.isStreamConnecting { return "Starting" }
-        return store.streamState.title
-    }
-
-    private var streamSymbol: String {
-        if store.isLive { return "record.circle.fill" }
-        if store.isStreamConnecting { return "hourglass.circle.fill" }
-        return "dot.radiowaves.left.and.right"
-    }
-
-    private var streamTint: Color {
-        if store.isLive { return StudioPalette.live }
-        if store.isStreamConnecting { return StudioPalette.warning }
-        return .secondary
-    }
-
-    private var recordingTitle: String {
-        if store.recordingState == .recording { return "Recording" }
-        if store.isRecordingStarting { return "Starting Rec" }
-        if store.isRecordingStopping { return "Stopping Rec" }
-        return store.recordingState.title
-    }
-
-    private var recordingSymbol: String {
-        if store.recordingState == .recording { return "record.circle.fill" }
-        if store.isRecordingStarting || store.isRecordingStopping { return "hourglass.circle.fill" }
-        return "record.circle"
-    }
-
-    private var recordingTint: Color {
-        if store.recordingState == .recording { return StudioPalette.recording }
-        if store.isRecordingStarting || store.isRecordingStopping { return StudioPalette.warning }
-        return .secondary
+    private var isMicrophoneMeterActive: Bool {
+        store.isSourceEnabled(.microphone)
+            && store.sourceLevel(.microphone) > 0
+            && store.selectedMicrophoneDeviceID != nil
     }
 }
 

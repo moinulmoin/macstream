@@ -4,17 +4,17 @@
 
 # MacStream
 
-### Preview, record, and prove the stream before going live.
+### Build the stream layout, preview it, and go live with confidence.
 
-A Mac-native streaming studio with a built-in AI director — built for solo creators
-who stream camera and screen.
+A Mac-native streaming studio for solo creators who stream camera and screen,
+with recording and AI as secondary, optional layers.
 
 ![macOS 26](https://img.shields.io/badge/macOS-26-111?logo=apple&logoColor=white)
 ![Swift 6](https://img.shields.io/badge/Swift-6.0-F05138?logo=swift&logoColor=white)
 ![SwiftUI](https://img.shields.io/badge/UI-SwiftUI-0A84FF)
 ![ScreenCaptureKit](https://img.shields.io/badge/capture-ScreenCaptureKit-5E6AD2)
 ![Tests](https://img.shields.io/badge/tests-14%20suites-30A46C)
-![Version](https://img.shields.io/badge/version-v0.1.0-6366F1)
+![Version](https://img.shields.io/badge/version-v0.2.0-6366F1)
 
 <img src=".github/assets/macstream-studio.png" width="860" alt="MacStream Studio showing preview, control room, and preflight" />
 
@@ -29,16 +29,18 @@ streams, product demos, design streams, workshops, founder livestreams,
 screen-share podcasts — any format that pairs a camera with a screen.
 
 It is deliberately narrower than OBS. Instead of a node graph and a thousand knobs,
-you get a polished Mac control room built around the actual solo-creator workflow:
+you get a polished Mac control room built around the actual solo-creator live
+streaming workflow:
 
 - **Preview first.** The program monitor fills the window — not a tiny debug thumbnail.
+- **Layout is core.** Background, canvas padding, split ratios, source zoom, and
+  preview cost are first-class controls.
 - **Preflight before panic.** Scene, capture, sources, destination, and permissions are
   checked before the stream starts.
 - **Explicit device pickers.** Choose your real camera, microphone, and display or
   window with refresh controls — no guessing what "Desktop Audio" means.
-- **AI that stays out of the way.** AI helps you set up, explains director cues, and
-  summarizes sessions. Live scene switching stays fully deterministic and testable —
-  no model touches the hot capture path.
+- **AI stays out of the core.** AI-assisted setup and transcription belong on the
+  roadmap, but the live path remains deterministic, testable, and optimized first.
 
 ---
 
@@ -50,9 +52,9 @@ you get a polished Mac control room built around the actual solo-creator workflo
 - Full-bleed SwiftUI program preview
 - AVFoundation camera preview pipeline
 - ScreenCaptureKit display and window capture
-- Control Room panel with scene deck, director mode, stream/recording output,
-  and performance mode
-- Compact session strip with collapsible detail rail
+- Control Room panel with scene deck, stream/recording output, live mic input,
+  and output performance controls
+- Tabbed inspector for Live, Layout, Sources, and Health
 - Studio Chrome design system: dark color scheme, glass-morphism cards,
   status badges with pulse animation, adaptive layout via `ViewThatFits`
 
@@ -63,7 +65,7 @@ you get a polished Mac control room built around the actual solo-creator workflo
 - Screen and window picker with refresh (up to 6 shareable windows)
 - Per-source enable/disable toggle with active-capture locking
 - Adjustable levels for camera and microphone with live mic meter
-- Camera enhancement controls: mirror toggle, auto-light with brightness slider,
+- Camera enhancement controls: mirror toggle, exposure boost with brightness slider,
   rotation picker
 - Selections persist across preview, recording, RTMP configuration, director
   signals, and session reports
@@ -82,15 +84,14 @@ you get a polished Mac control room built around the actual solo-creator workflo
 - Rich stream state: `offline → connecting → live → degraded → failed`
 - In-app auto-update via Sparkle — **Check for Updates…** in **Settings → About & Updates**, with updates delivered from EdDSA-signed GitHub Releases (`appcast.xml`)
 
-### Deterministic AI Director
+### AI Roadmap
 
-- **Three modes:** `Paused`, `Suggest` (cue & wait), `Auto` (countdown-gated apply)
-- **Typed local signals:** speech level, screen motion, frontmost app, camera
-  face presence, idle time, capture health, system pressure
-- **Safety cues** (muted mic, frozen screen) bypass hold windows and cooldowns
-- **Configurable profiles:** Balanced, Coding, Demo, Teaching, Podcast
-- **Cooldown enforcement** and minimum switch intervals prevent jitter
-- Director stays fully deterministic — no model inference on the live path
+- AI-assisted setup, live transcription, summaries, and cue explanations are
+  roadmap features.
+- Any automated scene intelligence must stay deterministic and outside the hot
+  capture path.
+- Model-backed features must never compete with streaming, capture, publishing,
+  or Apple Silicon performance work.
 
 ### Adaptive Performance
 
@@ -105,24 +106,21 @@ you get a polished Mac control room built around the actual solo-creator workflo
 ### Clip Markers & Session Reports
 
 - Manual clip markers during capture (Cmd+Shift+M)
-- Director-triggered markers for scene changes and signal spikes
+- Stream cue markers for scene changes and signal spikes
 - JSON clip export with timestamp, scene, source state, and signal snapshot
 - Session reports: destination, transport, recording path, source states,
   health timeline, signal history, clip markers, system pressure
 - RTMP secrets redacted in all exports
 - Duplicate-safe filenames: no collision on rapid re-export
 
-### AI Setup Assistant
+### Future AI Setup Assistant
 
-- **Provider-first architecture:** Foundation Models (macOS 26 planned),
-  OpenAI-compatible local servers (LM Studio, Ollama, llama.cpp, MLX server),
-  rules fallback
-- Natural language input → typed director profile ("I'm teaching SwiftUI with
-  screen and camera" → Teaching profile)
-- Disabled during capture — AI never competes with streaming
-- Configurable provider settings: base URL, model, API key (stored in Keychain),
-  timeout, capability probe
-- Experimental MLX on-device adapter behind `MAC_STREAM_ENABLE_MLX=1` build flag
+- Provider-first architecture is planned for optional setup help and future
+  transcription workflows.
+- Local and OpenAI-compatible providers remain opt-in, disabled during capture,
+  and outside the live hot path.
+- Experimental MLX adapter scaffolding is behind the `MAC_STREAM_ENABLE_MLX=1`
+  build flag.
 
 ---
 
@@ -213,7 +211,7 @@ MAC_STREAM_ENABLE_MLX=1 swift build
 
 # Signed local app bundle with Developer ID
 MAC_STREAM_CODESIGN_IDENTITY="Developer ID Application: Ideaplexa LLC (53P98M92V7)" \
-MAC_STREAM_VERSION=0.1.0 \
+MAC_STREAM_VERSION=0.2.0 \
 MAC_STREAM_BUILD_NUMBER=1 \
 ./script/package_macos_app.sh
 ```
@@ -259,18 +257,18 @@ Read the full specs:
 
 ## Status
 
-**v0.1.0 core spine — proven and solid.**
+**v0.2.0 core streaming candidate — layout and performance first.**
 
 What is production-quality today:
 
 - Studio shell: full-bleed preview, explicit scene deck, responsive layout
-- Source UX: real device pickers, per-source controls, persistence
+- Source UX: real device pickers, per-source controls, live mic level, persistence
+- Layout controls: background, canvas padding, split presets, screen/webcam zoom
 - Preflight: capture permissions, device readiness, destination validation
 - Local recording: Screen and composited Screen+Face with audio
-- Deterministic director: 3 modes, 5 profiles, safety cues, adaptive timing
 - Adaptive performance: thermal/memory/pressure-aware capture scaling
 - Clip markers and session reports with secret redaction
-- AI setup assistant with rules fallback and provider-first architecture
+- AI/provider scaffolding is present but optional and outside the core live path
 - 14 test suites, CI on every push, release pipeline with signing and notarization
 
 Before calling this release-grade streaming software, the remaining gates are

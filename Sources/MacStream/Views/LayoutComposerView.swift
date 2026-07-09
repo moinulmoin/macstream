@@ -59,6 +59,8 @@ struct LayoutComposerView: View {
                     tint: .secondary
                 )
 
+                paddingControl
+
                 zoomControl(
                     title: "Screen",
                     systemImage: "display",
@@ -112,11 +114,42 @@ struct LayoutComposerView: View {
         }
     }
 
+    private var paddingControl: some View {
+        HStack(spacing: 8) {
+            Label("Padding", systemImage: "rectangle.inset.filled")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.secondary)
+                .frame(width: 76, alignment: .leading)
+
+            Slider(
+                value: canvasPaddingBinding,
+                in: StudioLayoutSettings.minimumCanvasPadding...StudioLayoutSettings.maximumCanvasPadding,
+                step: 0.01
+            )
+            .accessibilityLabel(Text("Canvas padding"))
+            .accessibilityValue(Text(paddingTitle(store.preferences.layoutSettings.canvasPadding)))
+
+            Text(paddingTitle(store.preferences.layoutSettings.canvasPadding))
+                .font(.caption.monospacedDigit().weight(.semibold))
+                .foregroundStyle(.secondary)
+                .frame(width: 48, alignment: .trailing)
+        }
+    }
+
     private var screenZoomBinding: Binding<Double> {
         Binding(
             get: { store.preferences.layoutSettings.screenZoom },
             set: { newZoom in
                 updateLayout { $0.screenZoom = newZoom }
+            }
+        )
+    }
+
+    private var canvasPaddingBinding: Binding<Double> {
+        Binding(
+            get: { store.preferences.layoutSettings.canvasPadding },
+            set: { newPadding in
+                updateLayout { $0.canvasPadding = newPadding }
             }
         )
     }
@@ -142,6 +175,10 @@ struct LayoutComposerView: View {
 
     private func zoomTitle(_ value: Double) -> String {
         "\(Int((StudioLayoutSettings.normalizedSourceZoom(value) * 100).rounded()))%"
+    }
+
+    private func paddingTitle(_ value: Double) -> String {
+        "\(Int((StudioLayoutSettings.normalizedCanvasPadding(value) * 100).rounded()))%"
     }
 }
 

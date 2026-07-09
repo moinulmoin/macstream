@@ -239,6 +239,7 @@ func outputAndLayoutPreferencesNormalizeAndPersist() throws {
     let layoutSettings = StudioLayoutSettings(
         preset: .screen70Webcam30,
         backgroundStyle: .stage,
+        canvasPadding: 0.5,
         screenZoom: 0.2,
         webcamZoom: 3.4
     )
@@ -253,6 +254,7 @@ func outputAndLayoutPreferencesNormalizeAndPersist() throws {
 
     #expect(layoutSettings.screenZoom == StudioLayoutSettings.minimumSourceZoom)
     #expect(layoutSettings.webcamZoom == StudioLayoutSettings.maximumSourceZoom)
+    #expect(layoutSettings.canvasPadding == StudioLayoutSettings.maximumCanvasPadding)
     #expect(decoded.outputResolution == .ultraHD4K)
     #expect(decoded.outputFrameRate == .fps60)
     #expect(decoded.previewRenderQuality == .half)
@@ -267,8 +269,48 @@ func outputAndLayoutPreferencesNormalizeAndPersist() throws {
     )
     #expect(decodedLayout.preset == .evenSplit)
     #expect(decodedLayout.backgroundStyle == .warm)
+    #expect(decodedLayout.canvasPadding == 0.04)
     #expect(decodedLayout.screenZoom == StudioLayoutSettings.minimumSourceZoom)
     #expect(decodedLayout.webcamZoom == StudioLayoutSettings.maximumSourceZoom)
+}
+
+@Test
+func studioCanvasLayoutAppliesPaddingAndSplitGap() {
+    let settings = StudioLayoutSettings(
+        preset: .screen70Webcam30,
+        backgroundStyle: .stage,
+        canvasPadding: 0.04
+    )
+    let layout = StudioCanvasLayout(
+        size: CGSize(width: 1_920, height: 1_080),
+        settings: settings
+    )
+
+    #expect(abs(layout.canvasInset - 43.2) < 0.001)
+    #expect(layout.contentRect.minX == layout.canvasInset)
+    #expect(layout.contentRect.minY == layout.canvasInset)
+    #expect(layout.sourceGap >= 8)
+    #expect(abs(layout.splitScreenRect.width - ((layout.contentRect.width - layout.sourceGap) * 0.7)) < 0.001)
+    #expect(abs(layout.splitWebcamRect.minX - (layout.splitScreenRect.maxX + layout.sourceGap)) < 0.001)
+    #expect(layout.splitWebcamRect.maxX == layout.contentRect.maxX)
+}
+
+@Test
+func studioCanvasLayoutAllowsEdgeToEdgeSources() {
+    let settings = StudioLayoutSettings(
+        preset: .evenSplit,
+        canvasPadding: 0
+    )
+    let layout = StudioCanvasLayout(
+        size: CGSize(width: 1_280, height: 720),
+        settings: settings
+    )
+
+    #expect(layout.canvasInset == 0)
+    #expect(layout.sourceGap == 0)
+    #expect(layout.contentRect == layout.outputRect)
+    #expect(layout.splitScreenRect.width == 640)
+    #expect(layout.splitWebcamRect.width == 640)
 }
 
 @Test
@@ -413,10 +455,29 @@ func pausedDirectorModeDoesNotStartSignalLoopWhenStreamStarts() async {
     let provider = ConfigurableSignalProvider()
     let store = StudioStore(
         mediaPipeline: ConfigurableMediaPipeline(),
-        signalProvider: provider
+        signalProvider: provider,
+        isDirectorRuntimeEnabled: true
     )
 
     store.directorMode = .paused
+    store.startStream()
+    try? await Task.sleep(for: .milliseconds(50))
+
+    #expect(store.isLive)
+    #expect(provider.startCount == 0)
+    #expect(provider.stopCount == 0)
+    #expect(store.recommendation == nil)
+}
+
+@Test
+@MainActor
+func defaultDirectorRuntimeDoesNotStartSignalLoopWhenStreamStarts() async {
+    let provider = ConfigurableSignalProvider()
+    let store = StudioStore(
+        mediaPipeline: ConfigurableMediaPipeline(),
+        signalProvider: provider
+    )
+
     store.startStream()
     try? await Task.sleep(for: .milliseconds(50))
 
@@ -448,7 +509,8 @@ func directorLoopRestartsWhenLeavingPausedModeWhileLive() async {
     let provider = ConfigurableSignalProvider()
     let store = StudioStore(
         mediaPipeline: ConfigurableMediaPipeline(),
-        signalProvider: provider
+        signalProvider: provider,
+        isDirectorRuntimeEnabled: true
     )
 
     store.directorMode = .paused
@@ -470,7 +532,8 @@ func redundantDirectorModeWritesDoNotRestartSignalLoop() async {
     let provider = ConfigurableSignalProvider()
     let store = StudioStore(
         mediaPipeline: ConfigurableMediaPipeline(),
-        signalProvider: provider
+        signalProvider: provider,
+        isDirectorRuntimeEnabled: true
     )
 
     store.startStream()
@@ -506,7 +569,8 @@ func directorSamplesImmediatelyWhenStreamStarts() async {
     )
     let store = StudioStore(
         mediaPipeline: ConfigurableMediaPipeline(),
-        signalProvider: provider
+        signalProvider: provider,
+        isDirectorRuntimeEnabled: true
     )
 
     store.startStream()

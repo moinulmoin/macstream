@@ -88,7 +88,11 @@ struct SourceRackView: View {
                 deviceSelector(for: source.kind)
 
                 if source.kind == .microphone, source.isEnabled {
-                    microphoneInputMeter(level: store.latestSignals.speechLevel)
+                    MicrophoneLevelMeterView(
+                        level: store.latestSignals.speechLevel,
+                        title: "Input level",
+                        isActive: store.sourceLevel(.microphone) > 0 && store.selectedMicrophoneDeviceID != nil
+                    )
                 }
 
                 if source.kind.supportsLevelControl {
@@ -136,39 +140,6 @@ struct SourceRackView: View {
 
     private func sourceLevelTitle(for source: StudioSource) -> String {
         "\(Int((source.level * 100).rounded()))%"
-    }
-
-    private func microphoneInputMeter(level: Double) -> some View {
-        let normalizedLevel = min(max(level, 0), 1)
-        return VStack(alignment: .leading, spacing: 5) {
-            HStack {
-                Text("Input level")
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(.secondary)
-                Spacer()
-                Text("\(Int((normalizedLevel * 100).rounded()))%")
-                    .font(.caption.monospacedDigit())
-                    .foregroundStyle(.secondary)
-            }
-
-            GeometryReader { proxy in
-                ZStack(alignment: .leading) {
-                    Capsule()
-                        .fill(Color.secondary.opacity(0.16))
-                    Capsule()
-                        .fill(LinearGradient(
-                            colors: [.green, .yellow, .orange],
-                            startPoint: .leading,
-                            endPoint: .trailing
-                        ))
-                        .frame(width: max(6, proxy.size.width * normalizedLevel))
-                }
-            }
-            .frame(height: 7)
-        }
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel(Text("Microphone input level"))
-        .accessibilityValue(Text("\(Int((normalizedLevel * 100).rounded())) percent"))
     }
 
     private func sourceToggleHelp(for source: StudioSource) -> String {
@@ -298,9 +269,9 @@ private struct CameraEnhancementControls: View {
                     .toggleStyle(.checkbox)
                     .help("Mirror the local camera preview")
 
-                Toggle("Auto Light", isOn: autoLightBinding)
+                Toggle("Exposure Boost", isOn: autoLightBinding)
                     .toggleStyle(.checkbox)
-                    .help("Use preview lighting plus camera auto exposure, focus, and white balance")
+                    .help("Apply a simple camera brightness boost and keep auto exposure, focus, and white balance enabled")
             }
             .font(.caption)
 
@@ -318,7 +289,7 @@ private struct CameraEnhancementControls: View {
                     Image(systemName: "sun.max")
                         .foregroundStyle(.secondary)
                     Slider(value: autoLightAmountBinding, in: 0...1, step: 0.01)
-                        .help("Adjust preview lighting strength")
+                        .help("Adjust exposure boost strength")
                 }
             }
         }

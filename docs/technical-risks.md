@@ -10,8 +10,10 @@ Stable streaming egress is the hardest part of the product. RTMP reconnects, A/V
 2. Mic and system audio stay synced with video.
 3. RTMP can hold a long stream.
 4. Local recording can run alongside streaming.
-5. Director sampling does not steal resources from capture/encode.
-6. AI provider setup/review work can be paused or deprioritized under stream pressure.
+5. Source monitoring, preview rendering, and adaptive health sampling do not
+   steal resources from capture/encode.
+6. AI provider setup/review work stays optional and can be paused or
+   deprioritized under stream pressure.
 
 ## Streaming Egress Strategy
 
@@ -37,7 +39,7 @@ Screen/window selection must be shared across preview, signal sampling, recordin
 
 ## Camera And Mic Enhancement Strategy
 
-Camera mirror, rotation, and light tuning belong with the camera source controls because operators may change them while setting up a session. The current camera path uses `AVCaptureVideoPreviewLayer`, so mirror and rotation can stay as local preview transforms. Auto Light currently combines a lightweight Core Image preview filter with AVFoundation auto exposure, focus, and white-balance hints. Shipping the same camera look into recording or RTMP output requires the later camera composition path, because the current real media pipeline records and publishes screen capture rather than a composited camera scene.
+Camera mirror, rotation, and light tuning belong with the camera source controls because operators may change them while setting up a session. The current camera path uses `AVCaptureVideoPreviewLayer`, so mirror and rotation can stay as local preview transforms. Exposure Boost currently combines a lightweight Core Image preview filter with AVFoundation auto exposure, focus, and white-balance hints. Shipping the same camera look into recording or RTMP output requires the later camera composition path, because the current real media pipeline records and publishes screen capture rather than a composited camera scene.
 
 JoyCast-style mic polish is a useful product reference, but it is not one feature. JoyCast appears as a selectable virtual microphone and promises local noise removal, subtle enhancement, consistent loudness, native 48 kHz audio, and low latency across other apps. MacStream's MVP should first process microphone audio only inside its own recording and RTMP paths. A system-wide virtual microphone requires a separate Core Audio or DriverKit style distribution surface, installer/update handling, and much heavier reliability testing.
 

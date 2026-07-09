@@ -24,20 +24,48 @@ MacStreamCore
 
 ## Runtime Shape
 
-The media path and the AI path stay separate.
+The media path and optional intelligence path stay separate. Core streaming,
+layout, capture, publishing, recording, and performance work take priority over
+model-backed features.
 
 - Media path: capture, composite, encode, mux, egress, record.
 - Performance path: thermal state, Low Power Mode, process memory footprint, dropped frames, and capture FPS. `SystemPerformanceMonitor` handles system pressure; high MacStream memory use, Low Power Mode, serious thermal pressure, or capture-health pressure can move Adaptive mode to Efficiency. `MediaPipeline.currentHealth` lets Adaptive mode reduce capture cost when the stream itself shows pressure.
-- Signal path: speech, motion, focus, face, idle, stream safety.
-- Director path: deterministic rules, cooldowns, confidence, suggest/auto behavior.
-- Intelligence path: provider-first setup/review assistance through Foundation Models and OpenAI-compatible local providers, with rule fallback and an experimental MLX adapter kept outside the live path.
-- Clip marker path: manual marks during active capture plus deterministic director marks for live high-confidence or safety moments, exported through `ClipMarkerExporter` as JSON for review workflows. Marker reasons are trimmed, blank-safe, and capped before they enter timeline events or exported JSON.
+- Signal path: speech, selected-source state, capture health, system pressure,
+  and stream safety.
+- Director path: deterministic rules, cooldowns, confidence, suggest/auto
+  behavior. It is runtime-gated and not part of the default core live UI.
+- Intelligence path: future setup/review/transcription assistance through
+  Foundation Models and OpenAI-compatible local providers, with rule fallback
+  and an experimental MLX adapter kept outside the live path.
+- Clip marker path: manual marks during active capture plus deterministic cue
+  marks for live high-confidence or safety moments, exported through
+  `ClipMarkerExporter` as JSON for review workflows. Marker reasons are
+  trimmed, blank-safe, and capped before they enter timeline events or exported
+  JSON.
 - Session report path: `SessionReportExporter` writes local JSON review artifacts with clips, a bounded current-session event history, transport, health, effective performance mode, system pressure, signals, source states, selected capture target, recording path, and preferences while intentionally excluding RTMP URLs and stream keys. The inspector renders only the latest compact event slice so keeping a longer report timeline does not grow the visible panel.
 - `DirectorProfile` is the typed contract between local intelligence and the deterministic director. The live loop consumes thresholds and scene bias, not free-form text.
 
-The director does not wait on an LLM to cut scenes. Providers can help with setup, review, summaries, explanations, and clip titles, but live switching must remain deterministic and fast.
+The live path does not wait on an LLM. Providers can later help with setup,
+review, transcription, summaries, explanations, and clip titles, but any
+automation must remain deterministic and fast.
 
-Suggest and Auto modes are intentionally trust-first. The first director sample runs as soon as the stream is live, then the loop sleeps between later samples according to performance mode. Taking a cue records an accepted switch and starts the normal cooldown; holding an active cue suppresses that same target for the hold window so the operator is not nagged on the next sample, while a hold action with no cue is ignored. Auto mode honors the cue countdown before switching, leaving time to hold the cue. Safety cues, such as muted-mic or frozen-screen warnings, bypass held scene cues and can switch immediately because they protect the stream rather than optimize composition. If the current real media path cannot output the requested target scene, normal scene-change cues are suppressed and immediate safety cues are retargeted into current-stream warnings instead of offering a broken Take action. Paused mode stops the live director signal loop while leaving the stream itself live, so unused microphone and motion sampling do not keep consuming capture budget. Offline loop starts are ignored before signal sampling begins, and re-selecting the current director mode is ignored so segmented-control repeats do not restart or stop signal monitoring.
+The gated Suggest and Auto runtime remains trust-first for future automation
+work. When enabled, the first sample runs as soon as the stream is live, then
+the loop sleeps between later samples according to performance mode. Taking a
+cue records an accepted switch and starts the normal cooldown; holding an active
+cue suppresses that same target for the hold window so the operator is not
+nagged on the next sample, while a hold action with no cue is ignored. Auto
+honors the cue countdown before switching, leaving time to hold the cue. Safety
+cues, such as muted-mic or frozen-screen warnings, bypass held scene cues and
+can switch immediately because they protect the stream rather than optimize
+composition. If the current real media path cannot output the requested target
+scene, normal scene-change cues are suppressed and immediate safety cues are
+retargeted into current-stream warnings instead of offering a broken Take
+action. Paused stops the signal loop while leaving the stream itself live, so
+unused microphone and motion sampling do not keep consuming capture budget.
+Offline loop starts are ignored before signal sampling begins, and re-selecting
+the current runtime setting is ignored so segmented-control repeats do not
+restart or stop signal monitoring.
 
 `RuleBasedLocalIntelligenceProvider` is the default runtime provider until the provider-first adapters land. `MLXLocalIntelligenceProvider` remains an experimental compile-time seam behind `MAC_STREAM_ENABLE_MLX=1`; it defaults to `LiquidAI/LFM2.5-8B-A1B-MLX-4bit`, reports fallback status, and delegates to rules until real model loading is intentionally wired. The intended first-class AI providers are Foundation Models for supported macOS 26 systems and OpenAI-compatible endpoints for LM Studio, Ollama, llama.cpp servers, MLX servers, or other user-owned providers.
 
@@ -74,12 +102,75 @@ Setup generation is blocked while streaming, connecting, recording, or when the 
 - Recording ownership is explicit in `StudioStore`: record-while-streaming recordings are stopped with the stream, while manually started local recordings continue when a stream stops. Recording startup and shutdown use the same action-state pattern as streaming, so duplicate starts/stops are suppressed and a pending recording can be cancelled. `SystemMediaPipeline` checks cancellation during setup before registering active recording resources, checks again immediately after ScreenCaptureKit starts, and cancels any writer or capture stream created by an abandoned startup. Recording failures keep their localized reason visible in the inspector.
 - `SystemMediaPipeline` keeps recording and RTMP publishing on separate ScreenCaptureKit streams, but both paths now share the Screen + Face compositor. Local recording renders screen frames plus the latest camera frame into an `AVAssetWriterInputPixelBufferAdaptor`; RTMP publishing renders the same layout into a publish pixel-buffer pool, wraps the composed pixel buffer in a timed `CMSampleBuffer`, and appends that sample to the HaishinKit publisher. The default build still uses endpoint validation only and never pretends to send media.
 - Capture sessions reset clip markers and export URLs when the first stream or recording becomes active. Manual clip marking is disabled while offline so exported clips and reports do not mix stale sessions, and adjacent duplicate unavailable/no-clip warnings are coalesced so repeated shortcuts do not flood the review timeline.
-- The main studio window uses a compact bottom session strip plus one collapsible right detail rail instead of a left sidebar plus right inspector. `StudioControlPanelView` owns only the high-frequency session controls: scene switching, director mode, performance mode, stream start/stop, and local recording. The right rail owns slower setup and diagnostic surfaces: the first-run checklist, destination, capture preflight, source rack, director status, stream health, and event history. Source controls still live only in `SourceRackView`, while scene controls live only in the session strip, so the app does not duplicate controls across panels. The rail collapse toggle lives in the titlebar's top-right primary action, and the collapsed rail becomes a narrow status strip when the operator wants maximum preview space. The primary stream button plus macOS command menu say Start Preview/Stop Preview for local preview sessions, Check Endpoint/Stop Endpoint Check for dependency-light RTMP validation, and Go Live only for full publishing builds. Active stream and recording buttons use specific stop/cancel labels, such as Stop Stream and Stop Recording, so two active capture paths do not collapse into duplicate "Stop" actions. The health panel uses the active transport for its title, so local Preview sessions do not appear as RTMP streams. While first-run setup is incomplete and capture is idle, the rail stays setup-focused: it shows the checklist plus only the detail panel needed by the next incomplete item, instead of stacking health, destination, capture, sources, setup rules, and event panels all at once. Once setup is complete, or when capture is active, the rail switches back to the operating stack and the director panel returns; the setup-rules panel remains idle-only because generation is blocked during streaming or recording. If a primary stream or recording action is disabled, the bottom strip shows the exact blocker inline instead of relying on a disabled-button tooltip. Screen Recording relaunch is owned by one contextual surface at a time: the first-run checklist owns it during setup, and the capture panel owns it afterward, so the bottom strip stays focused instead of showing a duplicate recovery button. A small first-run checklist appears only while offline and incomplete, covering scene, capture, destination, and sources; it highlights the next required item, shows progress, exposes one primary action for the next incomplete step, including Camera/Microphone asks, Screen Recording settings/reopen actions, and source recovery that enables disabled needed sources or raises muted needed levels for only the selected scene plus microphone, then disappears once those basics are ready so onboarding does not become a persistent wizard. Source readiness is computed from the selected scene, so Face requires camera, Screen requires screen, and Screen + Face requires both for preview readiness, local composited recording, and HaishinKit full RTMP publishing; Face and BRB remain unsupported for full RTMP because they do not have a screen video output yet. Camera, screen, and microphone are enabled by default for the first-run Talking + Screen path, while Mac Audio is opt-in so the app does not capture system audio unless the operator explicitly enables it. Capture readiness is computed from the selected scene and enabled sources, so Face mode does not ask for Screen Recording, Screen mode does not ask for camera, and disabled optional camera/microphone sources do not keep the strip in a blocked state. Screen Recording remains restart-scoped and keeps a direct reopen action visible only when the selected scene needs display capture. The destination panel is configuration-only, with recording start/stop kept in the session strip and command menu so there is one obvious recording action.
+- The main studio window uses a full preview column plus one collapsible,
+  tabbed right rail. `StudioControlPanelView` owns the high-frequency session
+  controls: scene switching, stream start/stop, local recording, live mic input,
+  output resolution/FPS, preview quality, and performance mode. The right rail
+  is grouped into Live, Layout, Sources, and Health tabs so slower setup,
+  destination, capture preflight, source rack, stream health, and event history
+  do not compete in one long scrolling stack. Source controls live only in
+  `SourceRackView`, while scene controls live only in the bottom control room,
+  so the app does not duplicate controls across panels. The rail collapse
+  toggle lives in the titlebar's top-right primary action, and the collapsed
+  rail becomes a narrow status strip when the operator wants maximum preview
+  space. The primary stream button plus macOS command menu say Start
+  Preview/Stop Preview for local preview sessions, Check Endpoint/Stop Endpoint
+  Check for dependency-light RTMP validation, and Go Live only for full
+  publishing builds. Active stream and recording buttons use specific
+  stop/cancel labels, such as Stop Stream and Stop Recording, so two active
+  capture paths do not collapse into duplicate "Stop" actions. While first-run
+  setup is incomplete and capture is idle, the Live tab stays setup-focused: it
+  shows the checklist plus only the detail panel needed by the next incomplete
+  item, instead of stacking health, destination, capture, sources, setup rules,
+  and event panels all at once. If a primary stream or recording action is
+  disabled, the bottom strip shows the exact blocker inline instead of relying
+  on a disabled-button tooltip. Screen Recording relaunch is owned by one
+  contextual surface at a time: the first-run checklist owns it during setup,
+  and the capture panel owns it afterward, so the bottom strip stays focused
+  instead of showing a duplicate recovery button. A small first-run checklist
+  appears only while offline and incomplete, covering scene, capture,
+  destination, and sources; it highlights the next required item, shows
+  progress, exposes one primary action for the next incomplete step, including
+  Camera/Microphone asks, Screen Recording settings/reopen actions, and source
+  recovery that enables disabled needed sources or raises muted needed levels
+  for only the selected scene plus microphone, then disappears once those basics
+  are ready so onboarding does not become a persistent wizard. Source readiness
+  is computed from the selected scene, so Face requires camera, Screen requires
+  screen, and Screen + Face requires both for preview readiness, local
+  composited recording, and HaishinKit full RTMP publishing; Face and BRB remain
+  unsupported for full RTMP because they do not have a screen video output yet.
+  Camera, screen, and microphone are enabled by default for the first-run
+  Talking + Screen path, while Mac Audio is opt-in so the app does not capture
+  system audio unless the operator explicitly enables it. Capture readiness is
+  computed from the selected scene and enabled sources, so Face mode does not
+  ask for Screen Recording, Screen mode does not ask for camera, and disabled
+  optional camera/microphone sources do not keep the strip in a blocked state.
+  Screen Recording remains restart-scoped and keeps a direct reopen action
+  visible only when the selected scene needs display capture. The destination
+  panel is configuration-only, with recording start/stop kept in the session
+  strip and command menu so there is one obvious recording action.
 - `SystemSignalProvider` uses AVAudioEngine for microphone speech level, NSWorkspace for active app, CoreGraphics idle timing, and a low-resolution ScreenCaptureKit frame-diff stream for motion/frozen-screen signals.
 - `CapturePreflightReport` exposes granted display/window targets. Device scanning runs as user-initiated background work only while capture is idle, then returns to the main actor to publish changed reports and update capture configuration. Identical completed rescans are ignored after the scan flag clears, while changed rescans preserve the selected display/window by identity and refresh its current name/detail. The inspector disables capture rescan actions during preview, streaming, connecting, stopping, recording, or recording shutdown so device enumeration and ScreenCaptureKit content listing do not compete with active capture. `StudioStore.selectedScreenCaptureTarget` feeds preview, screen-motion sampling, recording, and RTMP publish capture so the director and media path follow the same selected source. Target changes are action-owned through `selectScreenCaptureTarget(_:)` and are blocked while connecting, streaming, or recording.
 - `StudioStore` keeps editable inputs narrow: `directorMode`, `destination`, and `setupPrompt` can be driven by SwiftUI controls, while runtime state such as stream status, recording status, health, signals, events, setup status, preferences, and capture scan results is public read/private write. The fixed scene and source lists are also readable but action-owned: scene switches go through `selectScene(_:)`, source toggles go through `toggleSource(_:)`, and adjustable source levels go through `updateLevel(for:level:)`. Camera is toggle-only because the current model has no camera gain/opacity path, and the store checks level support against its owned source rather than a caller-provided value. While capture is live, connecting, recording, or stopping, source toggles and level sliders cannot remove or zero a source required by the selected scene, and scene switches cannot move a real ScreenCaptureKit stream or recording into Face/BRB until the media compositor can output those scenes; the session strip disables blocked scene choices with the store-provided reason. Optional sources such as microphone and system audio can still be changed. Source levels are normalized to 1% steps, matching the UI slider step, so tiny slider noise does not keep reconfiguring signal and media capture. Unknown scene selections and redundant destination, current-scene, current-screen-target, and source-level writes are skipped, so repeated picker/slider values do not add duplicate events, re-read stream transport, or re-run capture configuration. It applies source enable/disable state and source levels to preview rendering, signal-provider and media-pipeline configuration, and over raw snapshots before director evaluation, so disabled camera/screen sources and zero-level optional screen sources stop unnecessary display-preview and screen-motion sampling work, while zero-level microphone or system-audio sources stop unnecessary audio capture processing and affect automation. Active signal-provider updates apply screen-motion configuration once per change before starting or stopping the monitor. The microphone signal monitor gates delayed permission grants so a stopped or disabled sampler cannot be restarted by an old macOS permission callback. `SystemMediaPipeline` also re-checks audio levels before appending or publishing audio samples, tracks active microphone outputs so stale callbacks are ignored, and stops or restarts active microphone sessions when capture settings change, so zero-level mic/system-audio changes take effect during an active session. Audio level and microphone-only changes do not trigger active ScreenCaptureKit stream reconfiguration unless the visible capture topology or system-audio capture state changes.
 - `StudioPreferences` carries settings such as cue countdown, record-while-streaming, and performance mode into the core store without coupling SwiftUI storage to MacStreamCore. The cue countdown is normalized to the supported 1-5 second range at the model boundary, so stale persisted values and direct config paths cannot schedule oversized or invalid cues.
-- Performance mode tunes the director loop interval, preview capture, signal sampling, and media capture. The current system provider applies sampling to ScreenCaptureKit motion capture, gates bursty motion callbacks before luma sampling, and reuses fixed 16x9 luma buffers between sampled frames; the preview canvas applies display width and frame-rate caps to ScreenCaptureKit preview and camera frame-rate caps to AVFoundation preview, and passive screen/camera preview only uses preflighted permissions so simply choosing a capture scene does not trigger a macOS permission prompt; display preview coalesces frame delivery so stale frames are dropped before image conversion when the UI is busy; stale ScreenCaptureKit callbacks from stopped or replaced streams are ignored before preview image conversion, motion luma sampling, or recording writes; the preview and motion paths update active ScreenCaptureKit stream configuration in place when only capture cost changes; the media pipeline applies max width, frame rate, bitrate, queue depth, and enabled audio tracks to recording/publishing, updates active ScreenCaptureKit streams when capture settings change, and checks cancellation around capture startup so abandoned starts do not continue into active microphone or stream work.
+- Performance mode tunes source monitoring, preview capture, signal sampling,
+  and media capture. The current system provider applies sampling to
+  ScreenCaptureKit motion capture, gates bursty motion callbacks before luma
+  sampling, and reuses fixed 16x9 luma buffers between sampled frames; the
+  preview canvas applies display width and frame-rate caps to ScreenCaptureKit
+  preview and camera frame-rate caps to AVFoundation preview, and passive
+  screen/camera preview only uses preflighted permissions so simply choosing a
+  capture scene does not trigger a macOS permission prompt; display preview uses
+  `AVSampleBufferDisplayLayer` so preview frames do not require per-frame
+  CoreImage-to-CGImage conversion; stale ScreenCaptureKit callbacks from
+  stopped or replaced streams are ignored before preview rendering, motion luma
+  sampling, or recording writes; the preview and motion paths update active
+  ScreenCaptureKit stream configuration in place when only capture cost changes;
+  the media pipeline applies max width, frame rate, bitrate, queue depth, and
+  enabled audio tracks to recording/publishing, updates active ScreenCaptureKit
+  streams when capture settings change, and checks cancellation around capture
+  startup so abandoned starts do not continue into active microphone or stream
+  work.
 - Adaptive mode also watches runtime capture health and process footprint. New dropped frames, low capture FPS, high MacStream memory use, Low Power Mode, or serious thermal pressure switch Adaptive mode to Efficiency until pressure clears; capture-health pressure also marks the stream as degraded-but-live, then the stream returns to Live and Adaptive resolves back to Balanced after consecutive stable capture-health samples.
 - The SwiftPM app bundle is staged by `script/build_and_run.sh`. Its generated `Info.plist` must include camera, microphone, and system-audio capture usage descriptions, and `--verify` checks those keys before launch. The staged bundle is also signed before launch with the stable bundle identifier `com.ideaplexa.macstream`, preferring `Developer ID Application: Ideaplexa LLC (53P98M92V7)` or `MAC_STREAM_CODESIGN_IDENTITY` when provided, with a stable ad-hoc fallback if no identity is available; this keeps macOS privacy/TCC identity from falling back to a changing code hash during local rebuilds.
 - Capture preflight keeps permission scanning in `MacStreamCore`; the SwiftUI view owns explicit user-triggered Camera/Microphone permission asks, and uses narrow AppKit bridges to open the matching macOS Privacy & Security settings pane and relaunch MacStream when restart-scoped Screen Recording permission state needs a fresh process. Screen Recording permission rows also explain that MacStream must be restarted after granting access because ScreenCaptureKit permission changes are not reliably visible to the current process.

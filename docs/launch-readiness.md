@@ -202,7 +202,7 @@ public release.
 - [ ] README.md is complete and reflects all implemented features
 - [ ] Architecture doc matches current implementation (class names, file structure)
 - [ ] Product brief aligns with README feature claims
-- [ ] MVP scope doc accurately separates in/out for v0.1.0
+- [ ] MVP scope doc accurately separates in/out for v0.2.0
 - [ ] QA checklist covers all current features
 - [ ] Release process doc matches CI workflow reality
 - [ ] Launch readiness checklist (this document) is linked from README
@@ -253,7 +253,7 @@ dev build.
 
 ### Once everything is checked
 
-Tag `v0.1.0` (or the first version that clears all gates), push the tag,
+Tag `v0.2.0` (or the first version that clears all gates), push the tag,
 and the release workflow ships a signed, notarized, Gatekeeper-accepted
 `MacStream.app`.
 

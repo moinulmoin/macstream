@@ -384,6 +384,63 @@ func zeroScreenLevelDisablesScreenMotionSampling() {
 
 @Test
 @MainActor
+func sourceMonitoringDoesNotStartWithoutSelectedMicrophone() {
+    let provider = MutableSignalProvider(
+        snapshot: SignalSnapshot(isSpeaking: true, speechLevel: 0.82)
+    )
+    let store = StudioStore(signalProvider: provider)
+
+    store.startSourceMonitoring()
+
+    #expect(provider.startCount == 0)
+    #expect(store.latestSignals.speechLevel == 0)
+    #expect(store.latestSignals.isMicMuted)
+
+    store.stopSourceMonitoring()
+}
+
+@Test
+@MainActor
+func sourceMonitoringSamplesSelectedMicrophoneWithoutScreenMotion() async {
+    let provider = MutableSignalProvider(
+        snapshot: SignalSnapshot(
+            isSpeaking: true,
+            speechLevel: 0.82,
+            screenMotion: 0.67,
+            hasFace: true,
+            activeApplication: "Xcode"
+        )
+    )
+    let report = CapturePreflightReport(
+        devices: [
+            CaptureDeviceInfo(id: "display-7", kind: .display, name: "Studio Display", detail: "3024x1964", permission: .granted),
+            CaptureDeviceInfo(id: "microphone-1", kind: .microphone, name: "Studio Mic", permission: .granted)
+        ],
+        summary: "Capture sources are ready."
+    )
+    let store = StudioStore(
+        captureDeviceProvider: FixedCaptureDeviceProvider(report: report),
+        signalProvider: provider
+    )
+
+    store.scanCaptureDevices()
+    try? await Task.sleep(for: .milliseconds(30))
+    store.startSourceMonitoring()
+
+    #expect(provider.startCount == 1)
+    #expect(provider.lastConfiguration == StudioStore.sourceMonitoringSignalConfiguration(isMicrophoneEnabled: true))
+    #expect(provider.lastConfiguration?.isActivityContextEnabled == false)
+    #expect(store.latestSignals.speechLevel == 0.82)
+    #expect(store.latestSignals.isSpeaking)
+    #expect(store.health.audioLevel == 0.82)
+
+    store.stopSourceMonitoring()
+
+    #expect(provider.stopCount == 1)
+}
+
+@Test
+@MainActor
 func studioStoreAppliesPerformanceModeToMediaPipeline() async {
     let pipeline = ConfigurableMediaPipeline()
     let store = StudioStore(

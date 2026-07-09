@@ -74,8 +74,10 @@ public final class StudioStore {
     private let signalProvider: any SignalProvider
     private let performanceMonitor: any SystemPerformanceMonitor
     private let streamStartRetryPolicy: StreamStartRetryPolicy
+    private let isDirectorRuntimeEnabled: Bool
     @ObservationIgnored private var directorLoopTask: Task<Void, Never>?
     @ObservationIgnored private var mediaHealthLoopTask: Task<Void, Never>?
+    @ObservationIgnored private var sourceMonitoringTask: Task<Void, Never>?
     @ObservationIgnored private var streamStartTask: Task<Void, Never>?
     @ObservationIgnored private var streamStartID: UUID?
     @ObservationIgnored private var setupGenerationTask: Task<Void, Never>?
@@ -100,6 +102,7 @@ public final class StudioStore {
     @ObservationIgnored private var isRevertingDestinationChange = false
     @ObservationIgnored private var activeOutputCaptureSettings: OutputCaptureSettings?
     private static let requiredCaptureHealthRecoverySamples = 2
+    private static let sourceMonitoringSampleIntervalMilliseconds = 250
     private static let maxRetainedEvents = 40
     private static let maxClipMarkerReasonCharacters = 240
 
@@ -115,7 +118,8 @@ public final class StudioStore {
         signalProvider: any SignalProvider = PreviewSignalProvider(),
         performanceMonitor: any SystemPerformanceMonitor = PreviewSystemPerformanceMonitor(),
         preferences: StudioPreferences = StudioPreferences(),
-        streamStartRetryPolicy: StreamStartRetryPolicy = .rtmpStartup
+        streamStartRetryPolicy: StreamStartRetryPolicy = .rtmpStartup,
+        isDirectorRuntimeEnabled: Bool = false
     ) {
         let initialPressure = SystemPressureSnapshot()
         let initialEffectivePerformanceMode = preferences.performanceMode.effectiveMode(for: initialPressure)
@@ -127,6 +131,7 @@ public final class StudioStore {
         self.performanceMonitor = performanceMonitor
         self.preferences = preferences
         self.streamStartRetryPolicy = streamStartRetryPolicy
+        self.isDirectorRuntimeEnabled = isDirectorRuntimeEnabled
         self.effectivePerformanceMode = initialEffectivePerformanceMode
         self.localIntelligenceStatus = intelligenceProvider.status
         self.streamTransport = Self.streamTransport(for: StreamDestination(), pipelineTransport: mediaPipeline.streamTransport)
@@ -1475,6 +1480,46 @@ public final class StudioStore {
         updatePreferences(nextPreferences)
     }
 
+    public func startSourceMonitoring() {
+        guard sourceMonitoringTask == nil else { return }
+
+        sourceMonitoringTask = Task { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .milliseconds(Self.sourceMonitoringSampleIntervalMilliseconds))
+                guard !Task.isCancelled else { break }
+                self?.advanceSourceMonitoring()
+            }
+        }
+        advanceSourceMonitoring()
+    }
+
+    public func stopSourceMonitoring() {
+        sourceMonitoringTask?.cancel()
+        sourceMonitoringTask = nil
+        stopSignalProviderIfNeeded()
+    }
+
+    func advanceSourceMonitoring() {
+        guard sourceMonitoringTask != nil || shouldSampleSourceMonitoringInput else {
+            latestSignals = signalSnapshotApplyingSourceState(SignalSnapshot(isMicMuted: true))
+            health.audioLevel = latestSignals.speechLevel
+            stopSignalProviderIfNeeded()
+            return
+        }
+
+        guard shouldSampleSourceMonitoringInput else {
+            latestSignals = signalSnapshotApplyingSourceState(SignalSnapshot(isMicMuted: true))
+            health.audioLevel = latestSignals.speechLevel
+            stopSignalProviderIfNeeded()
+            return
+        }
+
+        applyPerformanceConfiguration()
+        startSignalProviderIfNeeded()
+        latestSignals = signalSnapshotApplyingSourceState(signalProvider.snapshot())
+        health.audioLevel = latestSignals.speechLevel
+    }
+
     private func finishCaptureScan(with report: CapturePreflightReport) {
         let shouldPublishReport = !hasRunInitialCaptureScan || report != captureReport
         if shouldPublishReport {
@@ -1489,6 +1534,10 @@ public final class StudioStore {
     }
 
     public func startDirectorLoop() {
+        guard isDirectorRuntimeEnabled else {
+            cancelPendingAutoCue()
+            return
+        }
         guard streamState.isLive else {
             cancelPendingAutoCue()
             return
@@ -1563,12 +1612,31 @@ public final class StudioStore {
 
     private func stopSignalProviderIfNeeded() {
         guard isSignalProviderActive else { return }
+        guard directorLoopTask == nil, !shouldKeepSignalProviderForSourceMonitoring else { return }
         signalProvider.stop()
         isSignalProviderActive = false
     }
 
+    private var shouldKeepSignalProviderForSourceMonitoring: Bool {
+        sourceMonitoringTask != nil && shouldSampleSourceMonitoringInput
+    }
+
+    private var shouldUseSourceMonitoringSignalConfiguration: Bool {
+        sourceMonitoringTask != nil
+            && directorLoopTask == nil
+            && !hasActiveMediaCapture
+            && !isStreamConnecting
+            && recordingState != .starting
+    }
+
+    private var shouldSampleSourceMonitoringInput: Bool {
+        isSourceEnabled(.microphone)
+            && sourceLevel(.microphone) > 0
+            && selectedMicrophoneDeviceID != nil
+    }
+
     private var shouldRunMediaHealthLoop: Bool {
-        (streamState.isLive && directorMode == .paused)
+        (streamState.isLive && (!isDirectorRuntimeEnabled || directorMode == .paused))
             || (recordingState == .recording && !streamState.isLive)
     }
 
@@ -1797,6 +1865,11 @@ public final class StudioStore {
         signalConfiguration.isMicrophoneEnabled = isSourceEnabled(.microphone)
         signalConfiguration.isScreenMotionEnabled = isSourceEnabled(.screen) && sourceLevel(.screen) > 0
         signalConfiguration.screenCaptureTarget = selectedScreenCaptureTarget
+        if shouldUseSourceMonitoringSignalConfiguration {
+            signalConfiguration = Self.sourceMonitoringSignalConfiguration(
+                isMicrophoneEnabled: shouldSampleSourceMonitoringInput
+            )
+        }
         if signalConfiguration != lastAppliedSignalConfiguration {
             signalProvider.update(configuration: signalConfiguration)
             lastAppliedSignalConfiguration = signalConfiguration
@@ -2576,6 +2649,15 @@ public final class StudioStore {
         isRTMPPublishing
             ? StudioPerformanceMode.liveStreamingSignalSamplingConfiguration
             : mode.signalSamplingConfiguration
+    }
+
+    static func sourceMonitoringSignalConfiguration(isMicrophoneEnabled: Bool) -> SignalSamplingConfiguration {
+        SignalSamplingConfiguration(
+            screenMotionFramesPerSecond: 1,
+            isMicrophoneEnabled: isMicrophoneEnabled,
+            isScreenMotionEnabled: false,
+            isActivityContextEnabled: false
+        )
     }
 
     static func directorSampleIntervalMilliseconds(

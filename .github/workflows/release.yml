@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: "Semver release tag or dry-run version, for example v0.1.0"
+        description: "Semver release tag or dry-run version, for example v0.2.0"
         required: true
         type: string
       publish_release:

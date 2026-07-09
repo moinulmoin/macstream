@@ -656,36 +656,219 @@ public enum StudioBackgroundStyle: String, CaseIterable, Codable, Identifiable, 
     }
 }
 
+public struct StudioSourceViewportSettings: Codable, Equatable, Sendable {
+    public var zoom: Double {
+        didSet {
+            zoom = StudioLayoutSettings.normalizedSourceZoom(zoom)
+        }
+    }
+    public var panX: Double {
+        didSet {
+            panX = StudioLayoutSettings.normalizedSourcePan(panX)
+        }
+    }
+    public var panY: Double {
+        didSet {
+            panY = StudioLayoutSettings.normalizedSourcePan(panY)
+        }
+    }
+
+    public init(zoom: Double = 1, panX: Double = 0, panY: Double = 0) {
+        self.zoom = StudioLayoutSettings.normalizedSourceZoom(zoom)
+        self.panX = StudioLayoutSettings.normalizedSourcePan(panX)
+        self.panY = StudioLayoutSettings.normalizedSourcePan(panY)
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case zoom
+        case panX
+        case panY
+    }
+
+    public init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(
+            zoom: try container.decodeIfPresent(Double.self, forKey: .zoom) ?? 1,
+            panX: try container.decodeIfPresent(Double.self, forKey: .panX) ?? 0,
+            panY: try container.decodeIfPresent(Double.self, forKey: .panY) ?? 0
+        )
+    }
+}
+
+public struct StudioRGBAColor: Codable, Equatable, Sendable {
+    public var red: Double {
+        didSet {
+            red = StudioLayoutSettings.normalizedColorComponent(red)
+        }
+    }
+    public var green: Double {
+        didSet {
+            green = StudioLayoutSettings.normalizedColorComponent(green)
+        }
+    }
+    public var blue: Double {
+        didSet {
+            blue = StudioLayoutSettings.normalizedColorComponent(blue)
+        }
+    }
+    public var alpha: Double {
+        didSet {
+            alpha = StudioLayoutSettings.normalizedColorComponent(alpha)
+        }
+    }
+
+    public init(red: Double, green: Double, blue: Double, alpha: Double = 1) {
+        self.red = StudioLayoutSettings.normalizedColorComponent(red)
+        self.green = StudioLayoutSettings.normalizedColorComponent(green)
+        self.blue = StudioLayoutSettings.normalizedColorComponent(blue)
+        self.alpha = StudioLayoutSettings.normalizedColorComponent(alpha)
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case red
+        case green
+        case blue
+        case alpha
+    }
+
+    public init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(
+            red: try container.decodeIfPresent(Double.self, forKey: .red) ?? 0,
+            green: try container.decodeIfPresent(Double.self, forKey: .green) ?? 0,
+            blue: try container.decodeIfPresent(Double.self, forKey: .blue) ?? 0,
+            alpha: try container.decodeIfPresent(Double.self, forKey: .alpha) ?? 1
+        )
+    }
+}
+
+public enum StudioCanvasBackground: Codable, Equatable, Sendable {
+    case preset(StudioBackgroundStyle)
+    case color(StudioRGBAColor)
+    case localImage(path: String)
+
+    private enum CodingKeys: String, CodingKey {
+        case kind
+        case style
+        case color
+        case path
+    }
+
+    private enum Kind: String, Codable {
+        case preset
+        case color
+        case localImage
+    }
+
+    public init(from decoder: any Decoder) throws {
+        if let legacyStyle = try? StudioBackgroundStyle(from: decoder) {
+            self = .preset(legacyStyle)
+            return
+        }
+
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        let kind = try container.decodeIfPresent(Kind.self, forKey: .kind) ?? .preset
+        switch kind {
+        case .preset:
+            self = .preset(try container.decodeIfPresent(StudioBackgroundStyle.self, forKey: .style) ?? .black)
+        case .color:
+            self = .color(try container.decodeIfPresent(StudioRGBAColor.self, forKey: .color) ?? StudioRGBAColor(red: 0, green: 0, blue: 0))
+        case .localImage:
+            self = .localImage(path: try container.decodeIfPresent(String.self, forKey: .path) ?? "")
+        }
+    }
+
+    public func encode(to encoder: any Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        switch self {
+        case let .preset(style):
+            try container.encode(Kind.preset, forKey: .kind)
+            try container.encode(style, forKey: .style)
+        case let .color(color):
+            try container.encode(Kind.color, forKey: .kind)
+            try container.encode(color, forKey: .color)
+        case let .localImage(path):
+            try container.encode(Kind.localImage, forKey: .kind)
+            try container.encode(path, forKey: .path)
+        }
+    }
+
+    public var presetStyle: StudioBackgroundStyle? {
+        if case let .preset(style) = self { return style }
+        return nil
+    }
+}
+
 public struct StudioLayoutSettings: Codable, Equatable, Sendable {
     public static let minimumSourceZoom = 0.75
     public static let maximumSourceZoom = 2.0
     public static let minimumCanvasPadding = 0.0
     public static let maximumCanvasPadding = 0.12
+    public static let minimumSourceGap = 0.0
+    public static let maximumSourceGap = 0.12
+    public static let minimumSourceCornerRadius = 0.0
+    public static let maximumSourceCornerRadius = 0.12
+    public static let defaultSourceCornerRadius = 0.018
+    public static let minimumSourcePan = -1.0
+    public static let maximumSourcePan = 1.0
 
     public var preset: StudioLayoutPreset
-    public var backgroundStyle: StudioBackgroundStyle
+    public var background: StudioCanvasBackground
     public var canvasPadding: Double {
         didSet {
             canvasPadding = Self.normalizedCanvasPadding(canvasPadding)
         }
     }
-    public var screenZoom: Double {
+    public var screenViewport: StudioSourceViewportSettings
+    public var webcamViewport: StudioSourceViewportSettings
+    public var sourceGap: Double {
         didSet {
-            screenZoom = Self.normalizedSourceZoom(screenZoom)
+            sourceGap = Self.normalizedSourceGap(sourceGap)
+        }
+    }
+    public var sourceCornerRadius: Double {
+        didSet {
+            sourceCornerRadius = Self.normalizedSourceCornerRadius(sourceCornerRadius)
+        }
+    }
+
+    public var backgroundStyle: StudioBackgroundStyle {
+        get {
+            background.presetStyle ?? .black
+        }
+        set {
+            background = .preset(newValue)
+        }
+    }
+
+    public var screenZoom: Double {
+        get {
+            screenViewport.zoom
+        }
+        set {
+            screenViewport.zoom = newValue
         }
     }
     public var webcamZoom: Double {
-        didSet {
-            webcamZoom = Self.normalizedSourceZoom(webcamZoom)
+        get {
+            webcamViewport.zoom
+        }
+        set {
+            webcamViewport.zoom = newValue
         }
     }
 
     private enum CodingKeys: String, CodingKey {
         case preset
+        case background
         case backgroundStyle
         case canvasPadding
+        case screenViewport
+        case webcamViewport
         case screenZoom
         case webcamZoom
+        case sourceGap
+        case sourceCornerRadius
     }
 
     public init(
@@ -693,34 +876,140 @@ public struct StudioLayoutSettings: Codable, Equatable, Sendable {
         backgroundStyle: StudioBackgroundStyle = .black,
         canvasPadding: Double = 0.04,
         screenZoom: Double = 1,
-        webcamZoom: Double = 1
+        webcamZoom: Double = 1,
+        sourceGap: Double? = nil,
+        sourceCornerRadius: Double = 0.018
+    ) {
+        self.init(
+            preset: preset,
+            background: .preset(backgroundStyle),
+            canvasPadding: canvasPadding,
+            screenViewport: StudioSourceViewportSettings(zoom: screenZoom),
+            webcamViewport: StudioSourceViewportSettings(zoom: webcamZoom),
+            sourceGap: sourceGap,
+            sourceCornerRadius: sourceCornerRadius
+        )
+    }
+
+    public init(
+        preset: StudioLayoutPreset = .pictureInPicture,
+        background: StudioCanvasBackground,
+        canvasPadding: Double = 0.04,
+        screenViewport: StudioSourceViewportSettings = StudioSourceViewportSettings(),
+        webcamViewport: StudioSourceViewportSettings = StudioSourceViewportSettings(),
+        sourceGap: Double? = nil,
+        sourceCornerRadius: Double = 0.018
     ) {
         self.preset = preset
-        self.backgroundStyle = backgroundStyle
         self.canvasPadding = Self.normalizedCanvasPadding(canvasPadding)
-        self.screenZoom = Self.normalizedSourceZoom(screenZoom)
-        self.webcamZoom = Self.normalizedSourceZoom(webcamZoom)
+        self.background = background
+        self.screenViewport = StudioSourceViewportSettings(
+            zoom: screenViewport.zoom,
+            panX: screenViewport.panX,
+            panY: screenViewport.panY
+        )
+        self.webcamViewport = StudioSourceViewportSettings(
+            zoom: webcamViewport.zoom,
+            panX: webcamViewport.panX,
+            panY: webcamViewport.panY
+        )
+        self.sourceGap = Self.normalizedSourceGap(sourceGap ?? Self.defaultSourceGap(canvasPadding: self.canvasPadding))
+        self.sourceCornerRadius = Self.normalizedSourceCornerRadius(sourceCornerRadius)
     }
 
     public init(from decoder: any Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
+        let canvasPadding = Self.normalizedCanvasPadding(
+            try container.decodeIfPresent(Double.self, forKey: .canvasPadding) ?? 0.04
+        )
+        let background: StudioCanvasBackground
+        if let decodedBackground = try container.decodeIfPresent(StudioCanvasBackground.self, forKey: .background) {
+            background = decodedBackground
+        } else {
+            background = .preset(try container.decodeIfPresent(StudioBackgroundStyle.self, forKey: .backgroundStyle) ?? .black)
+        }
+        let screenViewport = try container.decodeIfPresent(
+            StudioSourceViewportSettings.self,
+            forKey: .screenViewport
+        ) ?? StudioSourceViewportSettings(
+            zoom: try container.decodeIfPresent(Double.self, forKey: .screenZoom) ?? 1
+        )
+        let webcamViewport = try container.decodeIfPresent(
+            StudioSourceViewportSettings.self,
+            forKey: .webcamViewport
+        ) ?? StudioSourceViewportSettings(
+            zoom: try container.decodeIfPresent(Double.self, forKey: .webcamZoom) ?? 1
+        )
         self.init(
             preset: try container.decodeIfPresent(StudioLayoutPreset.self, forKey: .preset) ?? .pictureInPicture,
-            backgroundStyle: try container.decodeIfPresent(StudioBackgroundStyle.self, forKey: .backgroundStyle) ?? .black,
-            canvasPadding: try container.decodeIfPresent(Double.self, forKey: .canvasPadding) ?? 0.04,
-            screenZoom: try container.decodeIfPresent(Double.self, forKey: .screenZoom) ?? 1,
-            webcamZoom: try container.decodeIfPresent(Double.self, forKey: .webcamZoom) ?? 1
+            background: background,
+            canvasPadding: canvasPadding,
+            screenViewport: screenViewport,
+            webcamViewport: webcamViewport,
+            sourceGap: try container.decodeIfPresent(Double.self, forKey: .sourceGap) ?? Self.defaultSourceGap(canvasPadding: canvasPadding),
+            sourceCornerRadius: try container.decodeIfPresent(Double.self, forKey: .sourceCornerRadius)
+                ?? Self.defaultSourceCornerRadius
         )
     }
 
+    public func encode(to encoder: any Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(preset, forKey: .preset)
+        try container.encode(background, forKey: .background)
+        if let backgroundStyle = background.presetStyle {
+            try container.encode(backgroundStyle, forKey: .backgroundStyle)
+        }
+        try container.encode(canvasPadding, forKey: .canvasPadding)
+        try container.encode(screenViewport, forKey: .screenViewport)
+        try container.encode(webcamViewport, forKey: .webcamViewport)
+        try container.encode(sourceGap, forKey: .sourceGap)
+        try container.encode(sourceCornerRadius, forKey: .sourceCornerRadius)
+    }
+
     public static func normalizedSourceZoom(_ zoom: Double) -> Double {
-        let clamped = min(max(zoom, minimumSourceZoom), maximumSourceZoom)
-        return (clamped * 100).rounded() / 100
+        quantizedClamp(zoom, minimum: minimumSourceZoom, maximum: maximumSourceZoom, fallback: 1, scale: 100)
     }
 
     public static func normalizedCanvasPadding(_ padding: Double) -> Double {
-        let clamped = min(max(padding, minimumCanvasPadding), maximumCanvasPadding)
-        return (clamped * 100).rounded() / 100
+        quantizedClamp(padding, minimum: minimumCanvasPadding, maximum: maximumCanvasPadding, fallback: 0.04, scale: 100)
+    }
+
+    public static func normalizedSourceGap(_ gap: Double) -> Double {
+        quantizedClamp(gap, minimum: minimumSourceGap, maximum: maximumSourceGap, fallback: defaultSourceGap(canvasPadding: 0.04), scale: 1_000)
+    }
+
+    public static func normalizedSourceCornerRadius(_ radius: Double) -> Double {
+        quantizedClamp(
+            radius,
+            minimum: minimumSourceCornerRadius,
+            maximum: maximumSourceCornerRadius,
+            fallback: defaultSourceCornerRadius,
+            scale: 1_000
+        )
+    }
+
+    public static func normalizedSourcePan(_ pan: Double) -> Double {
+        quantizedClamp(pan, minimum: minimumSourcePan, maximum: maximumSourcePan, fallback: 0, scale: 100)
+    }
+
+    public static func normalizedColorComponent(_ component: Double) -> Double {
+        quantizedClamp(component, minimum: 0, maximum: 1, fallback: 1, scale: 1_000)
+    }
+
+    public static func defaultSourceGap(canvasPadding: Double) -> Double {
+        normalizedCanvasPadding(canvasPadding) > 0 ? 0.024 : 0
+    }
+
+    private static func quantizedClamp(
+        _ value: Double,
+        minimum: Double,
+        maximum: Double,
+        fallback: Double,
+        scale: Double
+    ) -> Double {
+        let finiteValue = value.isFinite ? value : fallback
+        let clamped = min(max(finiteValue, minimum), maximum)
+        return (clamped * scale).rounded() / scale
     }
 }
 
@@ -729,10 +1018,14 @@ public struct StudioCanvasLayout: Equatable, Sendable {
     public var contentRect: CGRect
     public var canvasInset: CGFloat
     public var sourceGap: CGFloat
+    public var sourceCornerRadius: CGFloat
     public var settings: StudioLayoutSettings
 
     public init(size: CGSize, settings: StudioLayoutSettings) {
-        let safeSize = CGSize(width: max(1, size.width), height: max(1, size.height))
+        let safeSize = CGSize(
+            width: Self.safeDimension(size.width),
+            height: Self.safeDimension(size.height)
+        )
         self.outputRect = CGRect(origin: .zero, size: safeSize)
         self.settings = settings
         self.canvasInset = min(safeSize.width, safeSize.height) * settings.canvasPadding
@@ -746,11 +1039,12 @@ public struct StudioCanvasLayout: Equatable, Sendable {
             height: contentHeight
         )
 
-        if settings.preset.isSplit, canvasInset > 0 {
-            self.sourceGap = max(8, min(contentWidth, contentHeight) * settings.canvasPadding * 0.6)
+        if settings.preset.isSplit {
+            self.sourceGap = min(contentWidth - 1, min(contentWidth, contentHeight) * settings.sourceGap)
         } else {
             self.sourceGap = 0
         }
+        self.sourceCornerRadius = min(contentWidth, contentHeight) * settings.sourceCornerRadius
     }
 
     public var splitScreenRect: CGRect {
@@ -783,6 +1077,10 @@ public struct StudioCanvasLayout: Equatable, Sendable {
             width: width,
             height: min(height, max(1, contentRect.height - (margin * 2)))
         )
+    }
+
+    private static func safeDimension(_ dimension: CGFloat) -> CGFloat {
+        dimension.isFinite ? max(1, dimension) : 1
     }
 }
 
@@ -848,8 +1146,8 @@ public enum StudioPerformanceMode: String, CaseIterable, Codable, Identifiable, 
 
     public var id: String { rawValue }
     public static let liveStreamingPreviewConfiguration = PreviewCaptureConfiguration(
-        maxDisplayWidth: 640,
-        framesPerSecond: 5,
+        maxDisplayWidth: 960,
+        framesPerSecond: 12,
         queueDepth: 1
     )
 

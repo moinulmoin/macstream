@@ -1,5 +1,6 @@
 import SwiftUI
 import MacStreamCore
+import AppKit
 
 struct PreviewCanvasView: View {
     var scene: StudioScene
@@ -14,39 +15,68 @@ struct PreviewCanvasView: View {
     var screenLevel = 1.0
     var isScreenCaptureReady = true
     var screenCaptureTarget: ScreenCaptureTarget?
+    var mediaPreviewFrameSource: MediaPreviewFrameSource?
+    var shouldUseMediaOutputPreview = false
     var onCameraPreviewFailure: (@MainActor (String) -> Void)? = nil
 
     var body: some View {
+        previewContent
+            .aspectRatio(16.0 / 9.0, contentMode: .fit)
+            .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+            .overlay {
+                RoundedRectangle(cornerRadius: 18, style: .continuous)
+                    .strokeBorder(.white.opacity(0.12), lineWidth: 1)
+            }
+            .shadow(color: .black.opacity(0.22), radius: 24, y: 12)
+            .accessibilityElement(children: .combine)
+            .accessibilityLabel(Text("\(scene.title) preview"))
+            .accessibilityValue(Text(previewAccessibilityValue))
+    }
+
+    @ViewBuilder
+    private var previewContent: some View {
+        if shouldUseMediaOutputPreview, let mediaPreviewFrameSource {
+            MediaOutputPreviewView(
+                source: mediaPreviewFrameSource,
+                maximumFramesPerSecond: previewConfiguration.framesPerSecond
+            )
+            .background(.black)
+        } else {
+            offlinePreview
+        }
+    }
+
+    private var offlinePreview: some View {
         GeometryReader { proxy in
             let canvasLayout = StudioCanvasLayout(size: proxy.size, settings: layoutSettings)
 
             ZStack {
-                canvasBackground
+                canvasBackground(in: proxy.size)
 
                 Group {
                     switch scene.kind {
                     case .face:
-                        zoomedCameraFill
+                        sourceFrame(cornerRadius: canvasLayout.sourceCornerRadius) {
+                            zoomedCameraFill
+                        }
+                        .frame(width: canvasLayout.contentRect.width, height: canvasLayout.contentRect.height)
+                        .position(x: canvasLayout.contentRect.midX, y: canvasLayout.contentRect.midY)
                     case .screenAndFace:
                         screenAndWebcamLayout(in: canvasLayout)
                     case .screenOnly:
-                        zoomedScreenFill
+                        sourceFrame(cornerRadius: canvasLayout.sourceCornerRadius) {
+                            zoomedScreenFill
+                        }
+                        .frame(width: canvasLayout.contentRect.width, height: canvasLayout.contentRect.height)
+                        .position(x: canvasLayout.contentRect.midX, y: canvasLayout.contentRect.midY)
                     case .brb:
                         brbLayer
+                            .frame(width: canvasLayout.contentRect.width, height: canvasLayout.contentRect.height)
+                            .position(x: canvasLayout.contentRect.midX, y: canvasLayout.contentRect.midY)
                     }
                 }
-                .padding(canvasLayout.canvasInset)
             }
         }
-        .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
-        .overlay {
-            RoundedRectangle(cornerRadius: 18, style: .continuous)
-                .strokeBorder(.white.opacity(0.12), lineWidth: 1)
-        }
-        .shadow(color: .black.opacity(0.22), radius: 24, y: 12)
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel(Text("\(scene.title) preview"))
-        .accessibilityValue(Text(previewAccessibilityValue))
     }
 
     private var previewAccessibilityValue: String {
@@ -80,7 +110,7 @@ struct PreviewCanvasView: View {
     }
 
     private var zoomedScreenFill: some View {
-        sourceViewport(zoom: layoutSettings.screenZoom) {
+        sourceViewport(layoutSettings.screenViewport) {
             screenFill
         }
     }
@@ -127,7 +157,7 @@ struct PreviewCanvasView: View {
     }
 
     private var zoomedCameraFill: some View {
-        sourceViewport(zoom: layoutSettings.webcamZoom) {
+        sourceViewport(layoutSettings.webcamViewport) {
             cameraFill
         }
     }
@@ -157,73 +187,109 @@ struct PreviewCanvasView: View {
     }
 
     private func splitScreenAndWebcamLayout(in layout: StudioCanvasLayout) -> some View {
-        HStack(spacing: layout.sourceGap) {
-            sourceFrame {
+        ZStack {
+            sourceFrame(cornerRadius: layout.sourceCornerRadius) {
                 zoomedScreenFill
             }
-            .frame(width: layout.splitScreenRect.width)
+            .frame(width: layout.splitScreenRect.width, height: layout.splitScreenRect.height)
+            .position(x: layout.splitScreenRect.midX, y: layout.splitScreenRect.midY)
 
-            sourceFrame {
+            sourceFrame(cornerRadius: layout.sourceCornerRadius) {
                 zoomedCameraFill
             }
-            .frame(maxWidth: .infinity)
+            .frame(width: layout.splitWebcamRect.width, height: layout.splitWebcamRect.height)
+            .position(x: layout.splitWebcamRect.midX, y: layout.splitWebcamRect.midY)
         }
     }
 
     private func pictureInPictureLayout(in layout: StudioCanvasLayout) -> some View {
         let pipRect = layout.pictureInPictureRect
-        let trailingPadding = layout.contentRect.maxX - pipRect.maxX
-        let bottomPadding = pipRect.minY - layout.contentRect.minY
 
         return ZStack {
-            zoomedScreenFill
+            sourceFrame(cornerRadius: layout.sourceCornerRadius) {
+                zoomedScreenFill
+            }
+            .frame(width: layout.contentRect.width, height: layout.contentRect.height)
+            .position(x: layout.contentRect.midX, y: layout.contentRect.midY)
 
-            sourceFrame {
-                sourceViewport(zoom: layoutSettings.webcamZoom) {
+            sourceFrame(cornerRadius: layout.sourceCornerRadius) {
+                sourceViewport(layoutSettings.webcamViewport) {
                     pictureInPictureCamera
                 }
             }
             .frame(width: pipRect.width, height: pipRect.height)
-            .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
             .overlay {
-                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                RoundedRectangle(cornerRadius: layout.sourceCornerRadius, style: .continuous)
                     .stroke(.white.opacity(0.24), lineWidth: 1)
             }
             .shadow(color: .black.opacity(0.35), radius: 18, y: 8)
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
-            .padding(.trailing, trailingPadding)
-            .padding(.bottom, bottomPadding)
+            .position(x: pipRect.midX, y: layout.outputRect.height - pipRect.midY)
         }
     }
 
     private func sourceViewport<Content: View>(
-        zoom: Double,
-        @ViewBuilder content: () -> Content
+        _ viewport: StudioSourceViewportSettings,
+        @ViewBuilder content: @escaping () -> Content
     ) -> some View {
-        content()
-            .scaleEffect(StudioLayoutSettings.normalizedSourceZoom(zoom))
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .clipped()
+        GeometryReader { proxy in
+            let zoom = StudioLayoutSettings.normalizedSourceZoom(viewport.zoom)
+            let panX = StudioLayoutSettings.normalizedSourcePan(viewport.panX)
+            let panY = StudioLayoutSettings.normalizedSourcePan(viewport.panY)
+            let maxPanX = max(0, proxy.size.width * (zoom - 1) / 2)
+            let maxPanY = max(0, proxy.size.height * (zoom - 1) / 2)
+
+            content()
+                .scaleEffect(zoom)
+                .offset(x: -CGFloat(panX) * maxPanX, y: -CGFloat(panY) * maxPanY)
+                .frame(width: proxy.size.width, height: proxy.size.height)
+                .clipped()
+        }
     }
 
     private func sourceFrame<Content: View>(
+        cornerRadius: CGFloat,
         @ViewBuilder content: () -> Content
     ) -> some View {
         content()
             .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .background(.black.opacity(0.72))
-            .clipped()
+            .clipShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
     }
 
-    private var canvasBackground: some View {
-        RoundedRectangle(cornerRadius: 18, style: .continuous)
-            .fill(backgroundFill)
+    @ViewBuilder
+    private func canvasBackground(in size: CGSize) -> some View {
+        switch layoutSettings.background {
+        case let .localImage(path):
+            if let image = LocalCanvasBackgroundImageCache.shared.image(for: path) {
+                Image(nsImage: image)
+                    .resizable()
+                    .scaledToFill()
+                    .frame(width: size.width, height: size.height)
+                    .clipped()
+            } else {
+                backgroundColor(.black)
+            }
+        case let .color(color):
+            backgroundColor(Color(
+                .sRGB,
+                red: color.red,
+                green: color.green,
+                blue: color.blue,
+                opacity: color.alpha
+            ))
+        case let .preset(style):
+            backgroundColor(Self.backgroundColor(for: style))
+        }
     }
 
-    private var backgroundFill: Color {
-        switch layoutSettings.backgroundStyle {
+    private func backgroundColor(_ color: Color) -> some View {
+        Rectangle()
+            .fill(color)
+    }
+
+    private static func backgroundColor(for style: StudioBackgroundStyle) -> Color {
+        switch style {
         case .black:
-            Color.black
+            .black
         case .studio:
             Color(red: 0.06, green: 0.07, blue: 0.10)
         case .stage:
@@ -277,5 +343,24 @@ struct PreviewCanvasView: View {
         .foregroundStyle(.white.opacity(0.72))
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(.black)
+    }
+}
+
+@MainActor
+private final class LocalCanvasBackgroundImageCache {
+    static let shared = LocalCanvasBackgroundImageCache()
+
+    private var cachedPath: String?
+    private var cachedImage: NSImage?
+
+    func image(for path: String) -> NSImage? {
+        guard !path.isEmpty else { return nil }
+        if cachedPath == path {
+            return cachedImage
+        }
+
+        cachedPath = path
+        cachedImage = NSImage(contentsOfFile: path)
+        return cachedImage
     }
 }

@@ -1,3 +1,4 @@
+import CoreGraphics
 import Foundation
 @preconcurrency import AVFoundation
 import CoreMedia
@@ -137,9 +138,11 @@ func systemMediaPipelinePublishesOnlyFromPublishingCaptureOutputs() {
     #expect(!SystemMediaPipeline.shouldPublishMicrophoneOutputSample(isPublishingOutput: false, hasPublisher: false))
 
     #expect(SystemMediaPipeline.shouldPublishCompositedVideoSample(sceneKind: .screenAndFace))
-    #expect(!SystemMediaPipeline.shouldPublishCompositedVideoSample(sceneKind: .screenOnly))
+    #expect(SystemMediaPipeline.shouldPublishCompositedVideoSample(sceneKind: .screenOnly))
     #expect(!SystemMediaPipeline.shouldPublishCompositedVideoSample(sceneKind: .face))
     #expect(!SystemMediaPipeline.shouldPublishCompositedVideoSample(sceneKind: .brb))
+    #expect(SystemMediaPipeline.requiresCameraCapture(sceneKind: .screenAndFace))
+    #expect(!SystemMediaPipeline.requiresCameraCapture(sceneKind: .screenOnly))
 }
 
 @Test
@@ -280,7 +283,7 @@ func systemMediaPipelineBuildsUpdatedStreamConfigurationFromCaptureGeometry() {
 }
 
 @Test
-func systemMediaPipelineSkipsStreamReconfigurationForLevelOnlyChanges() {
+func systemMediaPipelineSkipsStreamReconfigurationForOutputOnlyChanges() {
     let baseline = MediaPipelineConfiguration(
         maxVideoWidth: 1_920,
         framesPerSecond: 30,
@@ -322,10 +325,34 @@ func systemMediaPipelineSkipsStreamReconfigurationForLevelOnlyChanges() {
         microphoneLevel: 1,
         cameraEnhancements: CameraEnhancementSettings(usesAutoLight: true, autoLightAmount: 0.8)
     )
+    let sceneOnly = MediaPipelineConfiguration(
+        maxVideoWidth: 1_920,
+        framesPerSecond: 30,
+        videoBitrate: 8_000_000,
+        queueDepth: 5,
+        sceneKind: .screenAndFace,
+        capturesSystemAudio: true,
+        capturesMicrophone: true,
+        systemAudioLevel: 1,
+        microphoneLevel: 1
+    )
+    let layoutOnly = MediaPipelineConfiguration(
+        maxVideoWidth: 1_920,
+        framesPerSecond: 30,
+        videoBitrate: 8_000_000,
+        queueDepth: 5,
+        capturesSystemAudio: true,
+        capturesMicrophone: true,
+        systemAudioLevel: 1,
+        microphoneLevel: 1,
+        layoutSettings: StudioLayoutSettings(preset: .screen70Webcam30, canvasPadding: 0.08)
+    )
 
     #expect(!SystemMediaPipeline.shouldUpdateActiveStreamConfiguration(from: baseline, to: levelOnly))
     #expect(!SystemMediaPipeline.shouldUpdateActiveStreamConfiguration(from: baseline, to: microphoneCaptureOnly))
     #expect(!SystemMediaPipeline.shouldUpdateActiveStreamConfiguration(from: baseline, to: cameraEnhancementOnly))
+    #expect(!SystemMediaPipeline.shouldUpdateActiveStreamConfiguration(from: baseline, to: sceneOnly))
+    #expect(!SystemMediaPipeline.shouldUpdateActiveStreamConfiguration(from: baseline, to: layoutOnly))
 }
 
 @Test
@@ -355,18 +382,161 @@ func systemMediaPipelineUpdatesStreamConfigurationForCaptureCostChanges() {
         capturesSystemAudio: true,
         screenCaptureTarget: ScreenCaptureTarget(id: "window-42", kind: .window, name: "Slides", detail: "Keynote")
     )
-    let sceneChanged = MediaPipelineConfiguration(
-        maxVideoWidth: 1_920,
-        framesPerSecond: 30,
-        queueDepth: 5,
-        sceneKind: .screenAndFace,
-        capturesSystemAudio: true
-    )
-
     #expect(SystemMediaPipeline.shouldUpdateActiveStreamConfiguration(from: baseline, to: lowerVideoCost))
     #expect(SystemMediaPipeline.shouldUpdateActiveStreamConfiguration(from: baseline, to: withoutSystemAudio))
     #expect(SystemMediaPipeline.shouldUpdateActiveStreamConfiguration(from: baseline, to: targetChanged))
-    #expect(SystemMediaPipeline.shouldUpdateActiveStreamConfiguration(from: baseline, to: sceneChanged))
+}
+
+@Test
+func videoCanvasRenderPlanUsesPictureInPictureGeometry() {
+    let outputSize = CGSize(width: 1_920, height: 1_080)
+    let settings = StudioLayoutSettings(
+        preset: .pictureInPicture,
+        canvasPadding: 0.04,
+        screenZoom: 1.2,
+        webcamZoom: 0.9,
+        sourceCornerRadius: 0.025
+    )
+    let plan = VideoCanvasRenderPlan.make(
+        outputSize: outputSize,
+        layoutSettings: settings
+    )
+    let layout = StudioCanvasLayout(size: outputSize, settings: settings)
+
+    #expect(plan.mode == .pictureInPicture)
+    #expect(plan.screenRect == layout.contentRect.integral)
+    #expect(plan.cameraRect == layout.pictureInPictureRect.integral)
+    #expect(plan.screenZoom == 1.2)
+    #expect(plan.cameraZoom == 0.9)
+    #expect(plan.screenViewport == settings.screenViewport)
+    #expect(plan.cameraViewport == settings.webcamViewport)
+    #expect(plan.sourceCornerRadius == layout.sourceCornerRadius)
+    #expect(plan.backgroundDescriptor == .color(red: 0, green: 0, blue: 0, alpha: 1))
+}
+
+@Test
+func videoCanvasRenderPlanUsesSplitGeometry() {
+    let outputSize = CGSize(width: 1_280, height: 720)
+    let settings = StudioLayoutSettings(
+        preset: .screen70Webcam30,
+        background: .color(StudioRGBAColor(red: 0.25, green: 0.5, blue: 0.75, alpha: 0.6)),
+        canvasPadding: 0.08,
+        screenViewport: StudioSourceViewportSettings(zoom: 0.85, panX: 0.25, panY: -0.5),
+        webcamViewport: StudioSourceViewportSettings(zoom: 1.4, panX: -0.75, panY: 0.5),
+        sourceCornerRadius: 0.05
+    )
+    let plan = VideoCanvasRenderPlan.make(
+        outputSize: outputSize,
+        layoutSettings: settings
+    )
+    let layout = StudioCanvasLayout(size: outputSize, settings: settings)
+
+    #expect(plan.mode == .split)
+    #expect(plan.screenRect == layout.splitScreenRect.integral)
+    #expect(plan.cameraRect == layout.splitWebcamRect.integral)
+    #expect(plan.screenZoom == 0.85)
+    #expect(plan.cameraZoom == 1.4)
+    #expect(plan.screenViewport == StudioSourceViewportSettings(zoom: 0.85, panX: 0.25, panY: -0.5))
+    #expect(plan.cameraViewport == StudioSourceViewportSettings(zoom: 1.4, panX: -0.75, panY: 0.5))
+    #expect(plan.sourceCornerRadius == layout.sourceCornerRadius)
+    #expect(plan.backgroundDescriptor == .color(red: 0.25, green: 0.5, blue: 0.75, alpha: 0.6))
+}
+
+@Test
+func videoCanvasRenderPlanUsesCanvasGeometryWithoutCameraForScreenOnly() {
+    let outputSize = CGSize(width: 1_920, height: 1_080)
+    let settings = StudioLayoutSettings(
+        preset: .screen70Webcam30,
+        backgroundStyle: .warm,
+        canvasPadding: 0.08,
+        screenZoom: 1.25,
+        sourceCornerRadius: 0.03
+    )
+    let plan = VideoCanvasRenderPlan.make(
+        outputSize: outputSize,
+        layoutSettings: settings,
+        sceneKind: .screenOnly
+    )
+    let layout = StudioCanvasLayout(size: outputSize, settings: settings)
+
+    #expect(plan.mode == .screenOnly)
+    #expect(plan.screenRect == layout.contentRect.integral)
+    #expect(plan.cameraRect == .zero)
+    #expect(plan.screenZoom == 1.25)
+    #expect(plan.sourceCornerRadius == layout.sourceCornerRadius)
+    #expect(plan.backgroundDescriptor == .color(red: 0.14, green: 0.10, blue: 0.06, alpha: 1))
+}
+
+@Test
+func systemMediaPipelineUsesFixedWidescreenOutputDimensions() {
+    #expect(SystemMediaPipeline.outputVideoSize(
+        for: MediaPipelineConfiguration(maxVideoWidth: 1_280)
+    ) == (width: 1_280, height: 720))
+    #expect(SystemMediaPipeline.outputVideoSize(
+        for: MediaPipelineConfiguration(maxVideoWidth: 3_840)
+    ) == (width: 3_840, height: 2_160))
+}
+
+@Test
+func videoCanvasSourceTransformBoundsPanWithoutExposingGaps() {
+    let sourceExtent = CGRect(x: 0, y: 0, width: 100, height: 100)
+    let targetRect = CGRect(x: 0, y: 0, width: 100, height: 100)
+    let transform = VideoCanvasRenderPlan.sourceTransform(
+        sourceExtent: sourceExtent,
+        targetRect: targetRect,
+        viewport: StudioSourceViewportSettings(zoom: 2, panX: 1, panY: 1)
+    )
+    let transformedExtent = sourceExtent.applying(transform)
+
+    #expect(transformedExtent.minX <= targetRect.minX)
+    #expect(transformedExtent.maxX >= targetRect.maxX)
+    #expect(transformedExtent.minY <= targetRect.minY)
+    #expect(transformedExtent.maxY >= targetRect.maxY)
+    #expect(transform.tx == -100)
+    #expect(transform.ty == 0)
+}
+
+@Test
+func videoCanvasSourceTransformPreservesZoomOutForMoreSourceContext() {
+    let sourceExtent = CGRect(x: 0, y: 0, width: 100, height: 100)
+    let targetRect = CGRect(x: 0, y: 0, width: 100, height: 100)
+    let transform = VideoCanvasRenderPlan.sourceTransform(
+        sourceExtent: sourceExtent,
+        targetRect: targetRect,
+        viewport: StudioSourceViewportSettings(zoom: 0.75, panX: 5, panY: -.infinity)
+    )
+    let transformedExtent = sourceExtent.applying(transform)
+
+    #expect(transformedExtent == CGRect(x: 12.5, y: 12.5, width: 75, height: 75))
+    #expect(transform.a == 0.75)
+    #expect(transform.d == 0.75)
+    #expect(transform.tx == 12.5)
+    #expect(transform.ty == 12.5)
+}
+
+@Test
+func videoCanvasBackgroundDescriptorMapsCanonicalBackgrounds() {
+    #expect(
+        VideoCanvasRenderPlan.backgroundDescriptor(for: .preset(.stage))
+            == .color(red: 0.08, green: 0.02, blue: 0.04, alpha: 1)
+    )
+    #expect(
+        VideoCanvasRenderPlan.backgroundDescriptor(
+            for: .color(StudioRGBAColor(red: 0.12, green: 0.34, blue: 0.56, alpha: 0.78))
+        ) == .color(red: 0.12, green: 0.34, blue: 0.56, alpha: 0.78)
+    )
+    #expect(
+        VideoCanvasRenderPlan.backgroundDescriptor(for: .localImage(path: "/tmp/canvas.png")) { _ in true }
+            == .localImage(path: "/tmp/canvas.png")
+    )
+    #expect(
+        VideoCanvasRenderPlan.backgroundDescriptor(for: .localImage(path: "/tmp/missing.png")) { _ in false }
+            == .fallbackBlack
+    )
+    #expect(
+        VideoCanvasRenderPlan.backgroundDescriptor(for: .localImage(path: "")) { _ in true }
+            == .fallbackBlack
+    )
 }
 
 @Test
@@ -391,6 +561,193 @@ func systemMediaPipelineAvoidsDoubleCountingCaptureFPSWhenPublishingAndRecording
         isPublishingStream: true,
         hasDedicatedPublishingStream: true
     ))
+}
+
+@Test
+func systemMediaPipelineSharesRecordingCaptureOnlyWhenExplicitlyEligible() {
+    #expect(SystemMediaPipeline.shouldShareRecordingCaptureForPublishing(
+        publishingMode: .none,
+        hasRecordingStream: true,
+        hasRecordingWriter: true,
+        hasRecordingCaptureGeometry: true,
+        sceneKind: .screenOnly,
+        hasRecordingVideoCompositor: true,
+        hasRecordingVideoPixelBufferAdaptor: true
+    ))
+    #expect(SystemMediaPipeline.shouldShareRecordingCaptureForPublishing(
+        publishingMode: .none,
+        hasRecordingStream: true,
+        hasRecordingWriter: true,
+        hasRecordingCaptureGeometry: true,
+        sceneKind: .screenAndFace,
+        hasRecordingVideoCompositor: true,
+        hasRecordingVideoPixelBufferAdaptor: true
+    ))
+    #expect(!SystemMediaPipeline.shouldShareRecordingCaptureForPublishing(
+        publishingMode: .dedicated,
+        hasRecordingStream: true,
+        hasRecordingWriter: true,
+        hasRecordingCaptureGeometry: true,
+        sceneKind: .screenOnly,
+        hasRecordingVideoCompositor: true,
+        hasRecordingVideoPixelBufferAdaptor: true
+    ))
+    #expect(!SystemMediaPipeline.shouldShareRecordingCaptureForPublishing(
+        publishingMode: .none,
+        hasRecordingStream: true,
+        hasRecordingWriter: true,
+        hasRecordingCaptureGeometry: true,
+        sceneKind: .screenAndFace,
+        hasRecordingVideoCompositor: true,
+        hasRecordingVideoPixelBufferAdaptor: false
+    ))
+}
+
+@Test
+func systemMediaPipelineRoutesRecordingOwnedSamplesToPublisherOnlyInSharedMode() {
+    #expect(SystemMediaPipeline.shouldPublishRecordingOwnedStreamSample(
+        publishingMode: .recordingOwned,
+        isRecordingStream: true,
+        hasPublisher: true
+    ))
+    #expect(!SystemMediaPipeline.shouldPublishRecordingOwnedStreamSample(
+        publishingMode: .dedicated,
+        isRecordingStream: true,
+        hasPublisher: true
+    ))
+    #expect(!SystemMediaPipeline.shouldPublishRecordingOwnedStreamSample(
+        publishingMode: .recordingOwned,
+        isRecordingStream: false,
+        hasPublisher: true
+    ))
+    #expect(!SystemMediaPipeline.shouldPublishRecordingOwnedStreamSample(
+        publishingMode: .recordingOwned,
+        isRecordingStream: true,
+        hasPublisher: false
+    ))
+}
+
+@Test
+func systemMediaPipelinePromotesSharedPublishingBeforeStoppingRecording() {
+    #expect(SystemMediaPipeline.shouldPromotePublishingBeforeStoppingRecording(
+        publishingMode: .recordingOwned,
+        hasPublisher: true
+    ))
+    #expect(!SystemMediaPipeline.shouldPromotePublishingBeforeStoppingRecording(
+        publishingMode: .recordingOwned,
+        hasPublisher: false
+    ))
+    #expect(!SystemMediaPipeline.shouldPromotePublishingBeforeStoppingRecording(
+        publishingMode: .dedicated,
+        hasPublisher: true
+    ))
+    #expect(!SystemMediaPipeline.shouldPromotePublishingBeforeStoppingRecording(
+        publishingMode: .none,
+        hasPublisher: true
+    ))
+}
+
+@Test
+func systemMediaPipelineStopStreamDoesNotStopRecordingOwnedCapture() {
+    #expect(SystemMediaPipeline.publishingStopPlan(
+        mode: .recordingOwned,
+        publishingOwnsMicrophoneSession: false,
+        recordingUsesPublishingMicrophoneSession: false,
+        hasPublishingMicrophoneSession: false
+    ) == PublishingStopPlan(
+        shouldStopStream: false,
+        shouldStopMicrophoneSession: false,
+        shouldStopCameraSession: false,
+        shouldReturnMicrophoneToRecording: false
+    ))
+
+    #expect(SystemMediaPipeline.publishingStopPlan(
+        mode: .dedicated,
+        publishingOwnsMicrophoneSession: true,
+        recordingUsesPublishingMicrophoneSession: false,
+        hasPublishingMicrophoneSession: true
+    ) == PublishingStopPlan(
+        shouldStopStream: true,
+        shouldStopMicrophoneSession: true,
+        shouldStopCameraSession: true,
+        shouldReturnMicrophoneToRecording: false
+    ))
+
+    #expect(SystemMediaPipeline.publishingStopPlan(
+        mode: .dedicated,
+        publishingOwnsMicrophoneSession: false,
+        recordingUsesPublishingMicrophoneSession: true,
+        hasPublishingMicrophoneSession: true
+    ) == PublishingStopPlan(
+        shouldStopStream: true,
+        shouldStopMicrophoneSession: false,
+        shouldStopCameraSession: true,
+        shouldReturnMicrophoneToRecording: true
+    ))
+}
+
+@Test
+func systemMediaPipelineAdoptsDedicatedPublishingCaptureWhenRecordingStartsAfterRTMP() {
+    #expect(SystemMediaPipeline.dedicatedPublishingRecordingAdoptionPlan(
+        publishingMode: .dedicated,
+        hasPublisher: true,
+        hasPublishingStream: true,
+        hasPublishingCaptureGeometry: true,
+        sceneKind: .screenOnly,
+        hasPublishingCamera: false,
+        hasPublishingMicrophone: true
+    ) == DedicatedPublishingRecordingAdoptionPlan(
+        shouldAdopt: true,
+        shouldTransferStreamToRecording: true,
+        shouldTransferCameraToRecording: false,
+        shouldTransferMicrophoneToRecording: true
+    ))
+
+    #expect(SystemMediaPipeline.dedicatedPublishingRecordingAdoptionPlan(
+        publishingMode: .dedicated,
+        hasPublisher: true,
+        hasPublishingStream: true,
+        hasPublishingCaptureGeometry: true,
+        sceneKind: .screenAndFace,
+        hasPublishingCamera: true,
+        hasPublishingMicrophone: true
+    ) == DedicatedPublishingRecordingAdoptionPlan(
+        shouldAdopt: true,
+        shouldTransferStreamToRecording: true,
+        shouldTransferCameraToRecording: true,
+        shouldTransferMicrophoneToRecording: true
+    ))
+}
+
+@Test
+func systemMediaPipelineRejectsDedicatedPublishingAdoptionWithoutStableOwnership() {
+    #expect(!SystemMediaPipeline.dedicatedPublishingRecordingAdoptionPlan(
+        publishingMode: .recordingOwned,
+        hasPublisher: true,
+        hasPublishingStream: true,
+        hasPublishingCaptureGeometry: true,
+        sceneKind: .screenOnly,
+        hasPublishingCamera: false,
+        hasPublishingMicrophone: false
+    ).shouldAdopt)
+    #expect(!SystemMediaPipeline.dedicatedPublishingRecordingAdoptionPlan(
+        publishingMode: .dedicated,
+        hasPublisher: false,
+        hasPublishingStream: true,
+        hasPublishingCaptureGeometry: true,
+        sceneKind: .screenOnly,
+        hasPublishingCamera: false,
+        hasPublishingMicrophone: false
+    ).shouldAdopt)
+    #expect(!SystemMediaPipeline.dedicatedPublishingRecordingAdoptionPlan(
+        publishingMode: .dedicated,
+        hasPublisher: true,
+        hasPublishingStream: true,
+        hasPublishingCaptureGeometry: true,
+        sceneKind: .screenAndFace,
+        hasPublishingCamera: false,
+        hasPublishingMicrophone: true
+    ).shouldAdopt)
 }
 
 @Test

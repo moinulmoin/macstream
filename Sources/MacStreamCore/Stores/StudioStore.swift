@@ -263,6 +263,18 @@ public final class StudioStore {
         )
     }
 
+    public var mediaPreviewFrameSource: MediaPreviewFrameSource? {
+        mediaPipeline.mediaPreviewFrameSource
+    }
+
+    public var shouldUseMediaOutputPreview: Bool {
+        guard mediaPreviewFrameSource != nil else { return false }
+        let isRealStreamActive = streamTransport == .rtmpPublish
+            && (streamState.isLive || isStreamStopping)
+        let isRecordingActive = recordingState == .recording || isRecordingStopping
+        return isRealStreamActive || isRecordingActive
+    }
+
     public var currentOutputResolutionWidth: Int {
         currentMediaPipelineConfiguration.maxVideoWidth
     }
@@ -2630,13 +2642,17 @@ public final class StudioStore {
         let fullConfiguration = mode.previewCaptureConfiguration
         switch quality {
         case .automatic:
-            return isRTMPPublishing
-                ? StudioPerformanceMode.liveStreamingPreviewConfiguration
-                : fullConfiguration
+            guard isRTMPPublishing else { return fullConfiguration }
+            let liveCap = StudioPerformanceMode.liveStreamingPreviewConfiguration
+            return PreviewCaptureConfiguration(
+                maxDisplayWidth: min(fullConfiguration.maxDisplayWidth, liveCap.maxDisplayWidth),
+                framesPerSecond: min(fullConfiguration.framesPerSecond, liveCap.framesPerSecond),
+                queueDepth: 1
+            )
         case .half:
             return PreviewCaptureConfiguration(
                 maxDisplayWidth: max(640, fullConfiguration.maxDisplayWidth / 2),
-                framesPerSecond: max(5, fullConfiguration.framesPerSecond / 2),
+                framesPerSecond: fullConfiguration.framesPerSecond,
                 queueDepth: 1
             )
         case .full:

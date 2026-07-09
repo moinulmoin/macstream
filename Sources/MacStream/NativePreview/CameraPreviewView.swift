@@ -315,6 +315,8 @@ final class CameraPreviewNSView: NSView {
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
         wantsLayer = true
+        layer?.masksToBounds = true
+        previewLayer.masksToBounds = true
         previewLayer.videoGravity = .resizeAspectFill
         layer?.addSublayer(previewLayer)
     }

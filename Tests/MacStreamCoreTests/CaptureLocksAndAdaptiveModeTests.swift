@@ -164,20 +164,27 @@ func adaptivePerformanceModeUsesEfficiencyUnderPressure() {
 
 @Test
 @MainActor
-func studioStoreUsesMinimalPreviewCaptureWhileRTMPPublishing() {
+func studioStoreUsesBoundedSmoothPreviewCaptureWhileRTMPPublishing() {
     for mode in StudioPerformanceMode.allCases {
         #expect(StudioStore.previewCaptureConfiguration(
             for: mode,
             isRTMPPublishing: false
         ) == mode.previewCaptureConfiguration)
-        #expect(StudioStore.previewCaptureConfiguration(
+        let livePreview = StudioStore.previewCaptureConfiguration(
             for: mode,
             isRTMPPublishing: true
-        ) == StudioPerformanceMode.liveStreamingPreviewConfiguration)
+        )
+        #expect(livePreview.maxDisplayWidth <= StudioPerformanceMode.liveStreamingPreviewConfiguration.maxDisplayWidth)
+        #expect(livePreview.framesPerSecond <= StudioPerformanceMode.liveStreamingPreviewConfiguration.framesPerSecond)
+        #expect(livePreview.framesPerSecond == min(
+            mode.previewCaptureConfiguration.framesPerSecond,
+            StudioPerformanceMode.liveStreamingPreviewConfiguration.framesPerSecond
+        ))
+        #expect(livePreview.queueDepth == 1)
     }
 
-    #expect(StudioPerformanceMode.liveStreamingPreviewConfiguration.framesPerSecond <= 6)
-    #expect(StudioPerformanceMode.liveStreamingPreviewConfiguration.maxDisplayWidth <= 640)
+    #expect(StudioPerformanceMode.liveStreamingPreviewConfiguration.framesPerSecond == 12)
+    #expect(StudioPerformanceMode.liveStreamingPreviewConfiguration.maxDisplayWidth == 960)
     #expect(StudioPerformanceMode.liveStreamingPreviewConfiguration.queueDepth == 1)
 }
 

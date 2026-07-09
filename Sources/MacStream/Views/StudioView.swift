@@ -68,6 +68,8 @@ private struct PreviewColumnView: View {
                 screenLevel: store.sourceLevel(.screen),
                 isScreenCaptureReady: store.captureReport.isScreenCapturePermissionGranted,
                 screenCaptureTarget: store.selectedScreenCaptureTarget,
+                mediaPreviewFrameSource: store.mediaPreviewFrameSource,
+                shouldUseMediaOutputPreview: store.shouldUseMediaOutputPreview,
                 onCameraPreviewFailure: { detail in
                     store.notePreviewSetupIssue(detail)
                 }

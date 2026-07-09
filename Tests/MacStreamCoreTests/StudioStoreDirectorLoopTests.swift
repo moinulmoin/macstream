@@ -241,7 +241,9 @@ func outputAndLayoutPreferencesNormalizeAndPersist() throws {
         backgroundStyle: .stage,
         canvasPadding: 0.5,
         screenZoom: 0.2,
-        webcamZoom: 3.4
+        webcamZoom: 3.4,
+        sourceGap: 2,
+        sourceCornerRadius: 0.234
     )
     let preferences = StudioPreferences(
         outputResolution: .ultraHD4K,
@@ -255,6 +257,8 @@ func outputAndLayoutPreferencesNormalizeAndPersist() throws {
     #expect(layoutSettings.screenZoom == StudioLayoutSettings.minimumSourceZoom)
     #expect(layoutSettings.webcamZoom == StudioLayoutSettings.maximumSourceZoom)
     #expect(layoutSettings.canvasPadding == StudioLayoutSettings.maximumCanvasPadding)
+    #expect(layoutSettings.sourceGap == StudioLayoutSettings.maximumSourceGap)
+    #expect(layoutSettings.sourceCornerRadius == StudioLayoutSettings.maximumSourceCornerRadius)
     #expect(decoded.outputResolution == .ultraHD4K)
     #expect(decoded.outputFrameRate == .fps60)
     #expect(decoded.previewRenderQuality == .half)
@@ -272,6 +276,100 @@ func outputAndLayoutPreferencesNormalizeAndPersist() throws {
     #expect(decodedLayout.canvasPadding == 0.04)
     #expect(decodedLayout.screenZoom == StudioLayoutSettings.minimumSourceZoom)
     #expect(decodedLayout.webcamZoom == StudioLayoutSettings.maximumSourceZoom)
+    #expect(decodedLayout.screenViewport == StudioSourceViewportSettings(zoom: 0.1))
+    #expect(decodedLayout.webcamViewport == StudioSourceViewportSettings(zoom: 4.2))
+    #expect(decodedLayout.sourceGap == StudioLayoutSettings.defaultSourceGap(canvasPadding: 0.04))
+    #expect(decodedLayout.sourceCornerRadius == StudioLayoutSettings.defaultSourceCornerRadius)
+}
+
+@Test
+func sourceViewportSettingsNormalizeZoomAndPan() {
+    var viewport = StudioSourceViewportSettings(
+        zoom: .infinity,
+        panX: .nan,
+        panY: -1.337
+    )
+
+    #expect(viewport.zoom == 1)
+    #expect(viewport.panX == 0)
+    #expect(viewport.panY == -1)
+
+    viewport.zoom = 1.234
+    viewport.panX = 0.456
+    viewport.panY = -.infinity
+
+    #expect(viewport.zoom == 1.23)
+    #expect(viewport.panX == 0.46)
+    #expect(viewport.panY == 0)
+}
+
+@Test
+func layoutSettingsDecodeNewViewportFieldsAheadOfLegacyZooms() throws {
+    let persistedLayout = """
+    {
+      "preset": "screen70Webcam30",
+      "backgroundStyle": "stage",
+      "canvasPadding": 0.046,
+      "screenZoom": 0.8,
+      "webcamZoom": 1.8,
+      "screenViewport": { "zoom": 1.257, "panX": 0.331, "panY": -0.777 },
+      "webcamViewport": { "zoom": 1.112, "panX": -0.252, "panY": 0.244 },
+      "sourceGap": 0.0316,
+      "sourceCornerRadius": 0.0124
+    }
+    """
+
+    let decodedLayout = try JSONDecoder().decode(
+        StudioLayoutSettings.self,
+        from: Data(persistedLayout.utf8)
+    )
+
+    #expect(decodedLayout.canvasPadding == 0.05)
+    #expect(decodedLayout.screenViewport == StudioSourceViewportSettings(zoom: 1.257, panX: 0.331, panY: -0.777))
+    #expect(decodedLayout.webcamViewport == StudioSourceViewportSettings(zoom: 1.112, panX: -0.252, panY: 0.244))
+    #expect(decodedLayout.screenZoom == 1.26)
+    #expect(decodedLayout.webcamZoom == 1.11)
+    #expect(decodedLayout.sourceGap == 0.032)
+    #expect(decodedLayout.sourceCornerRadius == 0.012)
+}
+
+@Test
+func layoutSettingsRoundTripPersistsCanonicalCanvasValues() throws {
+    let settings = StudioLayoutSettings(
+        preset: .screen30Webcam70,
+        background: .color(StudioRGBAColor(red: 0.1234, green: 2, blue: -.infinity, alpha: 0.7654)),
+        canvasPadding: .nan,
+        screenViewport: StudioSourceViewportSettings(zoom: 1.456, panX: 0.2, panY: -0.2),
+        webcamViewport: StudioSourceViewportSettings(zoom: 0.912, panX: -0.4, panY: 0.4),
+        sourceGap: .infinity,
+        sourceCornerRadius: .nan
+    )
+    let encoded = try JSONEncoder().encode(settings)
+    let decoded = try JSONDecoder().decode(StudioLayoutSettings.self, from: encoded)
+
+    #expect(settings.canvasPadding == 0.04)
+    #expect(settings.sourceGap == StudioLayoutSettings.defaultSourceGap(canvasPadding: 0.04))
+    #expect(settings.sourceCornerRadius == StudioLayoutSettings.defaultSourceCornerRadius)
+    #expect(decoded == settings)
+    #expect(decoded.backgroundStyle == .black)
+    #expect(decoded.background == .color(StudioRGBAColor(red: 0.123, green: 1, blue: 1, alpha: 0.765)))
+}
+
+@Test
+func canvasBackgroundSupportsLegacyPresetCustomColorAndLocalImage() throws {
+    let legacyBackground = try JSONDecoder().decode(
+        StudioCanvasBackground.self,
+        from: Data(#""warm""#.utf8)
+    )
+    let customColor = StudioCanvasBackground.color(
+        StudioRGBAColor(red: -1, green: 0.3336, blue: .infinity, alpha: .nan)
+    )
+    let localImage = StudioCanvasBackground.localImage(path: "/tmp/canvas-bg.png")
+
+    #expect(legacyBackground == .preset(.warm))
+    #expect(customColor == .color(StudioRGBAColor(red: 0, green: 0.334, blue: 1, alpha: 1)))
+    #expect(try JSONDecoder().decode(StudioCanvasBackground.self, from: JSONEncoder().encode(customColor)) == customColor)
+    #expect(try JSONDecoder().decode(StudioCanvasBackground.self, from: JSONEncoder().encode(localImage)) == localImage)
 }
 
 @Test
@@ -289,10 +387,30 @@ func studioCanvasLayoutAppliesPaddingAndSplitGap() {
     #expect(abs(layout.canvasInset - 43.2) < 0.001)
     #expect(layout.contentRect.minX == layout.canvasInset)
     #expect(layout.contentRect.minY == layout.canvasInset)
-    #expect(layout.sourceGap >= 8)
+    #expect(abs(layout.sourceGap - (min(layout.contentRect.width, layout.contentRect.height) * settings.sourceGap)) < 0.001)
     #expect(abs(layout.splitScreenRect.width - ((layout.contentRect.width - layout.sourceGap) * 0.7)) < 0.001)
     #expect(abs(layout.splitWebcamRect.minX - (layout.splitScreenRect.maxX + layout.sourceGap)) < 0.001)
     #expect(layout.splitWebcamRect.maxX == layout.contentRect.maxX)
+}
+
+@Test
+func studioCanvasLayoutUsesExplicitGapAndCornerRadius() {
+    let settings = StudioLayoutSettings(
+        preset: .evenSplit,
+        canvasPadding: 0.1,
+        sourceGap: 0.05,
+        sourceCornerRadius: 0.025
+    )
+    let layout = StudioCanvasLayout(
+        size: CGSize(width: 1_000, height: 500),
+        settings: settings
+    )
+
+    #expect(layout.contentRect == CGRect(x: 50, y: 50, width: 900, height: 400))
+    #expect(layout.sourceGap == 20)
+    #expect(layout.sourceCornerRadius == 10)
+    #expect(layout.splitScreenRect == CGRect(x: 50, y: 50, width: 440, height: 400))
+    #expect(layout.splitWebcamRect == CGRect(x: 510, y: 50, width: 440, height: 400))
 }
 
 @Test
@@ -330,7 +448,15 @@ func previewRenderQualityControlsPreviewCaptureCost() {
         for: .responsive,
         quality: .half,
         isRTMPPublishing: false
-    ) == PreviewCaptureConfiguration(maxDisplayWidth: 960, framesPerSecond: 7, queueDepth: 1))
+    ) == PreviewCaptureConfiguration(maxDisplayWidth: 960, framesPerSecond: 15, queueDepth: 1))
+
+    let output = StudioStore.mediaConfiguration(
+        StudioPerformanceMode.responsive.mediaConfiguration,
+        outputResolution: .fullHD1080,
+        outputFrameRate: .fps60
+    )
+    #expect(output.maxVideoWidth == 1_920)
+    #expect(output.framesPerSecond == 60)
 }
 
 @Test

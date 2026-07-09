@@ -33,7 +33,9 @@ final class ScreenCapturePreviewNSView: NSView {
         super.init(frame: .zero)
         wantsLayer = true
         layer?.backgroundColor = NSColor.black.cgColor
+        layer?.masksToBounds = true
         previewLayer.backgroundColor = NSColor.black.cgColor
+        previewLayer.masksToBounds = true
         previewLayer.videoGravity = .resizeAspectFill
         layer?.addSublayer(previewLayer)
         controller.update(configuration: configuration, captureTarget: captureTarget)

@@ -23,6 +23,7 @@ APP_BUNDLE="$DIST_DIR/$APP_NAME.app"
 APP_CONTENTS="$APP_BUNDLE/Contents"
 APP_MACOS="$APP_CONTENTS/MacOS"
 APP_RESOURCES="$APP_CONTENTS/Resources"
+APP_FRAMEWORKS="$APP_CONTENTS/Frameworks"
 APP_BINARY="$APP_MACOS/$APP_NAME"
 INFO_PLIST="$APP_CONTENTS/Info.plist"
 
@@ -73,6 +74,23 @@ write_info_plist() {
   /usr/libexec/PlistBuddy -c "Set :CFBundleIconFile MacStream" "$INFO_PLIST"
 }
 
+copy_runtime_frameworks() {
+  local build_products_dir="$1"
+  local framework_found=0
+  local framework
+
+  shopt -s nullglob
+  for framework in "$build_products_dir"/*.framework; do
+    framework_found=1
+    /usr/bin/ditto "$framework" "$APP_FRAMEWORKS/$(basename "$framework")"
+  done
+  shopt -u nullglob
+
+  if [[ "$framework_found" == "1" ]] && ! /usr/bin/otool -l "$APP_BINARY" | grep -Fq "@executable_path/../Frameworks"; then
+    /usr/bin/install_name_tool -add_rpath "@executable_path/../Frameworks" "$APP_BINARY"
+  fi
+}
+
 build_app() {
   local swift_build_args=(-c "$CONFIGURATION")
   if [[ -n "$BUILD_ARCH" ]]; then
@@ -80,20 +98,66 @@ build_app() {
   fi
 
   swift build "${swift_build_args[@]}"
-  local build_binary
-  build_binary="$(swift build --show-bin-path "${swift_build_args[@]}")/$APP_NAME"
+  local build_products_dir
+  build_products_dir="$(swift build --show-bin-path "${swift_build_args[@]}")"
+  local build_binary="$build_products_dir/$APP_NAME"
 
   rm -rf "$APP_BUNDLE"
-  mkdir -p "$APP_MACOS" "$APP_RESOURCES"
+  mkdir -p "$APP_MACOS" "$APP_RESOURCES" "$APP_FRAMEWORKS"
   cp "$build_binary" "$APP_BINARY"
   cp "$APP_ICON" "$APP_RESOURCES/MacStream.icns"
   chmod +x "$APP_BINARY"
+  copy_runtime_frameworks "$build_products_dir"
   xattr -cr "$APP_BUNDLE" >/dev/null 2>&1 || true
   write_info_plist
   /usr/bin/plutil -lint "$INFO_PLIST" >/dev/null
 }
 
+embedded_code_paths() {
+  if [[ ! -d "$APP_FRAMEWORKS" ]]; then
+    return
+  fi
+
+  find "$APP_FRAMEWORKS" -depth \( \
+    -name "*.xpc" -o \
+    -name "*.appex" -o \
+    -name "*.app" -o \
+    -name "*.framework" -o \
+    -name "*.dylib" \
+  \) -print
+}
+
+sign_embedded_code_path() {
+  local code_path="$1"
+  local sign_args=(--force)
+
+  if [[ "$HARDENED_RUNTIME" == "1" ]]; then
+    sign_args+=(--options runtime)
+  fi
+
+  if [[ -n "$SIGN_IDENTITY" && "$SIGN_IDENTITY" != "-" ]]; then
+    if [[ "$TIMESTAMP_MODE" == "none" ]]; then
+      /usr/bin/codesign "${sign_args[@]}" --timestamp=none --sign "$SIGN_IDENTITY" "$code_path"
+    else
+      /usr/bin/codesign "${sign_args[@]}" --timestamp --sign "$SIGN_IDENTITY" "$code_path"
+    fi
+  else
+    /usr/bin/codesign "${sign_args[@]}" --timestamp=none --sign - "$code_path"
+  fi
+}
+
+sign_embedded_code() {
+  local code_path
+
+  while IFS= read -r code_path; do
+    [[ -e "$code_path" && ! -L "$code_path" ]] || continue
+    sign_embedded_code_path "$code_path"
+  done < <(embedded_code_paths)
+}
+
 sign_app() {
+  sign_embedded_code
+
   local sign_args=(--force --identifier "$BUNDLE_ID")
 
   if [[ "$HARDENED_RUNTIME" == "1" ]]; then
@@ -113,7 +177,30 @@ sign_app() {
   fi
 }
 
+verify_developer_id_signature() {
+  local code_path="$1"
+  local signing_details
+  signing_details="$(/usr/bin/codesign -dv "$code_path" 2>&1)"
+  if [[ "$signing_details" != *"Authority=Developer ID Application:"* ]]; then
+    echo "expected Developer ID Application signature for $code_path" >&2
+    exit 1
+  fi
+}
+
+verify_embedded_code() {
+  local code_path
+
+  while IFS= read -r code_path; do
+    [[ -e "$code_path" && ! -L "$code_path" ]] || continue
+    /usr/bin/codesign --verify --strict --verbose=2 "$code_path"
+    if [[ "$REQUIRE_DEVELOPER_ID" == "1" ]]; then
+      verify_developer_id_signature "$code_path"
+    fi
+  done < <(embedded_code_paths)
+}
+
 verify_app() {
+  verify_embedded_code
   /usr/bin/codesign --verify --strict --verbose=2 "$APP_BUNDLE"
 
   local actual_identifier
@@ -141,10 +228,10 @@ verify_app() {
       echo "expected hardened runtime signature for $APP_BUNDLE" >&2
       exit 1
     fi
-    if [[ "$REQUIRE_DEVELOPER_ID" == "1" && "$signing_details" != *"Authority=Developer ID Application:"* ]]; then
-      echo "expected Developer ID Application signature for $APP_BUNDLE" >&2
-      exit 1
-    fi
+  fi
+
+  if [[ "$REQUIRE_DEVELOPER_ID" == "1" ]]; then
+    verify_developer_id_signature "$APP_BUNDLE"
   fi
 
   /usr/libexec/PlistBuddy -c "Print :CFBundleIconFile" "$INFO_PLIST" >/dev/null

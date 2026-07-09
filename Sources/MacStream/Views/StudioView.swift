@@ -63,6 +63,7 @@ private struct PreviewColumnView: View {
                     signals: store.latestSignals,
                     previewConfiguration: previewConfiguration,
                     cameraEnhancements: store.preferences.cameraEnhancements,
+                    layoutSettings: store.preferences.layoutSettings,
                     cameraDeviceID: store.selectedCameraDeviceID,
                     isCameraEnabled: store.isSourceEnabled(.camera),
                     isCameraCaptureReady: store.captureReport.hasGrantedPermission(for: .camera),
@@ -134,13 +135,14 @@ private struct InspectorView: View {
         case .sources:
             SourceRackView(store: store)
         case .scene, nil:
-            EmptyView()
+            LayoutComposerView(store: store)
         }
     }
 
     @ViewBuilder
     private var operatingPanels: some View {
         DirectorPanelView(store: store)
+        LayoutComposerView(store: store)
         StreamHealthView(store: store)
         DestinationView(store: store)
         CapturePreflightView(store: store)

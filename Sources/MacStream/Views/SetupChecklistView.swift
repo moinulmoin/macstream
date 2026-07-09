@@ -61,11 +61,11 @@ struct SetupChecklistView: View {
             Button {
                 store.selectRecommendedStartingScene()
             } label: {
-                Label("Use Screen + Face", systemImage: "rectangle.inset.filled.and.person.filled")
+                Label("Use Screen + Webcam", systemImage: "rectangle.inset.filled.and.person.filled")
                     .frame(maxWidth: .infinity)
             }
             .buttonStyle(.borderedProminent)
-            .help("Select the default screen and camera scene")
+            .help("Select the default screen and webcam scene")
         case .some(.capture):
             captureSetupAction
         case .some(.destination):
@@ -85,7 +85,7 @@ struct SetupChecklistView: View {
                     .frame(maxWidth: .infinity)
             }
             .buttonStyle(.borderedProminent)
-            .help("Enable or raise the camera, screen, and microphone sources needed for the selected scene")
+            .help("Enable or raise the webcam, screen, and microphone sources needed for the selected scene")
         case nil:
             EmptyView()
         }

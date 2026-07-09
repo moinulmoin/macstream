@@ -496,9 +496,20 @@ public final class SystemMediaPipeline: NSObject, MediaPipeline, SCStreamOutput,
         let updateResult: (updates: [ActiveStreamConfigurationUpdate], shouldStartPublishingCamera: Bool) = queue.sync {
             let previousConfiguration = self.mediaConfiguration
             self.mediaConfiguration = configuration
+            if self.stream != nil,
+               configuration.sceneKind == .screenAndFace {
+                self.updateRecordingVideoComposition(using: configuration)
+            } else if configuration.sceneKind != .screenAndFace {
+                self.videoCompositor = nil
+            }
             if self.publishingStream != nil,
                Self.shouldPublishCompositedVideoSample(sceneKind: configuration.sceneKind) {
-                self.configurePublishingVideoComposition(using: configuration)
+                self.updatePublishingVideoComposition(using: configuration)
+            } else if self.publishingStream != nil {
+                self.publishingVideoCompositor = nil
+                self.publishingPixelBufferPool = nil
+                self.publishingVideoFormatDescriptionCache = nil
+                self.latestPublishingCameraPixelBuffer = nil
             }
             let shouldStartPublishingCamera = self.publishingStream != nil
                 && Self.shouldPublishCompositedVideoSample(sceneKind: configuration.sceneKind)
@@ -691,7 +702,8 @@ public final class SystemMediaPipeline: NSObject, MediaPipeline, SCStreamOutput,
             videoCompositor = RecordingVideoCompositor(
                 outputWidth: outputWidth,
                 outputHeight: outputHeight,
-                cameraEnhancements: mediaConfiguration.cameraEnhancements
+                cameraEnhancements: mediaConfiguration.cameraEnhancements,
+                layoutSettings: mediaConfiguration.layoutSettings
             )
         } else {
             videoPixelBufferAdaptor = nil
@@ -762,7 +774,7 @@ public final class SystemMediaPipeline: NSObject, MediaPipeline, SCStreamOutput,
             : nil
         if mediaConfiguration.sceneKind == .screenAndFace, cameraCapture == nil {
             writer.cancelWriting()
-            throw MediaPipelineError.unavailable("Camera capture is required for Screen + Face recording.")
+            throw MediaPipelineError.unavailable("Webcam capture is required for Screen + Webcam recording.")
         }
 
         do {
@@ -1122,7 +1134,8 @@ public final class SystemMediaPipeline: NSObject, MediaPipeline, SCStreamOutput,
             ? RecordingVideoCompositor(
                 outputWidth: publishingOutputWidth,
                 outputHeight: publishingOutputHeight,
-                cameraEnhancements: mediaConfiguration.cameraEnhancements
+                cameraEnhancements: mediaConfiguration.cameraEnhancements,
+                layoutSettings: mediaConfiguration.layoutSettings
             )
             : nil
         if usesCompositedPublishing, publishingPixelBufferPool == nil {
@@ -1132,7 +1145,7 @@ public final class SystemMediaPipeline: NSObject, MediaPipeline, SCStreamOutput,
             ? await makeCameraCaptureIfAvailable(configuration: mediaConfiguration)
             : nil
         if usesCompositedPublishing, cameraCapture == nil {
-            throw MediaPipelineError.unavailable("Camera capture is required for Screen + Face RTMP publishing.")
+            throw MediaPipelineError.unavailable("Webcam capture is required for Screen + Webcam RTMP publishing.")
         }
 
 
@@ -1886,6 +1899,32 @@ public final class SystemMediaPipeline: NSObject, MediaPipeline, SCStreamOutput,
         configuration.channelCount = 2
     }
 
+    private func configureRecordingVideoComposition(using configuration: MediaPipelineConfiguration) {
+        guard let recordingCaptureGeometry else {
+            videoCompositor = nil
+            return
+        }
+
+        videoCompositor = RecordingVideoCompositor(
+            outputWidth: recordingCaptureGeometry.width(for: configuration.maxVideoWidth),
+            outputHeight: recordingCaptureGeometry.height(for: configuration.maxVideoWidth),
+            cameraEnhancements: configuration.cameraEnhancements,
+            layoutSettings: configuration.layoutSettings
+        )
+    }
+
+    private func updateRecordingVideoComposition(using configuration: MediaPipelineConfiguration) {
+        guard videoCompositor != nil else {
+            configureRecordingVideoComposition(using: configuration)
+            return
+        }
+
+        videoCompositor?.update(
+            cameraEnhancements: configuration.cameraEnhancements,
+            layoutSettings: configuration.layoutSettings
+        )
+    }
+
     private func configurePublishingVideoComposition(using configuration: MediaPipelineConfiguration) {
         guard let publishingCaptureGeometry else {
             publishingVideoCompositor = nil
@@ -1908,7 +1947,20 @@ public final class SystemMediaPipeline: NSObject, MediaPipeline, SCStreamOutput,
         publishingVideoCompositor = RecordingVideoCompositor(
             outputWidth: outputWidth,
             outputHeight: outputHeight,
-            cameraEnhancements: configuration.cameraEnhancements
+            cameraEnhancements: configuration.cameraEnhancements,
+            layoutSettings: configuration.layoutSettings
+        )
+    }
+
+    private func updatePublishingVideoComposition(using configuration: MediaPipelineConfiguration) {
+        guard publishingVideoCompositor != nil else {
+            configurePublishingVideoComposition(using: configuration)
+            return
+        }
+
+        publishingVideoCompositor?.update(
+            cameraEnhancements: configuration.cameraEnhancements,
+            layoutSettings: configuration.layoutSettings
         )
     }
 
@@ -2163,16 +2215,37 @@ private struct VideoFormatDescriptionCache {
 private final class RecordingVideoCompositor {
     private let context = CIContext()
     private let outputRect: CGRect
-    private let cameraEnhancements: CameraEnhancementSettings
+    private var cameraEnhancements: CameraEnhancementSettings
+    private var layoutSettings: StudioLayoutSettings
     private let colorSpace = CGColorSpaceCreateDeviceRGB()
-    private let background: CIImage
+    private var background: CIImage
     private lazy var colorControlsFilter: CIFilter? = CIFilter(name: "CIColorControls")
 
-    init(outputWidth: Int, outputHeight: Int, cameraEnhancements: CameraEnhancementSettings) {
+    init(
+        outputWidth: Int,
+        outputHeight: Int,
+        cameraEnhancements: CameraEnhancementSettings,
+        layoutSettings: StudioLayoutSettings
+    ) {
         let outputRect = CGRect(x: 0, y: 0, width: outputWidth, height: outputHeight)
         self.outputRect = outputRect
         self.cameraEnhancements = cameraEnhancements
-        self.background = CIImage(color: CIColor(red: 0, green: 0, blue: 0)).cropped(to: outputRect)
+        self.layoutSettings = layoutSettings
+        self.background = CIImage(color: Self.backgroundColor(for: layoutSettings.backgroundStyle))
+            .cropped(to: outputRect)
+    }
+
+    func update(
+        cameraEnhancements: CameraEnhancementSettings,
+        layoutSettings: StudioLayoutSettings
+    ) {
+        let shouldUpdateBackground = self.layoutSettings.backgroundStyle != layoutSettings.backgroundStyle
+        self.cameraEnhancements = cameraEnhancements
+        self.layoutSettings = layoutSettings
+        if shouldUpdateBackground {
+            background = CIImage(color: Self.backgroundColor(for: layoutSettings.backgroundStyle))
+                .cropped(to: outputRect)
+        }
     }
 
     func render(
@@ -2180,23 +2253,22 @@ private final class RecordingVideoCompositor {
         cameraPixelBuffer: CVPixelBuffer?,
         to outputPixelBuffer: CVPixelBuffer
     ) {
-        let screen = aspectFill(
-            normalized(CIImage(cvPixelBuffer: screenPixelBuffer)),
-            in: outputRect
-        )
-        var composed = screen.composited(over: background)
+        let screenImage = normalized(CIImage(cvPixelBuffer: screenPixelBuffer))
+        let cameraImage = cameraPixelBuffer.map { enhancedCameraImage(from: $0) }
+        var composed = background
 
-        let pictureInPictureRect = self.pictureInPictureRect()
-        if let cameraPixelBuffer {
-            let camera = aspectFill(
-                enhancedCameraImage(from: cameraPixelBuffer),
-                in: pictureInPictureRect
-            )
-            composed = camera.composited(over: composed)
+        if layoutSettings.preset.isSplit {
+            let screenRect = splitScreenRect()
+            let webcamRect = splitWebcamRect(screenRect: screenRect)
+            composed = renderSource(screenImage, in: screenRect, zoom: layoutSettings.screenZoom)
+                .composited(over: composed)
+            composed = renderCamera(cameraImage, in: webcamRect)
+                .composited(over: composed)
         } else {
-            let placeholder = CIImage(color: CIColor(red: 0.02, green: 0.02, blue: 0.02))
-                .cropped(to: pictureInPictureRect)
-            composed = placeholder.composited(over: composed)
+            composed = renderSource(screenImage, in: outputRect, zoom: layoutSettings.screenZoom)
+                .composited(over: composed)
+            composed = renderCamera(cameraImage, in: pictureInPictureRect())
+                .composited(over: composed)
         }
 
         context.render(
@@ -2205,6 +2277,62 @@ private final class RecordingVideoCompositor {
             bounds: outputRect,
             colorSpace: colorSpace
         )
+    }
+
+    private func renderCamera(_ cameraImage: CIImage?, in targetRect: CGRect) -> CIImage {
+        guard let cameraImage else {
+            return CIImage(color: CIColor(red: 0.02, green: 0.02, blue: 0.02))
+                .cropped(to: targetRect)
+        }
+
+        return renderSource(cameraImage, in: targetRect, zoom: layoutSettings.webcamZoom)
+    }
+
+    private func renderSource(_ image: CIImage, in targetRect: CGRect, zoom: Double) -> CIImage {
+        let targetRect = targetRect.integral
+        guard !targetRect.isEmpty else {
+            return CIImage(color: CIColor(red: 0, green: 0, blue: 0)).cropped(to: targetRect)
+        }
+
+        let normalizedZoom = StudioLayoutSettings.normalizedSourceZoom(zoom)
+        let filledImage = aspectFill(image, in: targetRect)
+        let transform = CGAffineTransform(translationX: targetRect.midX, y: targetRect.midY)
+            .scaledBy(x: normalizedZoom, y: normalizedZoom)
+            .translatedBy(x: -targetRect.midX, y: -targetRect.midY)
+        return filledImage
+            .transformed(by: transform)
+            .cropped(to: targetRect)
+    }
+
+    private static func backgroundColor(for style: StudioBackgroundStyle) -> CIColor {
+        switch style {
+        case .black:
+            CIColor(red: 0, green: 0, blue: 0)
+        case .studio:
+            CIColor(red: 0.05, green: 0.06, blue: 0.09)
+        case .stage:
+            CIColor(red: 0.02, green: 0.03, blue: 0.04)
+        case .warm:
+            CIColor(red: 0.10, green: 0.07, blue: 0.05)
+        }
+    }
+
+    private func splitScreenRect() -> CGRect {
+        CGRect(
+            x: outputRect.minX,
+            y: outputRect.minY,
+            width: outputRect.width * layoutSettings.preset.screenFraction,
+            height: outputRect.height
+        ).integral
+    }
+
+    private func splitWebcamRect(screenRect: CGRect) -> CGRect {
+        CGRect(
+            x: screenRect.maxX,
+            y: outputRect.minY,
+            width: outputRect.maxX - screenRect.maxX,
+            height: outputRect.height
+        ).integral
     }
 
     private func enhancedCameraImage(from pixelBuffer: CVPixelBuffer) -> CIImage {

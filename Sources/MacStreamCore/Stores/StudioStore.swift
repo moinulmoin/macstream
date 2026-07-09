@@ -98,9 +98,15 @@ public final class StudioStore {
     @ObservationIgnored private var lastAppliedMediaConfiguration: MediaPipelineConfiguration?
     @ObservationIgnored private var isSignalProviderActive = false
     @ObservationIgnored private var isRevertingDestinationChange = false
+    @ObservationIgnored private var activeOutputCaptureSettings: OutputCaptureSettings?
     private static let requiredCaptureHealthRecoverySamples = 2
     private static let maxRetainedEvents = 40
     private static let maxClipMarkerReasonCharacters = 240
+
+    private struct OutputCaptureSettings: Equatable {
+        var resolution: StreamOutputResolution
+        var frameRate: StreamFrameRate
+    }
 
     public init(
         mediaPipeline: any MediaPipeline = PreviewMediaPipeline(),
@@ -126,8 +132,8 @@ public final class StudioStore {
         self.streamTransport = Self.streamTransport(for: StreamDestination(), pipelineTransport: mediaPipeline.streamTransport)
 
         let initialScenes = [
-            StudioScene(kind: .face, subtitle: "Camera-led explanation"),
-            StudioScene(kind: .screenAndFace, subtitle: "Screen share with camera"),
+            StudioScene(kind: .face, subtitle: "Webcam-led explanation"),
+            StudioScene(kind: .screenAndFace, subtitle: "Screen share with webcam"),
             StudioScene(kind: .screenOnly, subtitle: "Full focus on the work"),
             StudioScene(kind: .brb, subtitle: "Quiet idle fallback")
         ]
@@ -189,6 +195,10 @@ public final class StudioStore {
         !streamState.isLive && !isStreamConnecting && !isStreamStopping
     }
 
+    public var canEditOutputCaptureSettings: Bool {
+        !hasStartingOrActiveMediaCapture
+    }
+
     public var isRecordingStarting: Bool {
         recordingState == .starting
     }
@@ -243,8 +253,23 @@ public final class StudioStore {
     public var currentPreviewCaptureConfiguration: PreviewCaptureConfiguration {
         Self.previewCaptureConfiguration(
             for: effectivePerformanceMode,
+            quality: preferences.previewRenderQuality,
             isRTMPPublishing: isRTMPPublishing
         )
+    }
+
+    public var currentOutputResolutionWidth: Int {
+        currentMediaPipelineConfiguration.maxVideoWidth
+    }
+
+    public var currentOutputFrameRate: Int {
+        currentMediaPipelineConfiguration.framesPerSecond
+    }
+
+    public var outputCaptureSettingsLockedReason: String? {
+        canEditOutputCaptureSettings
+            ? nil
+            : "Stop streaming or recording before changing resolution or FPS."
     }
 
 
@@ -256,7 +281,7 @@ public final class StudioStore {
         guard mediaPipeline.requiresCaptureReadinessForStart else { return nil }
 
         guard selectedSceneKind != .brb else {
-            return "Choose Face, Screen + Face, or Screen before starting."
+            return "Choose Webcam, Screen + Webcam, or Screen before starting."
         }
 
         if !destination.isPreviewSession,
@@ -277,7 +302,7 @@ public final class StudioStore {
         guard mediaPipeline.requiresCaptureReadinessForStart else { return nil }
 
         guard selectedSceneKind != .brb else {
-            return "Choose Face, Screen + Face, or Screen before starting."
+            return "Choose Webcam, Screen + Webcam, or Screen before starting."
         }
 
         if !mediaPipeline.supportedSceneKindsForRecording.contains(selectedSceneKind) {
@@ -626,13 +651,13 @@ public final class StudioStore {
            streamTransport != .preview,
            (streamState.isLive || isStreamConnecting || isStreamStopping),
            !Self.sceneUsesScreenCaptureVideo(scene.kind) {
-            return "Stop real capture before choosing Face or BRB."
+            return "Stop real capture before choosing Webcam or BRB."
         }
 
         if mediaPipeline.requiresScreenCaptureVideoForRecording,
            (recordingState == .recording || recordingState == .starting || isRecordingStopping),
            !Self.sceneUsesScreenCaptureVideo(scene.kind) {
-            return "Stop recording before choosing Face or BRB."
+            return "Stop recording before choosing Webcam or BRB."
         }
 
         let missingRequiredKinds = Self.requiredSourceKinds(for: scene.kind).filter { !isSourceEnabled($0) }
@@ -812,6 +837,7 @@ public final class StudioStore {
         sampleSystemPressure()
         streamTransport = Self.streamTransport(for: startDestination, pipelineTransport: mediaPipeline.streamTransport)
         streamState = .connecting
+        lockOutputCaptureSettingsIfNeeded()
         applyPerformanceConfiguration()
         cancelSetupGenerationIfNeeded(
             reason: startDestination.isPreviewSession
@@ -859,6 +885,7 @@ public final class StudioStore {
                 streamStartID = nil
                 streamState = .failed(error.localizedDescription)
                 applyPerformanceConfiguration()
+                releaseOutputCaptureSettingsIfIdle()
                 health = StreamHealth()
                 resetCaptureHealthPressure()
                 cancelPendingAutoCue()
@@ -894,6 +921,7 @@ public final class StudioStore {
             }
             addEvent(kind: .stream, title: "Offline", detail: "Stream stopped.")
             endCaptureSessionIfIdle()
+            releaseOutputCaptureSettingsIfIdle()
         }
     }
 
@@ -907,6 +935,7 @@ public final class StudioStore {
         recordingStartTask?.cancel()
         recordingStartID = startID
         recordingOwnedByStream = ownedByStream
+        lockOutputCaptureSettingsIfNeeded()
         prepareCaptureSessionIfIdle()
         sampleSystemPressure()
         applyPerformanceConfiguration()
@@ -941,6 +970,7 @@ public final class StudioStore {
                 recordingStartID = nil
                 recordingOwnedByStream = false
                 recordingState = .failed(error.localizedDescription)
+                releaseOutputCaptureSettingsIfIdle()
                 syncMediaHealthLoop()
                 if !streamState.isLive {
                     resetCaptureHealthPressure()
@@ -976,6 +1006,7 @@ public final class StudioStore {
                 addEvent(kind: .stream, title: "Recording stopped", detail: "Local archive closed.")
             }
             endCaptureSessionIfIdle()
+            releaseOutputCaptureSettingsIfIdle()
         }
     }
 
@@ -1688,6 +1719,33 @@ public final class StudioStore {
         hasOpenCaptureSession = false
     }
 
+    private var hasStartingOrActiveMediaCapture: Bool {
+        streamState.isLive
+            || isStreamConnecting
+            || isStreamStopping
+            || recordingState == .recording
+            || recordingState == .starting
+            || isRecordingStopping
+    }
+
+    private var currentOutputCaptureSettings: OutputCaptureSettings {
+        return OutputCaptureSettings(
+            resolution: preferences.outputResolution,
+            frameRate: preferences.outputFrameRate
+        )
+    }
+
+    private func lockOutputCaptureSettingsIfNeeded() {
+        guard activeOutputCaptureSettings == nil else { return }
+        activeOutputCaptureSettings = currentOutputCaptureSettings
+    }
+
+    private func releaseOutputCaptureSettingsIfIdle() {
+        guard !hasStartingOrActiveMediaCapture, activeOutputCaptureSettings != nil else { return }
+        activeOutputCaptureSettings = nil
+        applyPerformanceConfiguration()
+    }
+
     private func sampleSystemPressure() {
         systemPressure = performanceMonitor.snapshot()
         let previousMode = effectivePerformanceMode
@@ -1754,6 +1812,7 @@ public final class StudioStore {
         mediaConfiguration.sceneKind = selectedSceneKind
         mediaConfiguration.screenCaptureTarget = selectedScreenCaptureTarget
         mediaConfiguration.cameraEnhancements = preferences.cameraEnhancements
+        mediaConfiguration.layoutSettings = preferences.layoutSettings
         mediaConfiguration.cameraDeviceID = selectedCameraDeviceID
         mediaConfiguration.microphoneDeviceID = selectedMicrophoneDeviceID
         mediaConfiguration = Self.mediaConfiguration(
@@ -1853,7 +1912,7 @@ public final class StudioStore {
             return SetupChecklistItem(
                 id: .scene,
                 title: "Scene",
-                detail: "Choose Face, Screen + Face, or Screen.",
+                detail: "Choose Webcam, Screen + Webcam, or Screen.",
                 isComplete: false
             )
         }
@@ -2005,11 +2064,11 @@ public final class StudioStore {
     }
 
     private static var streamableScreenSceneRequiredReason: String {
-        "Choose Screen or Screen + Face before starting real capture."
+        "Choose Screen or Screen + Webcam before starting real capture."
     }
 
     private static var recordableSceneRequiredReason: String {
-        "Choose Screen or Screen + Face before starting a local recording."
+        "Choose Screen or Screen + Webcam before starting a local recording."
     }
 
     private static func permissionListTitle(for kinds: [CaptureDeviceKind]) -> String {
@@ -2445,9 +2504,14 @@ public final class StudioStore {
     }
 
     private var captureHealthTargetFPS: Int {
+        let outputCaptureSettings = activeOutputCaptureSettings ?? currentOutputCaptureSettings
         if preferences.performanceMode == .adaptive {
             return Self.mediaConfiguration(
-                StudioPerformanceMode.balanced.mediaConfiguration,
+                Self.mediaConfiguration(
+                    StudioPerformanceMode.balanced.mediaConfiguration,
+                    outputResolution: outputCaptureSettings.resolution,
+                    outputFrameRate: outputCaptureSettings.frameRate
+                ),
                 constrainedForRTMPPublishing: isRTMPPublishing
             ).framesPerSecond
         }
@@ -2456,8 +2520,14 @@ public final class StudioStore {
     }
 
     private var currentMediaPipelineConfiguration: MediaPipelineConfiguration {
-        Self.mediaConfiguration(
+        let outputCaptureSettings = activeOutputCaptureSettings ?? currentOutputCaptureSettings
+        let outputConfiguration = Self.mediaConfiguration(
             effectivePerformanceMode.mediaConfiguration,
+            outputResolution: outputCaptureSettings.resolution,
+            outputFrameRate: outputCaptureSettings.frameRate
+        )
+        return Self.mediaConfiguration(
+            outputConfiguration,
             constrainedForRTMPPublishing: isRTMPPublishing
         )
     }
@@ -2470,9 +2540,33 @@ public final class StudioStore {
         for mode: StudioPerformanceMode,
         isRTMPPublishing: Bool
     ) -> PreviewCaptureConfiguration {
-        isRTMPPublishing
-            ? StudioPerformanceMode.liveStreamingPreviewConfiguration
-            : mode.previewCaptureConfiguration
+        previewCaptureConfiguration(
+            for: mode,
+            quality: .automatic,
+            isRTMPPublishing: isRTMPPublishing
+        )
+    }
+
+    static func previewCaptureConfiguration(
+        for mode: StudioPerformanceMode,
+        quality: StudioPreviewRenderQuality,
+        isRTMPPublishing: Bool
+    ) -> PreviewCaptureConfiguration {
+        let fullConfiguration = mode.previewCaptureConfiguration
+        switch quality {
+        case .automatic:
+            return isRTMPPublishing
+                ? StudioPerformanceMode.liveStreamingPreviewConfiguration
+                : fullConfiguration
+        case .half:
+            return PreviewCaptureConfiguration(
+                maxDisplayWidth: max(640, fullConfiguration.maxDisplayWidth / 2),
+                framesPerSecond: max(5, fullConfiguration.framesPerSecond / 2),
+                queueDepth: 1
+            )
+        case .full:
+            return fullConfiguration
+        }
     }
 
     static func signalSamplingConfiguration(
@@ -2501,6 +2595,59 @@ public final class StudioStore {
         var constrainedConfiguration = configuration
         constrainedConfiguration.framesPerSecond = min(configuration.framesPerSecond, 30)
         return constrainedConfiguration
+    }
+
+    static func mediaConfiguration(
+        _ configuration: MediaPipelineConfiguration,
+        outputResolution: StreamOutputResolution,
+        outputFrameRate: StreamFrameRate
+    ) -> MediaPipelineConfiguration {
+        var outputConfiguration = configuration
+        var didOverrideOutput = false
+
+        if let maxVideoWidth = outputResolution.maxVideoWidth {
+            outputConfiguration.maxVideoWidth = maxVideoWidth
+            didOverrideOutput = true
+        }
+
+        if let framesPerSecond = outputFrameRate.framesPerSecond {
+            outputConfiguration.framesPerSecond = framesPerSecond
+            didOverrideOutput = true
+        }
+
+        if didOverrideOutput {
+            outputConfiguration.videoBitrate = outputVideoBitrate(
+                maxVideoWidth: outputConfiguration.maxVideoWidth,
+                framesPerSecond: outputConfiguration.framesPerSecond
+            )
+        }
+
+        return outputConfiguration
+    }
+
+    static func outputVideoBitrate(maxVideoWidth: Int, framesPerSecond: Int) -> Int {
+        let baseBitrate: Double
+        switch maxVideoWidth {
+        case ...1_280:
+            baseBitrate = 4_000_000
+        case ...1_920:
+            baseBitrate = 8_000_000
+        case ...2_560:
+            baseBitrate = 16_000_000
+        default:
+            baseBitrate = 30_000_000
+        }
+
+        let frameRateFactor: Double
+        if framesPerSecond >= 60 {
+            frameRateFactor = 1.4
+        } else if framesPerSecond <= 24 {
+            frameRateFactor = 0.85
+        } else {
+            frameRateFactor = 1
+        }
+
+        return Int(baseBitrate * frameRateFactor)
     }
 
     private func setHealthDegradation(_ reason: String) {

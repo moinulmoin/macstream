@@ -336,7 +336,7 @@ func setupChecklistGuidesFirstRunAndDisappearsWhenReady() async throws {
     #expect(store.totalSetupItemCount == 4)
     #expect(store.setupProgressFraction == 0.5)
     #expect(store.nextSetupChecklistItem?.id == .scene)
-    #expect(store.setupChecklistItems.first { $0.id == .scene }?.detail == "Choose Face, Screen + Face, or Screen.")
+    #expect(store.setupChecklistItems.first { $0.id == .scene }?.detail == "Choose Webcam, Screen + Webcam, or Screen.")
     #expect(store.setupChecklistItems.first { $0.id == .destination }?.detail == "Preview session ready.")
 
     store.scanCaptureDevices()
@@ -545,7 +545,7 @@ func realCaptureStartRequiresLiveSceneBeforeCaptureSetup() async {
     #expect(store.selectedSceneKind == .brb)
     #expect(store.captureReadiness.state == .ready)
     #expect(store.captureStartBlockedReason == nil)
-    #expect(store.startBlockedReason == "Choose Face, Screen + Face, or Screen before starting.")
+    #expect(store.startBlockedReason == "Choose Webcam, Screen + Webcam, or Screen before starting.")
     #expect(!store.canStartStream)
     #expect(!store.canStartRecording)
 
@@ -569,8 +569,8 @@ func captureStartExplainsMissingSourcesBeforeStarting() {
 
     #expect(!store.canStartStream)
     #expect(!store.canStartRecording)
-    #expect(store.startBlockedReason == "Enable Screen and Camera for Screen + Face before starting.")
-    #expect(store.captureStartBlockedReason == "Enable Screen and Camera for Screen + Face before starting.")
+    #expect(store.startBlockedReason == "Enable Screen and Webcam for Screen + Webcam before starting.")
+    #expect(store.captureStartBlockedReason == "Enable Screen and Webcam for Screen + Webcam before starting.")
 }
 
 @Test
@@ -634,8 +634,8 @@ func captureStartRequiresSelectedSceneSourcesForSystemLikePipelines() async thro
     #expect(store.captureReadiness.state == .ready)
     #expect(!store.canStartStream)
     #expect(!store.canStartRecording)
-    #expect(store.startBlockedReason == "Enable Camera for Face before starting.")
-    #expect(store.captureStartBlockedReason == "Enable Camera for Face before starting.")
+    #expect(store.startBlockedReason == "Enable Webcam for Webcam before starting.")
+    #expect(store.captureStartBlockedReason == "Enable Webcam for Webcam before starting.")
 
     store.toggleSource(cameraSource)
 
@@ -669,15 +669,15 @@ func realCaptureVideoStartRequiresScreenSceneWhenPipelineUsesScreenCaptureKit() 
 
     #expect(store.captureReadiness.state == .ready)
     #expect(store.streamStartBlockedReason == nil)
-    #expect(store.recordingStartBlockedReason == "Choose Screen or Screen + Face before starting a local recording.")
+    #expect(store.recordingStartBlockedReason == "Choose Screen or Screen + Webcam before starting a local recording.")
     #expect(store.canStartStream)
     #expect(!store.canStartRecording)
 
     store.destination = StreamDestination(name: "RTMP", rtmpURL: "rtmp://127.0.0.1/live/stream")
 
     #expect(!store.canStartStream)
-    #expect(store.streamStartBlockedReason == "Choose Screen or Screen + Face before starting real capture.")
-    #expect(store.startBlockedReason == "Choose Screen or Screen + Face before starting real capture.")
+    #expect(store.streamStartBlockedReason == "Choose Screen or Screen + Webcam before starting real capture.")
+    #expect(store.startBlockedReason == "Choose Screen or Screen + Webcam before starting real capture.")
 }
 
 @Test

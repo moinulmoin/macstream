@@ -10,8 +10,8 @@ public enum SceneKind: String, CaseIterable, Codable, Identifiable, Sendable {
 
     public var title: String {
         switch self {
-        case .face: "Face"
-        case .screenAndFace: "Screen + Face"
+        case .face: "Webcam"
+        case .screenAndFace: "Screen + Webcam"
         case .screenOnly: "Screen"
         case .brb: "BRB"
         }
@@ -51,7 +51,7 @@ public enum SourceKind: String, CaseIterable, Codable, Identifiable, Sendable {
 
     public var title: String {
         switch self {
-        case .camera: "Camera"
+        case .camera: "Webcam"
         case .screen: "Screen"
         case .microphone: "Mic"
         case .systemAudio: "System Audio"
@@ -424,24 +424,40 @@ public struct StudioPreferences: Codable, Equatable, Sendable {
     }
     public var performanceMode: StudioPerformanceMode
     public var cameraEnhancements: CameraEnhancementSettings
+    public var outputResolution: StreamOutputResolution
+    public var outputFrameRate: StreamFrameRate
+    public var previewRenderQuality: StudioPreviewRenderQuality
+    public var layoutSettings: StudioLayoutSettings
 
     private enum CodingKeys: String, CodingKey {
         case recordWhileStreaming
         case directorCountdownSeconds
         case performanceMode
         case cameraEnhancements
+        case outputResolution
+        case outputFrameRate
+        case previewRenderQuality
+        case layoutSettings
     }
 
     public init(
         recordWhileStreaming: Bool = false,
         directorCountdownSeconds: Int = 2,
         performanceMode: StudioPerformanceMode = .balanced,
-        cameraEnhancements: CameraEnhancementSettings = CameraEnhancementSettings()
+        cameraEnhancements: CameraEnhancementSettings = CameraEnhancementSettings(),
+        outputResolution: StreamOutputResolution = .automatic,
+        outputFrameRate: StreamFrameRate = .automatic,
+        previewRenderQuality: StudioPreviewRenderQuality = .automatic,
+        layoutSettings: StudioLayoutSettings = StudioLayoutSettings()
     ) {
         self.recordWhileStreaming = recordWhileStreaming
         self.directorCountdownSeconds = Self.normalizedDirectorCountdownSeconds(directorCountdownSeconds)
         self.performanceMode = performanceMode
         self.cameraEnhancements = cameraEnhancements
+        self.outputResolution = outputResolution
+        self.outputFrameRate = outputFrameRate
+        self.previewRenderQuality = previewRenderQuality
+        self.layoutSettings = layoutSettings
     }
 
     public init(from decoder: any Decoder) throws {
@@ -458,10 +474,228 @@ public struct StudioPreferences: Codable, Equatable, Sendable {
             CameraEnhancementSettings.self,
             forKey: .cameraEnhancements
         ) ?? CameraEnhancementSettings()
+        outputResolution = try container.decodeIfPresent(
+            StreamOutputResolution.self,
+            forKey: .outputResolution
+        ) ?? .automatic
+        outputFrameRate = try container.decodeIfPresent(
+            StreamFrameRate.self,
+            forKey: .outputFrameRate
+        ) ?? .automatic
+        previewRenderQuality = try container.decodeIfPresent(
+            StudioPreviewRenderQuality.self,
+            forKey: .previewRenderQuality
+        ) ?? .automatic
+        layoutSettings = try container.decodeIfPresent(
+            StudioLayoutSettings.self,
+            forKey: .layoutSettings
+        ) ?? StudioLayoutSettings()
     }
 
     public static func normalizedDirectorCountdownSeconds(_ seconds: Int) -> Int {
         min(max(seconds, minimumDirectorCountdownSeconds), maximumDirectorCountdownSeconds)
+    }
+}
+
+public enum StreamOutputResolution: String, CaseIterable, Codable, Identifiable, Sendable {
+    case automatic
+    case hd720
+    case fullHD1080
+    case qhd2K
+    case ultraHD4K
+
+    public var id: String { rawValue }
+
+    public var title: String {
+        switch self {
+        case .automatic: "Auto"
+        case .hd720: "720p"
+        case .fullHD1080: "1080p"
+        case .qhd2K: "2K"
+        case .ultraHD4K: "4K"
+        }
+    }
+
+    public var detailTitle: String {
+        switch self {
+        case .automatic: "Follows performance mode"
+        case .hd720: "Up to 1280 px wide"
+        case .fullHD1080: "Up to 1920 px wide"
+        case .qhd2K: "Up to 2560 px wide"
+        case .ultraHD4K: "Up to 3840 px wide"
+        }
+    }
+
+    public var maxVideoWidth: Int? {
+        switch self {
+        case .automatic: nil
+        case .hd720: 1_280
+        case .fullHD1080: 1_920
+        case .qhd2K: 2_560
+        case .ultraHD4K: 3_840
+        }
+    }
+}
+
+public enum StreamFrameRate: String, CaseIterable, Codable, Identifiable, Sendable {
+    case automatic
+    case fps24
+    case fps30
+    case fps60
+
+    public var id: String { rawValue }
+
+    public var title: String {
+        switch self {
+        case .automatic: "Auto"
+        case .fps24: "24 FPS"
+        case .fps30: "30 FPS"
+        case .fps60: "60 FPS"
+        }
+    }
+
+    public var framesPerSecond: Int? {
+        switch self {
+        case .automatic: nil
+        case .fps24: 24
+        case .fps30: 30
+        case .fps60: 60
+        }
+    }
+}
+
+public enum StudioPreviewRenderQuality: String, CaseIterable, Codable, Identifiable, Sendable {
+    case automatic
+    case half
+    case full
+
+    public var id: String { rawValue }
+
+    public var title: String {
+        switch self {
+        case .automatic: "Auto"
+        case .half: "Half"
+        case .full: "Full"
+        }
+    }
+}
+
+public enum StudioLayoutPreset: String, CaseIterable, Codable, Identifiable, Sendable {
+    case pictureInPicture
+    case screen70Webcam30
+    case evenSplit
+    case screen30Webcam70
+
+    public var id: String { rawValue }
+
+    public var title: String {
+        switch self {
+        case .pictureInPicture: "Picture in Picture"
+        case .screen70Webcam30: "Screen 70 / Webcam 30"
+        case .evenSplit: "Screen 50 / Webcam 50"
+        case .screen30Webcam70: "Screen 30 / Webcam 70"
+        }
+    }
+
+    public var shortTitle: String {
+        switch self {
+        case .pictureInPicture: "PiP"
+        case .screen70Webcam30: "70/30"
+        case .evenSplit: "50/50"
+        case .screen30Webcam70: "30/70"
+        }
+    }
+
+    public var symbolName: String {
+        switch self {
+        case .pictureInPicture: "rectangle.inset.filled"
+        case .screen70Webcam30: "rectangle.leadingthird.inset.filled"
+        case .evenSplit: "rectangle.split.2x1"
+        case .screen30Webcam70: "rectangle.trailingthird.inset.filled"
+        }
+    }
+
+    public var isSplit: Bool {
+        self != .pictureInPicture
+    }
+
+    public var screenFraction: Double {
+        switch self {
+        case .pictureInPicture: 1
+        case .screen70Webcam30: 0.70
+        case .evenSplit: 0.50
+        case .screen30Webcam70: 0.30
+        }
+    }
+}
+
+public enum StudioBackgroundStyle: String, CaseIterable, Codable, Identifiable, Sendable {
+    case black
+    case studio
+    case stage
+    case warm
+
+    public var id: String { rawValue }
+
+    public var title: String {
+        switch self {
+        case .black: "Black"
+        case .studio: "Studio"
+        case .stage: "Stage"
+        case .warm: "Warm"
+        }
+    }
+}
+
+public struct StudioLayoutSettings: Codable, Equatable, Sendable {
+    public static let minimumSourceZoom = 0.75
+    public static let maximumSourceZoom = 2.0
+
+    public var preset: StudioLayoutPreset
+    public var backgroundStyle: StudioBackgroundStyle
+    public var screenZoom: Double {
+        didSet {
+            screenZoom = Self.normalizedSourceZoom(screenZoom)
+        }
+    }
+    public var webcamZoom: Double {
+        didSet {
+            webcamZoom = Self.normalizedSourceZoom(webcamZoom)
+        }
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case preset
+        case backgroundStyle
+        case screenZoom
+        case webcamZoom
+    }
+
+    public init(
+        preset: StudioLayoutPreset = .pictureInPicture,
+        backgroundStyle: StudioBackgroundStyle = .black,
+        screenZoom: Double = 1,
+        webcamZoom: Double = 1
+    ) {
+        self.preset = preset
+        self.backgroundStyle = backgroundStyle
+        self.screenZoom = Self.normalizedSourceZoom(screenZoom)
+        self.webcamZoom = Self.normalizedSourceZoom(webcamZoom)
+    }
+
+    public init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(
+            preset: try container.decodeIfPresent(StudioLayoutPreset.self, forKey: .preset) ?? .pictureInPicture,
+            backgroundStyle: try container.decodeIfPresent(StudioBackgroundStyle.self, forKey: .backgroundStyle) ?? .black,
+            screenZoom: try container.decodeIfPresent(Double.self, forKey: .screenZoom) ?? 1,
+            webcamZoom: try container.decodeIfPresent(Double.self, forKey: .webcamZoom) ?? 1
+        )
+    }
+
+    public static func normalizedSourceZoom(_ zoom: Double) -> Double {
+        let clamped = min(max(zoom, minimumSourceZoom), maximumSourceZoom)
+        return (clamped * 100).rounded() / 100
     }
 }
 
@@ -635,6 +869,7 @@ public struct MediaPipelineConfiguration: Equatable, Sendable {
     public var microphoneLevel: Double
     public var screenCaptureTarget: ScreenCaptureTarget?
     public var cameraEnhancements: CameraEnhancementSettings
+    public var layoutSettings: StudioLayoutSettings
     public var cameraDeviceID: String?
     public var microphoneDeviceID: String?
 
@@ -650,6 +885,7 @@ public struct MediaPipelineConfiguration: Equatable, Sendable {
         microphoneLevel: Double = 1,
         screenCaptureTarget: ScreenCaptureTarget? = nil,
         cameraEnhancements: CameraEnhancementSettings = CameraEnhancementSettings(),
+        layoutSettings: StudioLayoutSettings = StudioLayoutSettings(),
         cameraDeviceID: String? = nil,
         microphoneDeviceID: String? = nil
     ) {
@@ -664,6 +900,7 @@ public struct MediaPipelineConfiguration: Equatable, Sendable {
         self.microphoneLevel = min(max(microphoneLevel, 0), 1)
         self.screenCaptureTarget = screenCaptureTarget
         self.cameraEnhancements = cameraEnhancements
+        self.layoutSettings = layoutSettings
         self.cameraDeviceID = cameraDeviceID
         self.microphoneDeviceID = microphoneDeviceID
     }

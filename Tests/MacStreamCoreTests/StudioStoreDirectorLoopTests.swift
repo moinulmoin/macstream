@@ -25,7 +25,7 @@ func sceneSelectionUsesStoreActionPath() {
     #expect(store.selectedSceneKind == .face)
     #expect(store.recommendation == nil)
     #expect(store.events[0].title == "Scene changed")
-    #expect(store.events[0].detail == "Face")
+    #expect(store.events[0].detail == "Webcam")
 }
 
 @Test
@@ -210,6 +210,10 @@ func studioPreferencesClampCountdownSeconds() throws {
     #expect(decoded.directorCountdownSeconds == 5)
     #expect(decoded.performanceMode == .responsive)
     #expect(decoded.cameraEnhancements == CameraEnhancementSettings())
+    #expect(decoded.outputResolution == .automatic)
+    #expect(decoded.outputFrameRate == .automatic)
+    #expect(decoded.previewRenderQuality == .automatic)
+    #expect(decoded.layoutSettings == StudioLayoutSettings())
 }
 
 @Test
@@ -228,6 +232,63 @@ func cameraEnhancementSettingsNormalizeAndPersist() throws {
     #expect(CameraPreviewRotation.degrees90.isSideways)
     #expect(CameraPreviewRotation.degrees270.isSideways)
     #expect(!CameraPreviewRotation.degrees0.isSideways)
+}
+
+@Test
+func outputAndLayoutPreferencesNormalizeAndPersist() throws {
+    let layoutSettings = StudioLayoutSettings(
+        preset: .screen70Webcam30,
+        backgroundStyle: .stage,
+        screenZoom: 0.2,
+        webcamZoom: 3.4
+    )
+    let preferences = StudioPreferences(
+        outputResolution: .ultraHD4K,
+        outputFrameRate: .fps60,
+        previewRenderQuality: .half,
+        layoutSettings: layoutSettings
+    )
+    let encoded = try JSONEncoder().encode(preferences)
+    let decoded = try JSONDecoder().decode(StudioPreferences.self, from: encoded)
+
+    #expect(layoutSettings.screenZoom == StudioLayoutSettings.minimumSourceZoom)
+    #expect(layoutSettings.webcamZoom == StudioLayoutSettings.maximumSourceZoom)
+    #expect(decoded.outputResolution == .ultraHD4K)
+    #expect(decoded.outputFrameRate == .fps60)
+    #expect(decoded.previewRenderQuality == .half)
+    #expect(decoded.layoutSettings == layoutSettings)
+
+    let persistedLayout = """
+    {"preset":"evenSplit","backgroundStyle":"warm","screenZoom":0.1,"webcamZoom":4.2}
+    """
+    let decodedLayout = try JSONDecoder().decode(
+        StudioLayoutSettings.self,
+        from: Data(persistedLayout.utf8)
+    )
+    #expect(decodedLayout.preset == .evenSplit)
+    #expect(decodedLayout.backgroundStyle == .warm)
+    #expect(decodedLayout.screenZoom == StudioLayoutSettings.minimumSourceZoom)
+    #expect(decodedLayout.webcamZoom == StudioLayoutSettings.maximumSourceZoom)
+}
+
+@Test
+@MainActor
+func previewRenderQualityControlsPreviewCaptureCost() {
+    #expect(StudioStore.previewCaptureConfiguration(
+        for: .responsive,
+        quality: .automatic,
+        isRTMPPublishing: true
+    ) == StudioPerformanceMode.liveStreamingPreviewConfiguration)
+    #expect(StudioStore.previewCaptureConfiguration(
+        for: .responsive,
+        quality: .full,
+        isRTMPPublishing: true
+    ) == StudioPerformanceMode.responsive.previewCaptureConfiguration)
+    #expect(StudioStore.previewCaptureConfiguration(
+        for: .responsive,
+        quality: .half,
+        isRTMPPublishing: false
+    ) == PreviewCaptureConfiguration(maxDisplayWidth: 960, framesPerSecond: 7, queueDepth: 1))
 }
 
 @Test

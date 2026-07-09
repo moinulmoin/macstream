@@ -110,8 +110,8 @@ func activeRealCaptureRejectsUnsupportedSceneSwitches() async throws {
     #expect(!store.canSelectScene(faceScene))
     #expect(!store.canSelectScene(screenAndFaceScene))
     #expect(!store.canSelectScene(brbScene))
-    #expect(store.sceneSelectionBlockedReason(for: faceScene) == "Stop real capture before choosing Face.")
-    #expect(store.sceneSelectionBlockedReason(for: screenAndFaceScene) == "Stop real capture before choosing Screen + Face.")
+    #expect(store.sceneSelectionBlockedReason(for: faceScene) == "Stop real capture before choosing Webcam.")
+    #expect(store.sceneSelectionBlockedReason(for: screenAndFaceScene) == "Stop real capture before choosing Screen + Webcam.")
     #expect(store.sceneSelectionBlockedReason(for: brbScene) == "Stop real capture before choosing BRB.")
 
     let eventCount = store.events.count
@@ -192,7 +192,7 @@ func activeRecordingRejectsUnsupportedSceneSwitches() async throws {
 
     #expect(store.recordingState == .recording)
     #expect(!store.canSelectScene(faceScene))
-    #expect(store.sceneSelectionBlockedReason(for: faceScene) == "Stop recording before choosing Face.")
+    #expect(store.sceneSelectionBlockedReason(for: faceScene) == "Stop recording before choosing Webcam.")
 
     let eventCount = store.events.count
     store.selectScene(faceScene)
@@ -241,7 +241,7 @@ func activeRealCaptureSuppressesUnavailableDirectorSceneCue() async throws {
     #expect(store.selectedSceneKind == .screenOnly)
     #expect(store.recommendation == nil)
     #expect(store.autoCueRemainingSeconds == nil)
-    #expect(!store.events.contains { $0.title == "Cue Face" })
+    #expect(!store.events.contains { $0.title == "Cue Webcam" })
 }
 
 @Test
@@ -285,7 +285,7 @@ func activeRealCaptureRetargetsUnavailableImmediateCueToStreamWarning() async th
     #expect(store.selectedSceneKind == .screenOnly)
     #expect(store.recommendation?.target == .screenOnly)
     #expect(store.recommendation?.urgency == .immediate)
-    #expect(store.recommendation?.reason.contains("Stop real capture before choosing Face.") == true)
+    #expect(store.recommendation?.reason.contains("Stop real capture before choosing Webcam.") == true)
     #expect(!store.canApplyRecommendation)
     #expect(store.autoCueRemainingSeconds == nil)
     #expect(store.events.contains { $0.title == "Check stream" })
@@ -655,4 +655,85 @@ func cameraEnhancementsUpdateMediaPipelineConfiguration() {
     store.updateCameraEnhancements(enhancements)
 
     #expect(pipeline.lastConfiguration?.cameraEnhancements == enhancements)
+}
+
+@Test
+@MainActor
+func outputAndLayoutPreferencesUpdateMediaPipelineConfiguration() {
+    let pipeline = ConfigurableMediaPipeline()
+    let layoutSettings = StudioLayoutSettings(
+        preset: .screen70Webcam30,
+        backgroundStyle: .studio,
+        screenZoom: 1.2,
+        webcamZoom: 0.85
+    )
+    let store = StudioStore(
+        mediaPipeline: pipeline,
+        preferences: StudioPreferences(
+            performanceMode: .efficiency,
+            outputResolution: .ultraHD4K,
+            outputFrameRate: .fps60,
+            previewRenderQuality: .full,
+            layoutSettings: layoutSettings
+        )
+    )
+
+    #expect(pipeline.lastConfiguration?.maxVideoWidth == 3_840)
+    #expect(pipeline.lastConfiguration?.framesPerSecond == 60)
+    #expect(pipeline.lastConfiguration?.videoBitrate == StudioStore.outputVideoBitrate(maxVideoWidth: 3_840, framesPerSecond: 60))
+    #expect(pipeline.lastConfiguration?.layoutSettings == layoutSettings)
+    #expect(store.currentOutputResolutionWidth == 3_840)
+    #expect(store.currentOutputFrameRate == 60)
+    #expect(store.currentPreviewCaptureConfiguration == StudioPerformanceMode.efficiency.previewCaptureConfiguration)
+}
+
+@Test
+@MainActor
+func activeStreamStagesOutputChangesButAppliesLayoutImmediately() async throws {
+    let pipeline = ConfigurableMediaPipeline()
+    let store = StudioStore(
+        mediaPipeline: pipeline,
+        preferences: StudioPreferences(
+            performanceMode: .balanced,
+            outputResolution: .hd720,
+            outputFrameRate: .fps30
+        )
+    )
+    let selectedScreenScene = try #require(store.scenes.first { $0.kind == .screenOnly })
+    let liveLayout = StudioLayoutSettings(
+        preset: .screen70Webcam30,
+        backgroundStyle: .stage,
+        screenZoom: 1.3,
+        webcamZoom: 0.9
+    )
+
+    store.selectScene(selectedScreenScene)
+    store.startStream()
+    try? await Task.sleep(for: .milliseconds(50))
+
+    #expect(store.isLive)
+    #expect(!store.canEditOutputCaptureSettings)
+    #expect(pipeline.configurationAtStartStream?.maxVideoWidth == 1_280)
+    #expect(pipeline.configurationAtStartStream?.framesPerSecond == 30)
+
+    var preferences = store.preferences
+    preferences.outputResolution = .ultraHD4K
+    preferences.outputFrameRate = .fps60
+    preferences.layoutSettings = liveLayout
+    store.updatePreferences(preferences)
+
+    #expect(store.currentOutputResolutionWidth == 1_280)
+    #expect(store.currentOutputFrameRate == 30)
+    #expect(pipeline.lastConfiguration?.maxVideoWidth == 1_280)
+    #expect(pipeline.lastConfiguration?.framesPerSecond == 30)
+    #expect(pipeline.lastConfiguration?.layoutSettings == liveLayout)
+
+    store.stopStream()
+    try? await Task.sleep(for: .milliseconds(50))
+
+    #expect(store.canEditOutputCaptureSettings)
+    #expect(store.currentOutputResolutionWidth == 3_840)
+    #expect(store.currentOutputFrameRate == 60)
+    #expect(pipeline.lastConfiguration?.maxVideoWidth == 3_840)
+    #expect(pipeline.lastConfiguration?.framesPerSecond == 60)
 }

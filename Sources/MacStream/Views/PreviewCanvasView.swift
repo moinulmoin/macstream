@@ -6,6 +6,7 @@ struct PreviewCanvasView: View {
     var signals: SignalSnapshot
     var previewConfiguration = PreviewCaptureConfiguration()
     var cameraEnhancements = CameraEnhancementSettings()
+    var layoutSettings = StudioLayoutSettings()
     var cameraDeviceID: String?
     var isCameraEnabled = true
     var isCameraCaptureReady = true
@@ -18,26 +19,15 @@ struct PreviewCanvasView: View {
     var body: some View {
         GeometryReader { proxy in
             ZStack {
-                RoundedRectangle(cornerRadius: 18, style: .continuous)
-                    .fill(.black)
+                canvasBackground
 
                 switch scene.kind {
                 case .face:
-                    cameraFill
+                    zoomedCameraFill
                 case .screenAndFace:
-                    screenFill
-                    pictureInPictureCamera
-                        .frame(width: min(proxy.size.width * 0.28, 260), height: min(proxy.size.height * 0.28, 170))
-                        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
-                        .overlay {
-                            RoundedRectangle(cornerRadius: 14, style: .continuous)
-                                .stroke(.white.opacity(0.24), lineWidth: 1)
-                        }
-                        .shadow(color: .black.opacity(0.35), radius: 18, y: 8)
-                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
-                        .padding(18)
+                    screenAndWebcamLayout(in: proxy.size)
                 case .screenOnly:
-                    screenFill
+                    zoomedScreenFill
                 case .brb:
                     brbLayer
                 }
@@ -102,6 +92,12 @@ struct PreviewCanvasView: View {
         }
     }
 
+    private var zoomedScreenFill: some View {
+        sourceViewport(zoom: layoutSettings.screenZoom) {
+            screenFill
+        }
+    }
+
     private var isScreenPreviewActive: Bool {
         isScreenEnabled && screenPreviewOpacity > 0
     }
@@ -143,6 +139,12 @@ struct PreviewCanvasView: View {
         }
     }
 
+    private var zoomedCameraFill: some View {
+        sourceViewport(zoom: layoutSettings.webcamZoom) {
+            cameraFill
+        }
+    }
+
     private var pictureInPictureCamera: some View {
         Group {
             if !isCameraEnabled {
@@ -154,6 +156,88 @@ struct PreviewCanvasView: View {
             } else {
                 cameraFill
             }
+        }
+    }
+
+    private func screenAndWebcamLayout(in size: CGSize) -> some View {
+        Group {
+            if layoutSettings.preset.isSplit {
+                splitScreenAndWebcamLayout(in: size)
+            } else {
+                pictureInPictureLayout(in: size)
+            }
+        }
+    }
+
+    private func splitScreenAndWebcamLayout(in size: CGSize) -> some View {
+        HStack(spacing: 0) {
+            sourceFrame {
+                zoomedScreenFill
+            }
+            .frame(width: max(1, size.width * layoutSettings.preset.screenFraction))
+
+            sourceFrame {
+                zoomedCameraFill
+            }
+            .frame(maxWidth: .infinity)
+        }
+    }
+
+    private func pictureInPictureLayout(in size: CGSize) -> some View {
+        ZStack {
+            zoomedScreenFill
+
+            sourceFrame {
+                sourceViewport(zoom: layoutSettings.webcamZoom) {
+                    pictureInPictureCamera
+                }
+            }
+            .frame(width: min(size.width * 0.28, 260), height: min(size.height * 0.28, 170))
+            .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+            .overlay {
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .stroke(.white.opacity(0.24), lineWidth: 1)
+            }
+            .shadow(color: .black.opacity(0.35), radius: 18, y: 8)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
+            .padding(18)
+        }
+    }
+
+    private func sourceViewport<Content: View>(
+        zoom: Double,
+        @ViewBuilder content: () -> Content
+    ) -> some View {
+        content()
+            .scaleEffect(StudioLayoutSettings.normalizedSourceZoom(zoom))
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .clipped()
+    }
+
+    private func sourceFrame<Content: View>(
+        @ViewBuilder content: () -> Content
+    ) -> some View {
+        content()
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(.black.opacity(0.72))
+            .clipped()
+    }
+
+    private var canvasBackground: some View {
+        RoundedRectangle(cornerRadius: 18, style: .continuous)
+            .fill(backgroundFill)
+    }
+
+    private var backgroundFill: Color {
+        switch layoutSettings.backgroundStyle {
+        case .black:
+            Color.black
+        case .studio:
+            Color(red: 0.06, green: 0.07, blue: 0.10)
+        case .stage:
+            Color(red: 0.08, green: 0.02, blue: 0.04)
+        case .warm:
+            Color(red: 0.14, green: 0.10, blue: 0.06)
         }
     }
 

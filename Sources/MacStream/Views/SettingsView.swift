@@ -7,6 +7,10 @@ struct SettingsView: View {
     var updater: SparkleUpdater
     @AppStorage("directorCountdownSeconds") private var directorCountdownSeconds = 2.0
     @AppStorage("recordWhileStreaming") private var recordWhileStreaming = false
+    @AppStorage("performanceMode") private var performanceModeRaw = StudioPerformanceMode.balanced.rawValue
+    @AppStorage("outputResolution") private var outputResolutionRaw = StreamOutputResolution.automatic.rawValue
+    @AppStorage("outputFrameRate") private var outputFrameRateRaw = StreamFrameRate.automatic.rawValue
+    @AppStorage("previewRenderQuality") private var previewRenderQualityRaw = StudioPreviewRenderQuality.automatic.rawValue
     @AppStorage("defaultSceneKind") private var defaultSceneKindRaw = SceneKind.brb.rawValue
     @AppStorage("setupPrompt") private var setupPrompt = StudioStore.defaultSetupPrompt
     @AppStorage("localIntelligenceProviderKind") private var localIntelligenceProviderKindRaw = LocalIntelligenceProviderKind.rules.rawValue
@@ -75,6 +79,36 @@ struct SettingsView: View {
                         in: directorCountdownRange,
                         step: 1
                     )
+                }
+            }
+
+            Section("Output") {
+                Picker("Performance", selection: performanceModeBinding) {
+                    ForEach(StudioPerformanceMode.allCases) { mode in
+                        Text(mode.title).tag(mode.rawValue)
+                    }
+                }
+
+                Picker("Resolution", selection: outputResolutionBinding) {
+                    ForEach(StreamOutputResolution.allCases) { resolution in
+                        Text(resolution.title).tag(resolution.rawValue)
+                    }
+                }
+                .disabled(!store.canEditOutputCaptureSettings)
+                .help(store.outputCaptureSettingsLockedReason ?? "Choose the encoded stream and recording resolution.")
+
+                Picker("Frame rate", selection: outputFrameRateBinding) {
+                    ForEach(StreamFrameRate.allCases) { frameRate in
+                        Text(frameRate.title).tag(frameRate.rawValue)
+                    }
+                }
+                .disabled(!store.canEditOutputCaptureSettings)
+                .help(store.outputCaptureSettingsLockedReason ?? "Choose the encoded stream and recording frame rate.")
+
+                Picker("Preview quality", selection: previewRenderQualityBinding) {
+                    ForEach(StudioPreviewRenderQuality.allCases) { quality in
+                        Text(quality.title).tag(quality.rawValue)
+                    }
                 }
             }
         }
@@ -272,6 +306,60 @@ struct SettingsView: View {
                 recordWhileStreaming = newValue
                 var preferences = store.preferences
                 preferences.recordWhileStreaming = newValue
+                store.updatePreferences(preferences)
+            }
+        )
+    }
+
+    private var performanceModeBinding: Binding<String> {
+        Binding(
+            get: { store.preferences.performanceMode.rawValue },
+            set: { newValue in
+                guard let newMode = StudioPerformanceMode(rawValue: newValue) else { return }
+                performanceModeRaw = newValue
+                var preferences = store.preferences
+                preferences.performanceMode = newMode
+                store.updatePreferences(preferences)
+            }
+        )
+    }
+
+    private var outputResolutionBinding: Binding<String> {
+        Binding(
+            get: { store.preferences.outputResolution.rawValue },
+            set: { newValue in
+                guard store.canEditOutputCaptureSettings else { return }
+                guard let newResolution = StreamOutputResolution(rawValue: newValue) else { return }
+                outputResolutionRaw = newValue
+                var preferences = store.preferences
+                preferences.outputResolution = newResolution
+                store.updatePreferences(preferences)
+            }
+        )
+    }
+
+    private var outputFrameRateBinding: Binding<String> {
+        Binding(
+            get: { store.preferences.outputFrameRate.rawValue },
+            set: { newValue in
+                guard store.canEditOutputCaptureSettings else { return }
+                guard let newFrameRate = StreamFrameRate(rawValue: newValue) else { return }
+                outputFrameRateRaw = newValue
+                var preferences = store.preferences
+                preferences.outputFrameRate = newFrameRate
+                store.updatePreferences(preferences)
+            }
+        )
+    }
+
+    private var previewRenderQualityBinding: Binding<String> {
+        Binding(
+            get: { store.preferences.previewRenderQuality.rawValue },
+            set: { newValue in
+                guard let newQuality = StudioPreviewRenderQuality(rawValue: newValue) else { return }
+                previewRenderQualityRaw = newValue
+                var preferences = store.preferences
+                preferences.previewRenderQuality = newQuality
                 store.updatePreferences(preferences)
             }
         )

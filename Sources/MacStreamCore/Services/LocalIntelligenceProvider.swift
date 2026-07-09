@@ -219,23 +219,23 @@ public struct RuleBasedLocalIntelligenceProvider: LocalIntelligenceProvider {
         if lowered.contains("podcast") || lowered.contains("interview") || lowered.contains("talk show") {
             profile = .podcast
             title = "Podcast Stream"
-            summary = "Keep Face dominant, switch slowly, and treat screen activity as supporting context."
+            summary = "Keep Webcam dominant, switch slowly, and treat screen activity as supporting context."
         } else if lowered.contains("teach") || lowered.contains("workshop") || lowered.contains("course") || lowered.contains("class") {
             profile = .teaching
             title = "Teaching Stream"
-            summary = "Prefer Face while explaining, keep cuts slower, and avoid BRB unless the session is clearly idle."
+            summary = "Prefer Webcam while explaining, keep cuts slower, and avoid BRB unless the session is clearly idle."
         } else if lowered.contains("demo") || lowered.contains("launch") || lowered.contains("product") {
             profile = .demo
             title = "Product Demo"
-            summary = "Balance Face and Screen, cut to Screen when the product is active, and keep explanations visible."
+            summary = "Balance Webcam and Screen, cut to Screen when the product is active, and keep explanations visible."
         } else if lowered.contains("coding") || lowered.contains("code") || lowered.contains("xcode") || lowered.contains("programming") {
             profile = .coding
             title = "Coding Stream"
-            summary = "Favor Screen + Face while talking over code, cut to Screen earlier when editor motion carries the moment, and wait longer before BRB."
+            summary = "Favor Screen + Webcam while talking over code, cut to Screen earlier when editor motion carries the moment, and wait longer before BRB."
         } else {
             profile = .balanced
             title = "Talking + Screen"
-            summary = "Prefer Face while explaining, Screen + Face while talking over active work, Screen when action carries the moment, and BRB during quiet idle stretches."
+            summary = "Prefer Webcam while explaining, Screen + Webcam while talking over active work, Screen when action carries the moment, and BRB during quiet idle stretches."
         }
 
         return SetupPlan(

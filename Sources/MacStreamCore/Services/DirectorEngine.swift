@@ -103,7 +103,7 @@ public struct DirectorEngine: Sendable {
             return DirectorRecommendation(
                 target: .face,
                 confidence: 0.88,
-                reason: "Screen capture appears frozen, so Face is safer.",
+                reason: "Screen capture appears frozen, so Webcam is safer.",
                 urgency: .immediate,
                 delaySeconds: 0
             )
@@ -161,7 +161,7 @@ public struct DirectorEngine: Sendable {
             return DirectorRecommendation(
                 target: .screenOnly,
                 confidence: 0.72,
-                reason: "No face is visible, so keep attention on the screen.",
+                reason: "No webcam is visible, so keep attention on the screen.",
                 urgency: .calm,
                 delaySeconds: 3
             )

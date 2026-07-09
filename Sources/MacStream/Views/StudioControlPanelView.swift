@@ -4,6 +4,9 @@ import MacStreamCore
 struct StudioControlPanelView: View {
     @Bindable var store: StudioStore
     @AppStorage("performanceMode") private var performanceModeRaw = StudioPerformanceMode.balanced.rawValue
+    @AppStorage("outputResolution") private var outputResolutionRaw = StreamOutputResolution.automatic.rawValue
+    @AppStorage("outputFrameRate") private var outputFrameRateRaw = StreamFrameRate.automatic.rawValue
+    @AppStorage("previewRenderQuality") private var previewRenderQualityRaw = StudioPreviewRenderQuality.automatic.rawValue
 
     var body: some View {
         VStack(alignment: .leading, spacing: StudioMetrics.md) {
@@ -60,7 +63,7 @@ struct StudioControlPanelView: View {
 
             controlDivider
 
-            controlGroup("Performance", systemImage: "speedometer") {
+            controlGroup("Output", systemImage: "speedometer") {
                 performanceControls
             }
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -91,7 +94,7 @@ struct StudioControlPanelView: View {
                 outputControls
                     .frame(maxWidth: .infinity, alignment: .leading)
 
-                controlGroup("Performance", systemImage: "speedometer") {
+                controlGroup("Output", systemImage: "speedometer") {
                     performanceControls
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -187,6 +190,30 @@ struct StudioControlPanelView: View {
                     Text(mode.title).tag(mode.rawValue)
                 }
             }
+
+            Divider()
+
+            Picker("Resolution", selection: outputResolutionBinding) {
+                ForEach(StreamOutputResolution.allCases) { resolution in
+                    Text(resolution.title).tag(resolution.rawValue)
+                }
+            }
+            .disabled(!store.canEditOutputCaptureSettings)
+            .help(store.outputCaptureSettingsLockedReason ?? "Choose the encoded stream and recording resolution.")
+
+            Picker("FPS", selection: outputFrameRateBinding) {
+                ForEach(StreamFrameRate.allCases) { frameRate in
+                    Text(frameRate.title).tag(frameRate.rawValue)
+                }
+            }
+            .disabled(!store.canEditOutputCaptureSettings)
+            .help(store.outputCaptureSettingsLockedReason ?? "Choose the encoded stream and recording frame rate.")
+
+            Picker("Preview", selection: previewRenderQualityBinding) {
+                ForEach(StudioPreviewRenderQuality.allCases) { quality in
+                    Text(quality.title).tag(quality.rawValue)
+                }
+            }
         } label: {
             Label(performanceMenuTitle, systemImage: "speedometer")
                 .lineLimit(1)
@@ -196,10 +223,10 @@ struct StudioControlPanelView: View {
         .menuStyle(.button)
         .buttonStyle(.bordered)
         .controlSize(.regular)
-        .help("Adjust capture cost for this session")
-        .accessibilityLabel(Text("Performance mode"))
+        .help("Adjust output quality and capture cost")
+        .accessibilityLabel(Text("Output settings"))
         .accessibilityValue(Text(performanceMenuTitle))
-        .accessibilityHint(Text("Adjust preview capture cost and director sample rate."))
+        .accessibilityHint(Text("Adjust resolution, FPS, preview rendering, and performance mode."))
     }
 
     private func controlGroup<Content: View>(
@@ -238,19 +265,27 @@ struct StudioControlPanelView: View {
 
     private func sceneDeckTitle(for scene: StudioScene) -> String {
         switch scene.kind {
-        case .face: "Face"
-        case .screenAndFace: "S+F"
+        case .face: "Cam"
+        case .screenAndFace: "S+W"
         case .screenOnly: "Screen"
         case .brb: "BRB"
         }
     }
 
     private var performanceMenuTitle: String {
-        if store.preferences.performanceMode == .adaptive {
-            return store.effectivePerformanceMode.title
+        "\(outputResolutionTitle) \(outputFrameRateTitle) · \(store.preferences.previewRenderQuality.title)"
+    }
+
+    private var outputResolutionTitle: String {
+        if store.preferences.outputResolution == .automatic {
+            return "\(Int((Double(store.currentOutputResolutionWidth) * 9.0 / 16.0).rounded()))p"
         }
 
-        return store.preferences.performanceMode.title
+        return store.preferences.outputResolution.title
+    }
+
+    private var outputFrameRateTitle: String {
+        "\(store.currentOutputFrameRate) FPS"
     }
 
     private var performanceModeBinding: Binding<String> {
@@ -261,6 +296,47 @@ struct StudioControlPanelView: View {
                 performanceModeRaw = newValue
                 var preferences = store.preferences
                 preferences.performanceMode = newMode
+                store.updatePreferences(preferences)
+            }
+        )
+    }
+
+    private var outputResolutionBinding: Binding<String> {
+        Binding(
+            get: { store.preferences.outputResolution.rawValue },
+            set: { newValue in
+                guard store.canEditOutputCaptureSettings else { return }
+                guard let newResolution = StreamOutputResolution(rawValue: newValue) else { return }
+                outputResolutionRaw = newValue
+                var preferences = store.preferences
+                preferences.outputResolution = newResolution
+                store.updatePreferences(preferences)
+            }
+        )
+    }
+
+    private var outputFrameRateBinding: Binding<String> {
+        Binding(
+            get: { store.preferences.outputFrameRate.rawValue },
+            set: { newValue in
+                guard store.canEditOutputCaptureSettings else { return }
+                guard let newFrameRate = StreamFrameRate(rawValue: newValue) else { return }
+                outputFrameRateRaw = newValue
+                var preferences = store.preferences
+                preferences.outputFrameRate = newFrameRate
+                store.updatePreferences(preferences)
+            }
+        )
+    }
+
+    private var previewRenderQualityBinding: Binding<String> {
+        Binding(
+            get: { store.preferences.previewRenderQuality.rawValue },
+            set: { newValue in
+                guard let newQuality = StudioPreviewRenderQuality(rawValue: newValue) else { return }
+                previewRenderQualityRaw = newValue
+                var preferences = store.preferences
+                preferences.previewRenderQuality = newQuality
                 store.updatePreferences(preferences)
             }
         )

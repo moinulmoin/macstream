@@ -56,6 +56,7 @@ private struct PreviewColumnView: View {
     var body: some View {
         VStack(spacing: 14) {
             SessionStatusStripView(store: store)
+            OutputTrustStripView(store: store)
 
             ZStack(alignment: .topTrailing) {
                 PreviewCanvasView(
@@ -88,6 +89,145 @@ private struct PreviewColumnView: View {
 
     private var previewConfiguration: PreviewCaptureConfiguration {
         store.currentPreviewCaptureConfiguration
+    }
+}
+
+private struct OutputTrustStripView: View {
+    var store: StudioStore
+
+    var body: some View {
+        ViewThatFits(in: .horizontal) {
+            HStack(spacing: 8) {
+                transportBadge
+                sceneBadge
+                targetBadge
+                outputBadge
+                previewBadge
+            }
+
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(spacing: 8) {
+                    transportBadge
+                    sceneBadge
+                    targetBadge
+                }
+                HStack(spacing: 8) {
+                    outputBadge
+                    previewBadge
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .studioCard(padding: 10, cornerRadius: 14)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(Text("Output summary"))
+        .accessibilityValue(Text(outputAccessibilityValue))
+    }
+
+    private var transportBadge: some View {
+        StudioBadge(title: store.streamTransport.title, systemImage: transportSymbol, tint: transportTint)
+    }
+
+    private var sceneBadge: some View {
+        StudioBadge(
+            title: "\(store.selectedScene.title) · \(store.preferences.layoutSettings.preset.shortTitle)",
+            systemImage: store.selectedScene.kind.symbolName,
+            tint: .secondary
+        )
+    }
+
+    private var targetBadge: some View {
+        StudioBadge(title: captureTargetTitle, systemImage: captureTargetSymbol, tint: .secondary)
+    }
+
+    private var outputBadge: some View {
+        StudioBadge(title: outputTitle, systemImage: outputSymbol, tint: .secondary)
+    }
+
+    private var previewBadge: some View {
+        StudioBadge(title: previewTitle, systemImage: "eye", tint: previewTint)
+    }
+
+    private var transportSymbol: String {
+        switch store.streamTransport {
+        case .preview: "play.circle"
+        case .endpointValidation: "network"
+        case .rtmpPublish: "antenna.radiowaves.left.and.right"
+        }
+    }
+
+    private var transportTint: Color {
+        switch store.streamState {
+        case .offline: .secondary
+        case .connecting: StudioPalette.warning
+        case .live: StudioPalette.success
+        case .degraded, .failed: StudioPalette.live
+        }
+    }
+
+    private var captureTargetTitle: String {
+        guard usesScreenCapture else {
+            return "No screen"
+        }
+
+        guard let target = store.selectedScreenCaptureTarget else {
+            return "No target"
+        }
+
+        return Self.boundedTitle(target.name, limit: 28)
+    }
+
+    private var captureTargetSymbol: String {
+        guard usesScreenCapture else {
+            return "display.slash"
+        }
+
+        return switch store.selectedScreenCaptureTarget?.kind {
+        case .display: "display"
+        case .window: "macwindow"
+        case nil: "display.trianglebadge.exclamationmark"
+        }
+    }
+
+    private var usesScreenCapture: Bool {
+        switch store.selectedSceneKind {
+        case .screenAndFace, .screenOnly:
+            true
+        case .face, .brb:
+            false
+        }
+    }
+
+    private var outputTitle: String {
+        "\(store.currentOutputResolutionWidth)w · \(store.currentOutputFrameRate) FPS"
+    }
+
+    private var outputSymbol: String {
+        store.canEditOutputCaptureSettings ? "rectangle.dashed" : "lock.fill"
+    }
+
+    private var previewTitle: String {
+        "Preview \(store.preferences.previewRenderQuality.title)"
+    }
+
+    private var previewTint: Color {
+        switch store.preferences.previewRenderQuality {
+        case .automatic: .secondary
+        case .half: StudioPalette.warning
+        case .full: StudioPalette.info
+        }
+    }
+
+    private var outputAccessibilityValue: String {
+        "\(store.streamTransport.title). \(store.selectedScene.title). \(captureTargetTitle). \(outputTitle). \(store.preferences.previewRenderQuality.detailTitle)."
+    }
+
+    private static func boundedTitle(_ title: String, limit: Int) -> String {
+        guard title.count > limit else {
+            return title
+        }
+
+        return "\(title.prefix(max(1, limit - 3)))..."
     }
 }
 
@@ -439,6 +579,9 @@ private struct PreviewOutputHUD: View {
 
     var body: some View {
         VStack(alignment: .trailing, spacing: 8) {
+            StudioBadge(title: outputTitle, systemImage: outputSymbol, tint: .secondary)
+            StudioBadge(title: previewTitle, systemImage: "eye", tint: .secondary)
+
             if store.isLive || store.isStreamConnecting {
                 StudioBadge(title: streamTitle, systemImage: streamSymbol, tint: streamTint, isFilled: store.isLive)
             }
@@ -449,6 +592,33 @@ private struct PreviewOutputHUD: View {
         }
         .accessibilityElement(children: .combine)
         .accessibilityLabel(Text("Output overlay"))
+        .accessibilityValue(Text(hudAccessibilityValue))
+    }
+
+    private var outputTitle: String {
+        "\(store.currentOutputResolutionWidth)w · \(store.currentOutputFrameRate) FPS"
+    }
+
+    private var outputSymbol: String {
+        store.canEditOutputCaptureSettings ? "rectangle.dashed" : "lock.fill"
+    }
+
+    private var previewTitle: String {
+        "Preview \(store.preferences.previewRenderQuality.title)"
+    }
+
+    private var hudAccessibilityValue: String {
+        var parts = [outputTitle, previewTitle]
+
+        if store.isLive || store.isStreamConnecting {
+            parts.append(streamTitle)
+        }
+
+        if store.recordingState == .recording || store.isRecordingStarting || store.isRecordingStopping {
+            parts.append(recordingTitle)
+        }
+
+        return parts.joined(separator: ". ")
     }
 
     private var streamTitle: String {

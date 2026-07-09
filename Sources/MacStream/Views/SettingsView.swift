@@ -107,7 +107,7 @@ struct SettingsView: View {
 
                 Picker("Preview quality", selection: previewRenderQualityBinding) {
                     ForEach(StudioPreviewRenderQuality.allCases) { quality in
-                        Text(quality.title).tag(quality.rawValue)
+                        Text(quality.detailTitle).tag(quality.rawValue)
                     }
                 }
             }

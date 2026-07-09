@@ -191,6 +191,13 @@ struct StudioControlPanelView: View {
                 }
             }
 
+            if let lockedReason = store.outputCaptureSettingsLockedReason {
+                Divider()
+
+                Label(lockedReason, systemImage: "lock.fill")
+                    .font(.caption)
+            }
+
             Divider()
 
             Picker("Resolution", selection: outputResolutionBinding) {
@@ -211,11 +218,11 @@ struct StudioControlPanelView: View {
 
             Picker("Preview", selection: previewRenderQualityBinding) {
                 ForEach(StudioPreviewRenderQuality.allCases) { quality in
-                    Text(quality.title).tag(quality.rawValue)
+                    Text(quality.detailTitle).tag(quality.rawValue)
                 }
             }
         } label: {
-            Label(performanceMenuTitle, systemImage: "speedometer")
+            Label(performanceMenuTitle, systemImage: performanceMenuSymbol)
                 .lineLimit(1)
                 .minimumScaleFactor(0.78)
                 .frame(maxWidth: .infinity)
@@ -273,7 +280,11 @@ struct StudioControlPanelView: View {
     }
 
     private var performanceMenuTitle: String {
-        "\(outputResolutionTitle) \(outputFrameRateTitle) · \(store.preferences.previewRenderQuality.title)"
+        "\(outputResolutionTitle) \(outputFrameRateTitle) · \(store.preferences.previewRenderQuality.title) preview"
+    }
+
+    private var performanceMenuSymbol: String {
+        store.canEditOutputCaptureSettings ? "speedometer" : "lock"
     }
 
     private var outputResolutionTitle: String {

@@ -155,13 +155,28 @@ sign_embedded_code() {
   done < <(embedded_code_paths)
 }
 
+app_sign_entitlements() {
+  local entitlements="$ENTITLEMENTS"
+
+  if [[ "$HARDENED_RUNTIME" == "1" && ( -z "$SIGN_IDENTITY" || "$SIGN_IDENTITY" == "-" ) ]]; then
+    entitlements="$DIST_DIR/MacStream.AdHoc.entitlements"
+    cp "$ENTITLEMENTS" "$entitlements"
+    /usr/libexec/PlistBuddy -c "Add :com.apple.security.cs.disable-library-validation bool true" "$entitlements" >/dev/null 2>&1 \
+      || /usr/libexec/PlistBuddy -c "Set :com.apple.security.cs.disable-library-validation true" "$entitlements"
+  fi
+
+  echo "$entitlements"
+}
+
 sign_app() {
   sign_embedded_code
 
+  local app_entitlements
+  app_entitlements="$(app_sign_entitlements)"
   local sign_args=(--force --identifier "$BUNDLE_ID")
 
   if [[ "$HARDENED_RUNTIME" == "1" ]]; then
-    sign_args+=(--options runtime --entitlements "$ENTITLEMENTS")
+    sign_args+=(--options runtime --entitlements "$app_entitlements")
   fi
 
   if [[ -n "$SIGN_IDENTITY" && "$SIGN_IDENTITY" != "-" ]]; then

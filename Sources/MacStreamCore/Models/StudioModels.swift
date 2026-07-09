@@ -578,6 +578,14 @@ public enum StudioPreviewRenderQuality: String, CaseIterable, Codable, Identifia
         case .full: "Full"
         }
     }
+
+    public var detailTitle: String {
+        switch self {
+        case .automatic: "Live-aware preview"
+        case .half: "Lower-cost preview"
+        case .full: "Full-quality preview"
+        }
+    }
 }
 
 public enum StudioLayoutPreset: String, CaseIterable, Codable, Identifiable, Sendable {

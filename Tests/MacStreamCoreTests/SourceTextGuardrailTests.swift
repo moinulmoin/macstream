@@ -601,8 +601,11 @@ func keychainPersistenceReportsFailuresToApp() throws {
     let appSource = try String(contentsOf: appURL, encoding: .utf8)
 
     #expect(keychainSource.contains("static func saveRTMPURL(_ value: String) -> Bool"))
-    #expect(keychainSource.contains("static func deleteRTMPURL() -> Bool"))
+    #expect(keychainSource.contains("static func loadRTMPURL(allowUserInteraction: Bool = false) -> String?"))
+    #expect(keychainSource.contains("static func deleteRTMPURL(allowUserInteraction: Bool = false) -> Bool"))
+    #expect(keychainSource.contains("context.interactionNotAllowed = true"))
     #expect(keychainSource.contains("return SecItemAdd(item as CFDictionary, nil) == errSecSuccess"))
+    #expect(appSource.contains("let rtmpURL = mode == .rtmp"))
     #expect(appSource.contains("if !MacStreamDestinationKeychain.saveRTMPURL(destination.rtmpURL)"))
     #expect(appSource.contains("if !MacStreamDestinationKeychain.deleteRTMPURL()"))
     #expect(appSource.contains("store.reportPersistenceFailure"))

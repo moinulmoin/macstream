@@ -1,14 +1,18 @@
 import Foundation
+import LocalAuthentication
 import Security
 
 enum MacStreamDestinationKeychain {
     private static let service = "com.ideaplexa.macstream.destination"
     private static let account = "rtmp-url"
 
-    static func loadRTMPURL() -> String? {
+    static func loadRTMPURL(allowUserInteraction: Bool = false) -> String? {
         var query = baseQuery()
         query[kSecReturnData as String] = true
         query[kSecMatchLimit as String] = kSecMatchLimitOne
+        if !allowUserInteraction {
+            query[kSecUseAuthenticationContext as String] = nonInteractiveAuthenticationContext()
+        }
 
         var item: CFTypeRef?
         let status = SecItemCopyMatching(query as CFDictionary, &item)
@@ -47,8 +51,13 @@ enum MacStreamDestinationKeychain {
     }
 
     @discardableResult
-    static func deleteRTMPURL() -> Bool {
-        let status = SecItemDelete(baseQuery() as CFDictionary)
+    static func deleteRTMPURL(allowUserInteraction: Bool = false) -> Bool {
+        var query = baseQuery()
+        if !allowUserInteraction {
+            query[kSecUseAuthenticationContext as String] = nonInteractiveAuthenticationContext()
+        }
+
+        let status = SecItemDelete(query as CFDictionary)
         return status == errSecSuccess || status == errSecItemNotFound
     }
 
@@ -58,5 +67,11 @@ enum MacStreamDestinationKeychain {
             kSecAttrService as String: service,
             kSecAttrAccount as String: account
         ]
+    }
+
+    private static func nonInteractiveAuthenticationContext() -> LAContext {
+        let context = LAContext()
+        context.interactionNotAllowed = true
+        return context
     }
 }

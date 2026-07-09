@@ -1,14 +1,18 @@
 import Foundation
+import LocalAuthentication
 import Security
 
 enum MacStreamProviderKeychain {
     private static let service = "com.ideaplexa.macstream.provider"
     private static let openAICompatibleAPIKeyAccount = "openai-compatible-api-key"
 
-    static func loadOpenAICompatibleAPIKey() -> String? {
+    static func loadOpenAICompatibleAPIKey(allowUserInteraction: Bool = false) -> String? {
         var query = baseQuery(account: openAICompatibleAPIKeyAccount)
         query[kSecReturnData as String] = true
         query[kSecMatchLimit as String] = kSecMatchLimitOne
+        if !allowUserInteraction {
+            query[kSecUseAuthenticationContext as String] = nonInteractiveAuthenticationContext()
+        }
 
         var item: CFTypeRef?
         let status = SecItemCopyMatching(query as CFDictionary, &item)
@@ -59,5 +63,11 @@ enum MacStreamProviderKeychain {
             kSecAttrService as String: service,
             kSecAttrAccount as String: account
         ]
+    }
+
+    private static func nonInteractiveAuthenticationContext() -> LAContext {
+        let context = LAContext()
+        context.interactionNotAllowed = true
+        return context
     }
 }

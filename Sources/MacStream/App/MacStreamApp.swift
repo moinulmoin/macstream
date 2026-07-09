@@ -209,7 +209,9 @@ struct MacStreamApp: App {
 
     private func applySavedDestination() {
         let mode = StreamDestinationMode(rawValue: destinationModeRaw) ?? .preview
-        let rtmpURL = MacStreamDestinationKeychain.loadRTMPURL() ?? (mode == .rtmp ? "" : "preview")
+        let rtmpURL = mode == .rtmp
+            ? (MacStreamDestinationKeychain.loadRTMPURL() ?? "")
+            : "preview"
         let fallbackName = mode == .rtmp ? "RTMP Destination" : "Preview Session"
         let trimmedName = destinationName.trimmingCharacters(in: .whitespacesAndNewlines)
 

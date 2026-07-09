@@ -18,9 +18,29 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  macos:
-    name: Swift and bundle checks
+  swift-variants:
+    name: Swift ${{ matrix.variant }}
     runs-on: macos-26
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - variant: default
+            haishinkit: "0"
+            mlx: "0"
+            run_tests: true
+          - variant: HaishinKit
+            haishinkit: "1"
+            mlx: "0"
+            run_tests: false
+          - variant: MLX
+            haishinkit: "0"
+            mlx: "1"
+            run_tests: false
+          - variant: combined
+            haishinkit: "1"
+            mlx: "1"
+            run_tests: true
 
     steps:
       - name: Check out repository
@@ -43,19 +63,37 @@ jobs:
           swift --version
 
       - name: Run tests
+        if: matrix.run_tests
         shell: bash
+        env:
+          MAC_STREAM_ENABLE_HAISHINKIT: ${{ matrix.haishinkit }}
+          MAC_STREAM_ENABLE_MLX: ${{ matrix.mlx }}
         run: swift test
 
-      - name: Build default app
+      - name: Build release app
         shell: bash
+        env:
+          MAC_STREAM_ENABLE_HAISHINKIT: ${{ matrix.haishinkit }}
+          MAC_STREAM_ENABLE_MLX: ${{ matrix.mlx }}
         run: swift build -c release --arch arm64
 
-      - name: Build optional feature configurations
+  bundle-smoke:
+    name: Bundle smoke
+    runs-on: macos-26
+    needs: swift-variants
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+
+      - name: Show toolchain
         shell: bash
         run: |
           set -euo pipefail
-          MAC_STREAM_ENABLE_HAISHINKIT=1 swift build -c release --arch arm64
-          MAC_STREAM_ENABLE_MLX=1 swift build -c release --arch arm64
+          sw_vers
+          xcodebuild -version
+          xcrun --sdk macosx --show-sdk-version
+          swift --version
 
       - name: Package ad-hoc app bundle smoke
         shell: bash
@@ -64,8 +102,10 @@ jobs:
           MAC_STREAM_BUILD_NUMBER: ${{ github.run_number }}
           MAC_STREAM_BUILD_CONFIGURATION: release
           MAC_STREAM_BUILD_ARCH: arm64
+          MAC_STREAM_ENABLE_HAISHINKIT: "1"
           MAC_STREAM_CODESIGN_IDENTITY: "-"
           MAC_STREAM_REQUIRE_HARDENED_RUNTIME: "1"
+          MAC_STREAM_REQUIRE_HAISHINKIT: "1"
         run: ./script/package_macos_app.sh
 
       - name: Upload app bundle smoke artifact

@@ -936,6 +936,7 @@ func selectingCameraDeviceUpdatesMediaConfiguration() async {
 @MainActor
 func selectingMicrophoneDeviceUpdatesMediaConfiguration() async {
     let pipeline = ConfigurableMediaPipeline()
+    let signalProvider = ConfigurableSignalProvider()
     let report = CapturePreflightReport(
         devices: [
             CaptureDeviceInfo(id: "microphone-built", kind: .microphone, name: "Built-in Mic", permission: .granted),
@@ -945,7 +946,8 @@ func selectingMicrophoneDeviceUpdatesMediaConfiguration() async {
     )
     let store = StudioStore(
         mediaPipeline: pipeline,
-        captureDeviceProvider: FixedCaptureDeviceProvider(report: report)
+        captureDeviceProvider: FixedCaptureDeviceProvider(report: report),
+        signalProvider: signalProvider
     )
 
     store.scanCaptureDevices()
@@ -954,7 +956,34 @@ func selectingMicrophoneDeviceUpdatesMediaConfiguration() async {
 
     #expect(store.selectedMicrophoneDeviceID == "microphone-usb")
     #expect(pipeline.lastConfiguration?.microphoneDeviceID == "microphone-usb")
+    #expect(signalProvider.lastConfiguration?.microphoneDeviceID == "microphone-usb")
     #expect(store.events.contains { $0.title == "Mic device" && $0.detail == "USB Mic" })
+}
+
+@Test
+@MainActor
+func captureScanPropagatesSelectedMicrophoneToSignalConfiguration() async {
+    let pipeline = ConfigurableMediaPipeline()
+    let signalProvider = ConfigurableSignalProvider()
+    let report = CapturePreflightReport(
+        devices: [
+            CaptureDeviceInfo(id: "microphone-built", kind: .microphone, name: "Built-in Mic", permission: .granted),
+            CaptureDeviceInfo(id: "microphone-usb", kind: .microphone, name: "USB Mic", permission: .granted)
+        ],
+        summary: "Capture sources are ready."
+    )
+    let store = StudioStore(
+        mediaPipeline: pipeline,
+        captureDeviceProvider: FixedCaptureDeviceProvider(report: report),
+        signalProvider: signalProvider
+    )
+
+    store.scanCaptureDevices()
+    try? await Task.sleep(for: .milliseconds(30))
+
+    #expect(store.selectedMicrophoneDeviceID == "microphone-built")
+    #expect(pipeline.lastConfiguration?.microphoneDeviceID == "microphone-built")
+    #expect(signalProvider.lastConfiguration?.microphoneDeviceID == "microphone-built")
 }
 
 @Test

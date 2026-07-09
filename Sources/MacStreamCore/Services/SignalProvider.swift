@@ -1,5 +1,6 @@
 @preconcurrency import AppKit
 @preconcurrency import AVFoundation
+import AudioToolbox
 import CoreGraphics
 @preconcurrency import CoreMedia
 import Foundation
@@ -106,7 +107,7 @@ public final class SystemSignalProvider: SignalProvider, @unchecked Sendable {
         }
 
         if configuration.isMicrophoneEnabled {
-            microphone.start()
+            microphone.start(deviceID: configuration.microphoneDeviceID)
         } else {
             microphone.stop()
         }
@@ -132,52 +133,42 @@ private struct ScreenMotionSnapshot: Sendable {
     var isUnavailable: Bool
 }
 
-private final class MicrophoneLevelMonitor: @unchecked Sendable {
-    private let engine = AVAudioEngine()
+private final class MicrophoneLevelMonitor: NSObject, AVCaptureAudioDataOutputSampleBufferDelegate, @unchecked Sendable {
+    private let sessionQueue = DispatchQueue(label: "com.macstream.signal.microphone-session", qos: .utility)
+    private let sampleQueue = DispatchQueue(label: "com.macstream.signal.microphone-samples", qos: .userInitiated)
     private let lock = NSLock()
     private var level: Double = 0
     private var isSpeaking = false
     private var isUnavailable = false
-    private var isRunning = false
+    private var activeOutputIdentifier: ObjectIdentifier?
     private var isStartRequested = false
+    private var isPermissionRequestInFlight = false
+    private var requestedDeviceID: String?
+    private var activeDeviceID: String?
+    private var session: AVCaptureSession?
+    private var output: AVCaptureAudioDataOutput?
+    private var audioBufferListScratch: UnsafeMutableRawPointer?
+    private var audioBufferListScratchCapacity = 0
 
-    func start() {
-        lock.lock()
-        isStartRequested = true
-        lock.unlock()
+    deinit {
+        audioBufferListScratch?.deallocate()
+    }
 
-        let status = AVCaptureDevice.authorizationStatus(for: .audio)
-
-        switch status {
-        case .authorized:
-            startEngine()
-        case .notDetermined:
-            AVCaptureDevice.requestAccess(for: .audio) { [weak self] granted in
-                guard let self else { return }
-                if self.shouldStartEngineAfterPermissionResponse(isPermissionGranted: granted) {
-                    self.startEngine()
-                } else {
-                    self.update(level: 0, isSpeaking: false, isUnavailable: true)
-                }
-            }
-        case .denied, .restricted:
-            update(level: 0, isSpeaking: false, isUnavailable: true)
-        @unknown default:
-            update(level: 0, isSpeaking: false, isUnavailable: true)
+    func start(deviceID: String?) {
+        sessionQueue.async { [weak self] in
+            guard let self else { return }
+            self.isStartRequested = true
+            self.requestedDeviceID = deviceID
+            self.startCaptureIfPossible()
         }
     }
 
     func stop() {
-        lock.lock()
-        let wasRunning = isRunning
-        isStartRequested = false
-        isRunning = false
-        lock.unlock()
-
-        guard wasRunning else { return }
-
-        engine.inputNode.removeTap(onBus: 0)
-        engine.stop()
+        sessionQueue.async { [weak self] in
+            guard let self else { return }
+            self.isStartRequested = false
+            self.stopSession()
+        }
     }
 
     func snapshot() -> MicrophoneSnapshot {
@@ -187,57 +178,169 @@ private final class MicrophoneLevelMonitor: @unchecked Sendable {
         return MicrophoneSnapshot(level: level, isSpeaking: isSpeaking, isUnavailable: isUnavailable)
     }
 
-    private func startEngine() {
-        lock.lock()
-        guard isStartRequested, !isRunning else {
-            lock.unlock()
+    private func startCaptureIfPossible() {
+        guard isStartRequested else {
+            stopSession()
             return
         }
-        isRunning = true
-        isUnavailable = false
-        lock.unlock()
 
-        let input = engine.inputNode
-        input.installTap(onBus: 0, bufferSize: 1_024, format: MicrophoneTapFormatPolicy.tapFormat()) { [weak self] buffer, _ in
+        guard let deviceID = requestedDeviceID else {
+            stopSession()
+            update(level: 0, isSpeaking: false, isUnavailable: true)
+            return
+        }
+
+        if session != nil, activeDeviceID == deviceID {
+            let snapshot = snapshot()
+            update(level: snapshot.level, isSpeaking: snapshot.isSpeaking, isUnavailable: false)
+            return
+        }
+
+        guard let device = Self.device(matching: deviceID) else {
+            stopSession()
+            update(level: 0, isSpeaking: false, isUnavailable: true)
+            return
+        }
+
+        switch AVCaptureDevice.authorizationStatus(for: .audio) {
+        case .authorized:
+            configureAndStartSession(device: device, deviceID: deviceID)
+        case .notDetermined:
+            requestPermissionIfNeeded()
+        case .denied, .restricted:
+            stopSession()
+            update(level: 0, isSpeaking: false, isUnavailable: true)
+        @unknown default:
+            stopSession()
+            update(level: 0, isSpeaking: false, isUnavailable: true)
+        }
+    }
+
+    private func requestPermissionIfNeeded() {
+        guard !isPermissionRequestInFlight else { return }
+        isPermissionRequestInFlight = true
+
+        AVCaptureDevice.requestAccess(for: .audio) { [weak self] granted in
             guard let self else { return }
-            let level = Self.normalizedLevel(from: buffer)
-            self.update(level: level, isSpeaking: level > 0.18, isUnavailable: false)
+            self.sessionQueue.async {
+                self.isPermissionRequestInFlight = false
+                if MicrophonePermissionStartPolicy.shouldStartCapture(
+                    isStartRequested: self.isStartRequested,
+                    isPermissionGranted: granted
+                ) {
+                    self.startCaptureIfPossible()
+                } else {
+                    self.stopSession()
+                    self.update(level: 0, isSpeaking: false, isUnavailable: true)
+                }
+            }
         }
+    }
 
-        guard shouldContinueStartingEngine() else {
-            input.removeTap(onBus: 0)
-            engine.stop()
-            return
-        }
+    private func configureAndStartSession(device: AVCaptureDevice, deviceID: String) {
+        stopSession()
 
         do {
-            engine.prepare()
-            try engine.start()
+            let nextSession = AVCaptureSession()
+            nextSession.beginConfiguration()
+
+            let input = try AVCaptureDeviceInput(device: device)
+            guard nextSession.canAddInput(input) else {
+                nextSession.commitConfiguration()
+                update(level: 0, isSpeaking: false, isUnavailable: true)
+                return
+            }
+            nextSession.addInput(input)
+
+            let nextOutput = AVCaptureAudioDataOutput()
+            nextOutput.setSampleBufferDelegate(self, queue: sampleQueue)
+            guard nextSession.canAddOutput(nextOutput) else {
+                nextOutput.setSampleBufferDelegate(nil, queue: nil)
+                nextSession.commitConfiguration()
+                update(level: 0, isSpeaking: false, isUnavailable: true)
+                return
+            }
+            nextSession.addOutput(nextOutput)
+            nextSession.commitConfiguration()
+
+            session = nextSession
+            output = nextOutput
+            activeDeviceID = deviceID
+            setActiveOutput(nextOutput)
+            update(level: 0, isSpeaking: false, isUnavailable: false)
+
+            nextSession.startRunning()
+            if !shouldContinueStartingCapture() || requestedDeviceID != deviceID {
+                stopSession()
+            }
         } catch {
-            input.removeTap(onBus: 0)
             update(level: 0, isSpeaking: false, isUnavailable: true)
-            lock.lock()
-            isRunning = false
-            lock.unlock()
         }
     }
 
-    private func shouldContinueStartingEngine() -> Bool {
-        lock.lock()
-        let shouldContinue = isStartRequested && isRunning
-        lock.unlock()
-        return shouldContinue
+    private func shouldContinueStartingCapture() -> Bool {
+        isStartRequested
     }
 
-    private func shouldStartEngineAfterPermissionResponse(isPermissionGranted: Bool) -> Bool {
-        lock.lock()
-        let isStartRequested = isStartRequested
-        lock.unlock()
+    private func stopSession() {
+        setActiveOutput(nil)
+        output?.setSampleBufferDelegate(nil, queue: nil)
+        if session?.isRunning == true {
+            session?.stopRunning()
+        }
+        output = nil
+        session = nil
+        activeDeviceID = nil
+    }
 
-        return MicrophonePermissionStartPolicy.shouldStartEngine(
-            isStartRequested: isStartRequested,
-            isPermissionGranted: isPermissionGranted
+    private static func device(matching id: String) -> AVCaptureDevice? {
+        let discovery = AVCaptureDevice.DiscoverySession(
+            deviceTypes: [.microphone],
+            mediaType: .audio,
+            position: .unspecified
         )
+
+        return discovery.devices.first {
+            CaptureDeviceInfo.microphoneID(uniqueID: $0.uniqueID) == id || $0.uniqueID == id
+        }
+    }
+
+    func captureOutput(
+        _ output: AVCaptureOutput,
+        didOutput sampleBuffer: CMSampleBuffer,
+        from connection: AVCaptureConnection
+    ) {
+        guard isActiveOutput(output) else { return }
+        guard let level = normalizedLevel(from: sampleBuffer) else { return }
+        update(level: level, isSpeaking: level > 0.18, isUnavailable: false, from: output)
+    }
+
+    private func isActiveOutput(_ output: AVCaptureOutput) -> Bool {
+        lock.withLock {
+            activeOutputIdentifier == ObjectIdentifier(output)
+        }
+    }
+
+    private func setActiveOutput(_ output: AVCaptureOutput?) {
+        lock.withLock {
+            activeOutputIdentifier = output.map(ObjectIdentifier.init)
+        }
+    }
+
+    private func update(
+        level: Double,
+        isSpeaking: Bool,
+        isUnavailable: Bool,
+        from output: AVCaptureOutput
+    ) {
+        lock.lock()
+        defer { lock.unlock() }
+        guard activeOutputIdentifier == ObjectIdentifier(output) else { return }
+
+        let smoothed = (self.level * 0.7) + (level * 0.3)
+        self.level = min(max(smoothed, 0), 1)
+        self.isSpeaking = isSpeaking
+        self.isUnavailable = isUnavailable
     }
 
     private func update(level: Double, isSpeaking: Bool, isUnavailable: Bool) {
@@ -249,40 +352,128 @@ private final class MicrophoneLevelMonitor: @unchecked Sendable {
         lock.unlock()
     }
 
-    private static func normalizedLevel(from buffer: AVAudioPCMBuffer) -> Double {
-        guard let channelData = buffer.floatChannelData else { return 0 }
-
-        let channelCount = Int(buffer.format.channelCount)
-        let frameLength = Int(buffer.frameLength)
-        guard channelCount > 0, frameLength > 0 else { return 0 }
-
-        var sum: Float = 0
-        for channel in 0..<channelCount {
-            let samples = channelData[channel]
-            for frame in 0..<frameLength {
-                let sample = samples[frame]
-                sum += sample * sample
-            }
+    private func normalizedLevel(from sampleBuffer: CMSampleBuffer) -> Double? {
+        guard let formatDescription = CMSampleBufferGetFormatDescription(sampleBuffer),
+              let streamDescription = CMAudioFormatDescriptionGetStreamBasicDescription(formatDescription),
+              streamDescription.pointee.mFormatID == kAudioFormatLinearPCM else {
+            return nil
         }
 
-        let meanSquare = sum / Float(channelCount * frameLength)
-        guard meanSquare > 0 else { return 0 }
+        let bitsPerChannel = Int(streamDescription.pointee.mBitsPerChannel)
+        guard bitsPerChannel > 0 else { return nil }
 
-        let rms = sqrt(meanSquare)
-        let decibels = 20 * log10(max(rms, 0.000_001))
-        return Double(min(max((decibels + 60) / 60, 0), 1))
+        if audioBufferListScratchCapacity == 0 {
+            let initialCapacity = MemoryLayout<AudioBufferList>.size
+            audioBufferListScratch = UnsafeMutableRawPointer.allocate(
+                byteCount: initialCapacity,
+                alignment: MemoryLayout<AudioBufferList>.alignment
+            )
+            audioBufferListScratchCapacity = initialCapacity
+        }
+
+        guard var audioBufferListScratch else { return nil }
+        var audioBufferList = audioBufferListScratch.bindMemory(to: AudioBufferList.self, capacity: 1)
+        var neededSize = 0
+        var blockBuffer: CMBlockBuffer?
+        var status = copyAudioBufferList(
+            from: sampleBuffer,
+            into: audioBufferList,
+            capacity: audioBufferListScratchCapacity,
+            neededSize: &neededSize,
+            blockBuffer: &blockBuffer
+        )
+
+        if status != noErr, neededSize > audioBufferListScratchCapacity {
+            self.audioBufferListScratch?.deallocate()
+            let resizedScratch = UnsafeMutableRawPointer.allocate(
+                byteCount: neededSize,
+                alignment: MemoryLayout<AudioBufferList>.alignment
+            )
+            self.audioBufferListScratch = resizedScratch
+            audioBufferListScratchCapacity = neededSize
+            audioBufferListScratch = resizedScratch
+            audioBufferList = resizedScratch.bindMemory(to: AudioBufferList.self, capacity: 1)
+            blockBuffer = nil
+            status = copyAudioBufferList(
+                from: sampleBuffer,
+                into: audioBufferList,
+                capacity: neededSize,
+                neededSize: &neededSize,
+                blockBuffer: &blockBuffer
+            )
+        }
+        guard status == noErr else { return nil }
+
+        return withExtendedLifetime((audioBufferListScratch, blockBuffer)) {
+            let flags = streamDescription.pointee.mFormatFlags
+            let isFloat = flags & kAudioFormatFlagIsFloat != 0
+            let isSignedInteger = flags & kAudioFormatFlagIsSignedInteger != 0
+            var sumSquares = 0.0
+            var sampleCount = 0
+
+            for audioBuffer in UnsafeMutableAudioBufferListPointer(audioBufferList) {
+                guard let data = audioBuffer.mData else { continue }
+                let byteCount = Int(audioBuffer.mDataByteSize)
+
+                if isFloat, bitsPerChannel == 32 {
+                    let samples = data.bindMemory(to: Float.self, capacity: byteCount / MemoryLayout<Float>.stride)
+                    for index in 0..<(byteCount / MemoryLayout<Float>.stride) {
+                        let sample = Double(samples[index])
+                        sumSquares += sample * sample
+                        sampleCount += 1
+                    }
+                } else if isSignedInteger, bitsPerChannel == 16 {
+                    let samples = data.bindMemory(to: Int16.self, capacity: byteCount / MemoryLayout<Int16>.stride)
+                    for index in 0..<(byteCount / MemoryLayout<Int16>.stride) {
+                        let sample = Double(samples[index]) / Double(Int16.max)
+                        sumSquares += sample * sample
+                        sampleCount += 1
+                    }
+                } else if isSignedInteger, bitsPerChannel == 32 {
+                    let samples = data.bindMemory(to: Int32.self, capacity: byteCount / MemoryLayout<Int32>.stride)
+                    for index in 0..<(byteCount / MemoryLayout<Int32>.stride) {
+                        let sample = Double(samples[index]) / Double(Int32.max)
+                        sumSquares += sample * sample
+                        sampleCount += 1
+                    }
+                } else {
+                    return nil
+                }
+            }
+
+            guard sampleCount > 0 else { return nil }
+            let meanSquare = sumSquares / Double(sampleCount)
+            guard meanSquare > 0 else { return 0 }
+
+            let rms = sqrt(meanSquare)
+            let decibels = 20 * log10(max(rms, 0.000_001))
+            return min(max((decibels + 60) / 60, 0), 1)
+        }
+    }
+
+    private func copyAudioBufferList(
+        from sampleBuffer: CMSampleBuffer,
+        into audioBufferList: UnsafeMutablePointer<AudioBufferList>,
+        capacity: Int,
+        neededSize: inout Int,
+        blockBuffer: inout CMBlockBuffer?
+    ) -> OSStatus {
+        CMSampleBufferGetAudioBufferListWithRetainedBlockBuffer(
+            sampleBuffer,
+            bufferListSizeNeededOut: &neededSize,
+            bufferListOut: audioBufferList,
+            bufferListSize: capacity,
+            blockBufferAllocator: kCFAllocatorDefault,
+            blockBufferMemoryAllocator: kCFAllocatorDefault,
+            flags: UInt32(kCMSampleBufferFlag_AudioBufferList_Assure16ByteAlignment),
+            blockBufferOut: &blockBuffer
+        )
     }
 }
 
 struct MicrophonePermissionStartPolicy: Sendable {
-    static func shouldStartEngine(isStartRequested: Bool, isPermissionGranted: Bool) -> Bool {
+    static func shouldStartCapture(isStartRequested: Bool, isPermissionGranted: Bool) -> Bool {
         isStartRequested && isPermissionGranted
-    }
-}
-
-struct MicrophoneTapFormatPolicy: Sendable {
-    static func tapFormat() -> AVAudioFormat? {
-        nil
     }
 }
 

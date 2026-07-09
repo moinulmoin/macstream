@@ -1863,11 +1863,13 @@ public final class StudioStore {
             isRTMPPublishing: isRTMPPublishing
         )
         signalConfiguration.isMicrophoneEnabled = isSourceEnabled(.microphone)
+        signalConfiguration.microphoneDeviceID = selectedMicrophoneDeviceID
         signalConfiguration.isScreenMotionEnabled = isSourceEnabled(.screen) && sourceLevel(.screen) > 0
         signalConfiguration.screenCaptureTarget = selectedScreenCaptureTarget
         if shouldUseSourceMonitoringSignalConfiguration {
             signalConfiguration = Self.sourceMonitoringSignalConfiguration(
-                isMicrophoneEnabled: shouldSampleSourceMonitoringInput
+                isMicrophoneEnabled: shouldSampleSourceMonitoringInput,
+                microphoneDeviceID: selectedMicrophoneDeviceID
             )
         }
         if signalConfiguration != lastAppliedSignalConfiguration {
@@ -2651,10 +2653,14 @@ public final class StudioStore {
             : mode.signalSamplingConfiguration
     }
 
-    static func sourceMonitoringSignalConfiguration(isMicrophoneEnabled: Bool) -> SignalSamplingConfiguration {
+    static func sourceMonitoringSignalConfiguration(
+        isMicrophoneEnabled: Bool,
+        microphoneDeviceID: String?
+    ) -> SignalSamplingConfiguration {
         SignalSamplingConfiguration(
             screenMotionFramesPerSecond: 1,
             isMicrophoneEnabled: isMicrophoneEnabled,
+            microphoneDeviceID: microphoneDeviceID,
             isScreenMotionEnabled: false,
             isActivityContextEnabled: false
         )

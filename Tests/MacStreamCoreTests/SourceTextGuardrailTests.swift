@@ -434,7 +434,6 @@ func signalSamplingDoesNotRequestScreenRecordingPermissionPassively() throws {
     #expect(signalSource.contains("CGPreflightScreenCaptureAccess()"))
     #expect(signalSource.contains("stateQueue.async"))
     #expect(signalSource.contains("applyMonitorsForCurrentState(configuration:"))
-    #expect(signalSource.contains("shouldContinueStartingEngine()"))
 }
 
 @Test
@@ -555,8 +554,6 @@ func releaseAutomationDefinesSignedNotarizedMacPipeline() throws {
     #expect(ci.contains("FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: \"true\""))
     #expect(ci.contains("swift test"))
     #expect(ci.contains("swift build -c release --arch arm64"))
-    #expect(ci.contains("MAC_STREAM_ENABLE_HAISHINKIT=1 swift build -c release --arch arm64"))
-    #expect(ci.contains("MAC_STREAM_ENABLE_MLX=1 swift build -c release --arch arm64"))
     #expect(ci.contains("MAC_STREAM_REQUIRE_HARDENED_RUNTIME: \"1\""))
     #expect(ci.contains("actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6"))
     #expect(ci.contains("actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7"))

@@ -17,18 +17,18 @@ Examples:
 
 ## GitHub Actions Release
 
-Pull requests and pushes to `main` run `.github/workflows/ci.yml` on macOS 26 arm64 runners. CI runs tests, the default build, optional compile checks, and an ad-hoc hardened bundle smoke package.
+Pull requests and pushes to `main` run `.github/workflows/ci.yml` on macOS 26 arm64 runners. CI builds the default, HaishinKit, MLX, and combined HaishinKit+MLX configurations, runs the default and combined test suites, and performs one ad-hoc hardened HaishinKit bundle smoke package.
 
 Tagged releases are built by `.github/workflows/release.yml` on macOS 26 arm64 runners. The workflow:
 
 1. Runs the Swift test suite.
-2. Builds the default app plus optional HaishinKit and experimental MLX compile configurations.
+2. Builds the default, HaishinKit, MLX, and combined compile configurations.
 3. Imports the Developer ID certificate into a temporary keychain.
-4. Packages `MacStream.app` with versioned `Info.plist` values from the tag.
+4. Packages `MacStream.app` with `MAC_STREAM_ENABLE_HAISHINKIT=1`, versioned `Info.plist` values from the tag, and release-only guards for the Sparkle public key and HaishinKit variant.
 5. Signs with hardened runtime and release entitlements.
 6. Submits the app zip to Apple notarization with `xcrun notarytool`.
 7. Staples and validates the notarization ticket.
-8. Creates `MacStream-vX.Y.Z-macos-arm64.zip` plus a `.sha256` file.
+8. Creates `MacStream-vX.Y.Z-macos-arm64.zip` plus a `.sha256` file, then verifies the zip contains the HaishinKit RTMP release variant.
 9. Uploads workflow artifacts and publishes or updates the GitHub Release.
 
 Required GitHub Actions secrets:
@@ -84,6 +84,7 @@ swift test
 swift build
 MAC_STREAM_ENABLE_HAISHINKIT=1 swift build
 MAC_STREAM_ENABLE_MLX=1 swift build
+MAC_STREAM_ENABLE_HAISHINKIT=1 MAC_STREAM_ENABLE_MLX=1 swift build
 ./script/build_and_run.sh --verify
 codesign --verify --strict dist/MacStream.app
 ```
@@ -165,12 +166,17 @@ To locally simulate release signing, provide `MAC_STREAM_CODESIGN_IDENTITY` and 
 
 ```bash
 MAC_STREAM_CODESIGN_IDENTITY="Developer ID Application: Ideaplexa LLC (53P98M92V7)" \
+MAC_STREAM_ENABLE_HAISHINKIT=1 \
 MAC_STREAM_REQUIRE_DEVELOPER_ID=1 \
 MAC_STREAM_REQUIRE_HARDENED_RUNTIME=1 \
+MAC_STREAM_REQUIRE_HAISHINKIT=1 \
+MAC_STREAM_REQUIRE_RELEASE_SPARKLE_PUBLIC_KEY=1 \
 MAC_STREAM_VERSION=0.2.0 \
 MAC_STREAM_BUILD_NUMBER=1 \
 ./script/package_macos_app.sh
 ```
+
+That release simulation intentionally fails while `Resources/Info.plist` still contains `REPLACE_WITH_SPARKLE_PUBLIC_ED_KEY`; releases must wait until the operator commits the real Sparkle public key.
 
 ## QA Checklist
 

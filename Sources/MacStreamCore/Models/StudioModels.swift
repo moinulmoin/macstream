@@ -928,6 +928,7 @@ public enum StudioPerformanceMode: String, CaseIterable, Codable, Identifiable, 
 public struct SignalSamplingConfiguration: Equatable, Sendable {
     public var screenMotionFramesPerSecond: Int
     public var isMicrophoneEnabled: Bool
+    public var microphoneDeviceID: String?
     public var isScreenMotionEnabled: Bool
     public var isActivityContextEnabled: Bool
     public var screenCaptureTarget: ScreenCaptureTarget?
@@ -935,12 +936,14 @@ public struct SignalSamplingConfiguration: Equatable, Sendable {
     public init(
         screenMotionFramesPerSecond: Int = 4,
         isMicrophoneEnabled: Bool = true,
+        microphoneDeviceID: String? = nil,
         isScreenMotionEnabled: Bool = true,
         isActivityContextEnabled: Bool = true,
         screenCaptureTarget: ScreenCaptureTarget? = nil
     ) {
         self.screenMotionFramesPerSecond = max(1, screenMotionFramesPerSecond)
         self.isMicrophoneEnabled = isMicrophoneEnabled
+        self.microphoneDeviceID = microphoneDeviceID
         self.isScreenMotionEnabled = isScreenMotionEnabled
         self.isActivityContextEnabled = isActivityContextEnabled
         self.screenCaptureTarget = screenCaptureTarget

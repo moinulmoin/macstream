@@ -87,14 +87,19 @@ jobs:
 
       - name: Run tests
         shell: bash
-        run: swift test
+        run: |
+          set -euo pipefail
+          swift test
+          MAC_STREAM_ENABLE_HAISHINKIT=1 swift test
 
-      - name: Build optional feature configurations
+      - name: Build release feature configurations
         shell: bash
         run: |
           set -euo pipefail
+          swift build -c release --arch arm64
           MAC_STREAM_ENABLE_HAISHINKIT=1 swift build -c release --arch arm64
           MAC_STREAM_ENABLE_MLX=1 swift build -c release --arch arm64
+          MAC_STREAM_ENABLE_HAISHINKIT=1 MAC_STREAM_ENABLE_MLX=1 swift build -c release --arch arm64
 
       - name: Validate signing and notarization secrets
         shell: bash
@@ -154,9 +159,12 @@ jobs:
           MAC_STREAM_BUILD_NUMBER: ${{ github.run_number }}
           MAC_STREAM_BUILD_CONFIGURATION: release
           MAC_STREAM_BUILD_ARCH: arm64
+          MAC_STREAM_ENABLE_HAISHINKIT: "1"
           MAC_STREAM_CODESIGN_IDENTITY: ${{ secrets.MAC_STREAM_CODESIGN_IDENTITY }}
           MAC_STREAM_REQUIRE_DEVELOPER_ID: "1"
           MAC_STREAM_REQUIRE_HARDENED_RUNTIME: "1"
+          MAC_STREAM_REQUIRE_HAISHINKIT: "1"
+          MAC_STREAM_REQUIRE_RELEASE_SPARKLE_PUBLIC_KEY: "1"
         run: ./script/package_macos_app.sh
 
       - name: Notarize and staple app
@@ -204,6 +212,43 @@ jobs:
             echo "sha256=$sha256"
             echo "sha256_path=$PWD/dist/$artifact_name.sha256"
           } >>"$GITHUB_OUTPUT"
+
+      - name: Verify release artifact variant
+        shell: bash
+        env:
+          ZIP_PATH: ${{ steps.artifact.outputs.zip_path }}
+        run: |
+          set -euo pipefail
+          verify_dir="$RUNNER_TEMP/release-artifact-verify"
+          rm -rf "$verify_dir"
+          mkdir -p "$verify_dir"
+          ditto -x -k "$ZIP_PATH" "$verify_dir"
+
+          app_path="$verify_dir/MacStream.app"
+          info_plist="$app_path/Contents/Info.plist"
+          variant_plist="$app_path/Contents/Resources/MacStreamBuildVariant.plist"
+          app_binary="$app_path/Contents/MacOS/MacStream"
+
+          sparkle_public_key="$(/usr/libexec/PlistBuddy -c "Print :SUPublicEDKey" "$info_plist")"
+          if ! sparkle_key_bytes="$(printf '%s' "$sparkle_public_key" | /usr/bin/base64 -D 2>/dev/null | /usr/bin/wc -c | /usr/bin/tr -d '[:space:]')"; then
+            sparkle_key_bytes=0
+          fi
+          if [[ "$sparkle_public_key" == "REPLACE_WITH_SPARKLE_PUBLIC_ED_KEY" || "$sparkle_key_bytes" != "32" ]]; then
+            echo "Release artifact does not contain a valid 32-byte Sparkle SUPublicEDKey" >&2
+            exit 2
+          fi
+
+          has_haishinkit="$(/usr/libexec/PlistBuddy -c "Print :HasHaishinKitRTMP" "$variant_plist")"
+          if [[ "$has_haishinkit" != "true" ]]; then
+            echo "Release artifact is not the HaishinKit RTMP variant" >&2
+            exit 2
+          fi
+
+          app_binary_strings="$(/usr/bin/strings "$app_binary")"
+          if [[ "$app_binary_strings" != *"HaishinKit"* || "$app_binary_strings" != *"RTMPHaishinKit"* ]]; then
+            echo "Release artifact binary does not include HaishinKit and RTMPHaishinKit module markers" >&2
+            exit 2
+          fi
 
       - name: Sign update for Sparkle appcast
         id: sparkle_sign

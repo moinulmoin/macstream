@@ -165,6 +165,22 @@ func rtmpPublisherStatusEventsMapToPublishStateAndFailures() {
 }
 
 @Test
+func rtmpPublisherEventsAreAcceptedOnlyForActiveOrConnectingPublisher() {
+    #expect(SystemMediaPipeline.shouldAcceptRTMPPublisherEvent(
+        isCurrentPublisher: true,
+        isObservedConnectingPublisher: false
+    ))
+    #expect(SystemMediaPipeline.shouldAcceptRTMPPublisherEvent(
+        isCurrentPublisher: false,
+        isObservedConnectingPublisher: true
+    ))
+    #expect(!SystemMediaPipeline.shouldAcceptRTMPPublisherEvent(
+        isCurrentPublisher: false,
+        isObservedConnectingPublisher: false
+    ))
+}
+
+@Test
 func rtmpByteDeltaComputesOutboundThroughput() {
     #expect(SystemMediaPipeline.outboundBytesPerSecond(byteDelta: 3_000, elapsed: 1.5) == 2_000)
     #expect(SystemMediaPipeline.outboundBitrateKbps(bytesPerSecond: 125_000) == 1_000)
@@ -175,15 +191,10 @@ func rtmpByteDeltaComputesOutboundThroughput() {
 
 @Test
 func microphonePermissionGrantStartsOnlyWhenSamplingIsStillRequested() {
-    #expect(MicrophonePermissionStartPolicy.shouldStartEngine(isStartRequested: true, isPermissionGranted: true))
-    #expect(!MicrophonePermissionStartPolicy.shouldStartEngine(isStartRequested: false, isPermissionGranted: true))
-    #expect(!MicrophonePermissionStartPolicy.shouldStartEngine(isStartRequested: true, isPermissionGranted: false))
-    #expect(!MicrophonePermissionStartPolicy.shouldStartEngine(isStartRequested: false, isPermissionGranted: false))
-}
-
-@Test
-func microphoneTapUsesInputNodeNativeFormat() {
-    #expect(MicrophoneTapFormatPolicy.tapFormat() == nil)
+    #expect(MicrophonePermissionStartPolicy.shouldStartCapture(isStartRequested: true, isPermissionGranted: true))
+    #expect(!MicrophonePermissionStartPolicy.shouldStartCapture(isStartRequested: false, isPermissionGranted: true))
+    #expect(!MicrophonePermissionStartPolicy.shouldStartCapture(isStartRequested: true, isPermissionGranted: false))
+    #expect(!MicrophonePermissionStartPolicy.shouldStartCapture(isStartRequested: false, isPermissionGranted: false))
 }
 
 @Test
@@ -300,9 +311,21 @@ func systemMediaPipelineSkipsStreamReconfigurationForLevelOnlyChanges() {
         systemAudioLevel: 1,
         microphoneLevel: 0
     )
+    let cameraEnhancementOnly = MediaPipelineConfiguration(
+        maxVideoWidth: 1_920,
+        framesPerSecond: 30,
+        videoBitrate: 8_000_000,
+        queueDepth: 5,
+        capturesSystemAudio: true,
+        capturesMicrophone: true,
+        systemAudioLevel: 1,
+        microphoneLevel: 1,
+        cameraEnhancements: CameraEnhancementSettings(usesAutoLight: true, autoLightAmount: 0.8)
+    )
 
     #expect(!SystemMediaPipeline.shouldUpdateActiveStreamConfiguration(from: baseline, to: levelOnly))
     #expect(!SystemMediaPipeline.shouldUpdateActiveStreamConfiguration(from: baseline, to: microphoneCaptureOnly))
+    #expect(!SystemMediaPipeline.shouldUpdateActiveStreamConfiguration(from: baseline, to: cameraEnhancementOnly))
 }
 
 @Test

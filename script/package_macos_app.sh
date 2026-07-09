@@ -12,6 +12,8 @@ SIGN_IDENTITY="${MAC_STREAM_CODESIGN_IDENTITY:-}"
 TIMESTAMP_MODE="${MAC_STREAM_CODESIGN_TIMESTAMP:-auto}"
 REQUIRE_DEVELOPER_ID="${MAC_STREAM_REQUIRE_DEVELOPER_ID:-0}"
 REQUIRE_HARDENED_RUNTIME="${MAC_STREAM_REQUIRE_HARDENED_RUNTIME:-0}"
+REQUIRE_HAISHINKIT="${MAC_STREAM_REQUIRE_HAISHINKIT:-0}"
+REQUIRE_RELEASE_SPARKLE_PUBLIC_KEY="${MAC_STREAM_REQUIRE_RELEASE_SPARKLE_PUBLIC_KEY:-0}"
 HARDENED_RUNTIME="${MAC_STREAM_HARDENED_RUNTIME:-1}"
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -26,6 +28,7 @@ APP_RESOURCES="$APP_CONTENTS/Resources"
 APP_FRAMEWORKS="$APP_CONTENTS/Frameworks"
 APP_BINARY="$APP_MACOS/$APP_NAME"
 INFO_PLIST="$APP_CONTENTS/Info.plist"
+BUILD_VARIANT_PLIST="$APP_RESOURCES/MacStreamBuildVariant.plist"
 
 export CLANG_MODULE_CACHE_PATH="${CLANG_MODULE_CACHE_PATH:-$ROOT_DIR/.build/clang-module-cache}"
 mkdir -p "$CLANG_MODULE_CACHE_PATH"
@@ -47,6 +50,11 @@ if [[ "$REQUIRE_DEVELOPER_ID" == "1" && ( -z "$SIGN_IDENTITY" || "$SIGN_IDENTITY
   exit 2
 fi
 
+if [[ "$REQUIRE_HAISHINKIT" == "1" && "${MAC_STREAM_ENABLE_HAISHINKIT:-0}" != "1" ]]; then
+  echo "MAC_STREAM_ENABLE_HAISHINKIT=1 is required for release-capable RTMP packaging" >&2
+  exit 2
+fi
+
 if [[ "$HARDENED_RUNTIME" == "1" && ! -f "$ENTITLEMENTS" ]]; then
   echo "Release entitlements file not found: $ENTITLEMENTS" >&2
   exit 2
@@ -62,6 +70,32 @@ if [[ ! -f "$APP_ICON" ]]; then
   exit 2
 fi
 
+validate_release_sparkle_public_key() {
+  if [[ "$REQUIRE_RELEASE_SPARKLE_PUBLIC_KEY" != "1" ]]; then
+    return
+  fi
+
+  local sparkle_public_key
+  sparkle_public_key="$(/usr/libexec/PlistBuddy -c "Print :SUPublicEDKey" "$INFO_TEMPLATE" 2>/dev/null || true)"
+  if ! is_valid_sparkle_public_key "$sparkle_public_key"; then
+    echo "Resources/Info.plist must contain a valid 32-byte Sparkle SUPublicEDKey for release packaging" >&2
+    exit 2
+  fi
+}
+
+is_valid_sparkle_public_key() {
+  local sparkle_public_key="$1"
+  if [[ -z "$sparkle_public_key" || "$sparkle_public_key" == "REPLACE_WITH_SPARKLE_PUBLIC_ED_KEY" ]]; then
+    return 1
+  fi
+
+  local decoded_length
+  if ! decoded_length="$(printf '%s' "$sparkle_public_key" | /usr/bin/base64 -D 2>/dev/null | /usr/bin/wc -c | /usr/bin/tr -d '[:space:]')"; then
+    return 1
+  fi
+  [[ "$decoded_length" == "32" ]]
+}
+
 write_info_plist() {
   cp "$INFO_TEMPLATE" "$INFO_PLIST"
   /usr/libexec/PlistBuddy -c "Set :CFBundleDisplayName $APP_NAME" "$INFO_PLIST"
@@ -72,6 +106,20 @@ write_info_plist() {
   /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $BUILD_NUMBER" "$INFO_PLIST"
   /usr/libexec/PlistBuddy -c "Set :LSMinimumSystemVersion $MIN_SYSTEM_VERSION" "$INFO_PLIST"
   /usr/libexec/PlistBuddy -c "Set :CFBundleIconFile MacStream" "$INFO_PLIST"
+}
+
+write_build_variant_plist() {
+  printf '%s\n' '<?xml version="1.0" encoding="UTF-8"?>' \
+    '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">' \
+    '<plist version="1.0">' \
+    '<dict/>' \
+    '</plist>' >"$BUILD_VARIANT_PLIST"
+  /usr/libexec/PlistBuddy -c "Clear dict" "$BUILD_VARIANT_PLIST"
+  /usr/libexec/PlistBuddy -c "Add :HasHaishinKitRTMP bool $([[ "${MAC_STREAM_ENABLE_HAISHINKIT:-0}" == "1" ]] && echo true || echo false)" "$BUILD_VARIANT_PLIST"
+  /usr/libexec/PlistBuddy -c "Add :HasMLX bool $([[ "${MAC_STREAM_ENABLE_MLX:-0}" == "1" ]] && echo true || echo false)" "$BUILD_VARIANT_PLIST"
+  /usr/libexec/PlistBuddy -c "Add :Configuration string $CONFIGURATION" "$BUILD_VARIANT_PLIST"
+  /usr/libexec/PlistBuddy -c "Add :Architecture string $BUILD_ARCH" "$BUILD_VARIANT_PLIST"
+  /usr/bin/plutil -lint "$BUILD_VARIANT_PLIST" >/dev/null
 }
 
 copy_runtime_frameworks() {
@@ -110,6 +158,7 @@ build_app() {
   copy_runtime_frameworks "$build_products_dir"
   xattr -cr "$APP_BUNDLE" >/dev/null 2>&1 || true
   write_info_plist
+  write_build_variant_plist
   /usr/bin/plutil -lint "$INFO_PLIST" >/dev/null
 }
 
@@ -255,7 +304,30 @@ verify_app() {
   /usr/libexec/PlistBuddy -c "Print :NSCameraUsageDescription" "$INFO_PLIST" >/dev/null
   /usr/libexec/PlistBuddy -c "Print :NSMicrophoneUsageDescription" "$INFO_PLIST" >/dev/null
   /usr/libexec/PlistBuddy -c "Print :NSAudioCaptureUsageDescription" "$INFO_PLIST" >/dev/null
+  if [[ "$REQUIRE_RELEASE_SPARKLE_PUBLIC_KEY" == "1" ]]; then
+    local sparkle_public_key
+    sparkle_public_key="$(/usr/libexec/PlistBuddy -c "Print :SUPublicEDKey" "$INFO_PLIST")"
+    if ! is_valid_sparkle_public_key "$sparkle_public_key"; then
+      echo "expected release Sparkle SUPublicEDKey in $INFO_PLIST" >&2
+      exit 1
+    fi
+  fi
+  if [[ "$REQUIRE_HAISHINKIT" == "1" ]]; then
+    local has_haishinkit
+    has_haishinkit="$(/usr/libexec/PlistBuddy -c "Print :HasHaishinKitRTMP" "$BUILD_VARIANT_PLIST")"
+    if [[ "$has_haishinkit" != "true" ]]; then
+      echo "expected packaged app to declare HaishinKit RTMP release variant" >&2
+      exit 1
+    fi
+    local app_binary_strings
+    app_binary_strings="$(/usr/bin/strings "$APP_BINARY")"
+    if [[ "$app_binary_strings" != *"HaishinKit"* || "$app_binary_strings" != *"RTMPHaishinKit"* ]]; then
+      echo "expected packaged app binary to include HaishinKit and RTMPHaishinKit module markers" >&2
+      exit 1
+    fi
+  fi
   test -f "$APP_RESOURCES/MacStream.icns"
+  test -f "$BUILD_VARIANT_PLIST"
 }
 
 emit_github_outputs() {
@@ -273,6 +345,7 @@ emit_github_outputs() {
   } >>"$GITHUB_OUTPUT"
 }
 
+validate_release_sparkle_public_key
 build_app
 sign_app
 verify_app

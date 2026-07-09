@@ -416,9 +416,11 @@ public final class SystemMediaPipeline: NSObject, MediaPipeline, SCStreamOutput,
     private var frameWindowStartedAt = Date()
     private var frameWindowCount = 0
     private var firstPublishingVideoContinuation: CheckedContinuation<Void, any Error>?
+    private var firstPublishingVideoTimeoutTask: Task<Void, Never>?
     private var didPublishFirstVideoFrame = false
     private var rtmpPublisherEventTask: Task<Void, Never>?
     private var rtmpPublisherHealthTask: Task<Void, Never>?
+    private var observedRTMPPublisher: RTMPPublisher?
     private var lastRTMPByteCount: Int64?
     private var lastRTMPByteSampledAt: Date?
     private var publishingAudioTrackPlan: (systemAudio: UInt8?, microphone: UInt8?, mainTrack: UInt8) = (nil, nil, 0)
@@ -593,6 +595,7 @@ public final class SystemMediaPipeline: NSObject, MediaPipeline, SCStreamOutput,
             rtmpPublisherEventTask = nil
             rtmpPublisherHealthTask?.cancel()
             rtmpPublisherHealthTask = nil
+            observedRTMPPublisher = nil
             streamFailureReason = nil
             publishingStream = nil
             publishingCaptureGeometry = nil
@@ -605,8 +608,7 @@ public final class SystemMediaPipeline: NSObject, MediaPipeline, SCStreamOutput,
             publishingVideoFormatDescriptionCache = nil
             latestPublishingCameraPixelBuffer = nil
             publishingOwnsMicrophoneSession = false
-            firstPublishingVideoContinuation?.resume(throwing: CancellationError())
-            firstPublishingVideoContinuation = nil
+            finishFirstPublishingVideoFrameWaitOnQueue(throwing: CancellationError())
             didPublishFirstVideoFrame = false
             lastRTMPByteCount = nil
             lastRTMPByteSampledAt = nil
@@ -1201,6 +1203,7 @@ public final class SystemMediaPipeline: NSObject, MediaPipeline, SCStreamOutput,
             startMicrophoneSession(microphoneSession)
             try await waitForFirstPublishingVideoFrame()
         } catch {
+            try? await stream.stopCapture()
             queue.sync {
                 if self.publishingStream === stream {
                     self.publishingStream = nil
@@ -1212,6 +1215,8 @@ public final class SystemMediaPipeline: NSObject, MediaPipeline, SCStreamOutput,
                     self.publishingVideoFormatDescriptionCache = nil
                     self.latestPublishingCameraPixelBuffer = nil
                     self.publishingAudioTrackPlan = (nil, nil, 0)
+                    self.finishFirstPublishingVideoFrameWaitOnQueue(throwing: CancellationError())
+                    self.didPublishFirstVideoFrame = false
                 }
                 if self.publishingMicrophoneSession === microphoneSession {
                     self.publishingMicrophoneSession = nil
@@ -1511,6 +1516,7 @@ public final class SystemMediaPipeline: NSObject, MediaPipeline, SCStreamOutput,
             self.rtmpPublisherHealthTask?.cancel()
             self.rtmpPublisherEventTask = eventTask
             self.rtmpPublisherHealthTask = healthTask
+            self.observedRTMPPublisher = publisher
             self.streamFailureReason = nil
             self.lastRTMPByteCount = nil
             self.lastRTMPByteSampledAt = nil
@@ -1526,6 +1532,7 @@ public final class SystemMediaPipeline: NSObject, MediaPipeline, SCStreamOutput,
             self.rtmpPublisherEventTask = nil
             self.rtmpPublisherHealthTask?.cancel()
             self.rtmpPublisherHealthTask = nil
+            self.observedRTMPPublisher = nil
             self.lastRTMPByteCount = nil
             self.lastRTMPByteSampledAt = nil
             self.mediaHealth.publishState = .disconnected
@@ -1536,11 +1543,14 @@ public final class SystemMediaPipeline: NSObject, MediaPipeline, SCStreamOutput,
 
     private func handleRTMPPublisherEvent(_ event: RTMPPublisherEvent, publisher: any RTMPPublisher) {
         queue.sync {
+            guard Self.shouldAcceptRTMPPublisherEvent(
+                isCurrentPublisher: self.rtmpPublisher === publisher,
+                isObservedConnectingPublisher: self.rtmpPublisher == nil && self.observedRTMPPublisher === publisher
+            ) else {
+                return
+            }
             if let publishState = event.publishState {
                 self.mediaHealth.publishState = publishState
-            }
-            guard self.rtmpPublisher === publisher || self.rtmpPublisher == nil else {
-                return
             }
             if let failureReason = event.failureReason {
                 self.streamFailureReason = failureReason
@@ -1580,43 +1590,66 @@ public final class SystemMediaPipeline: NSObject, MediaPipeline, SCStreamOutput,
     }
 
     private func waitForFirstPublishingVideoFrame() async throws {
-        try await withThrowingTaskGroup(of: Void.self) { group in
-            group.addTask {
-                try await withCheckedThrowingContinuation { continuation in
-                    self.queue.async {
-                        if self.didPublishFirstVideoFrame {
-                            continuation.resume()
-                        } else {
-                            self.firstPublishingVideoContinuation = continuation
+        let cancellation = FirstPublishingVideoFrameCancellation()
+        try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, any Error>) in
+                queue.async {
+                    guard !cancellation.isCancelled else {
+                        continuation.resume(throwing: CancellationError())
+                        return
+                    }
+                    if self.didPublishFirstVideoFrame {
+                        continuation.resume()
+                        return
+                    }
+
+                    self.firstPublishingVideoContinuation?.resume(throwing: CancellationError())
+                    self.firstPublishingVideoTimeoutTask?.cancel()
+                    self.firstPublishingVideoContinuation = continuation
+                    self.firstPublishingVideoTimeoutTask = Task { [weak self] in
+                        do {
+                            try await Task.sleep(for: Self.firstPublishingVideoFrameTimeout)
+                        } catch {
+                            return
                         }
+                        self?.finishFirstPublishingVideoFrameWait(
+                            throwing: MediaPipelineError.unavailable("RTMP publisher did not receive video frames.")
+                        )
                     }
                 }
             }
-
-            group.addTask {
-                try await Task.sleep(for: Self.firstPublishingVideoFrameTimeout)
-                throw MediaPipelineError.unavailable("RTMP publisher did not receive video frames.")
-            }
-
-            do {
-                try await group.next()
-                group.cancelAll()
-            } catch {
-                group.cancelAll()
-                queue.async {
-                    self.firstPublishingVideoContinuation = nil
-                }
-                throw error
-            }
+        } onCancel: {
+            cancellation.cancel()
+            self.finishFirstPublishingVideoFrameWait(throwing: CancellationError())
         }
     }
 
     private func markFirstPublishingVideoFrameIfNeeded() {
+        guard !didPublishFirstVideoFrame else { return }
+        didPublishFirstVideoFrame = true
+        finishFirstPublishingVideoFrameWaitOnQueue(throwing: nil)
+    }
+
+    private func finishFirstPublishingVideoFrameWait(throwing error: (any Error)?) {
         queue.async {
-            guard !self.didPublishFirstVideoFrame else { return }
-            self.didPublishFirstVideoFrame = true
-            self.firstPublishingVideoContinuation?.resume()
-            self.firstPublishingVideoContinuation = nil
+            self.finishFirstPublishingVideoFrameWaitOnQueue(throwing: error)
+        }
+    }
+
+    private func finishFirstPublishingVideoFrameWaitOnQueue(throwing error: (any Error)?) {
+        guard let continuation = firstPublishingVideoContinuation else {
+            firstPublishingVideoTimeoutTask?.cancel()
+            firstPublishingVideoTimeoutTask = nil
+            return
+        }
+
+        firstPublishingVideoContinuation = nil
+        firstPublishingVideoTimeoutTask?.cancel()
+        firstPublishingVideoTimeoutTask = nil
+        if let error {
+            continuation.resume(throwing: error)
+        } else {
+            continuation.resume()
         }
     }
 
@@ -2140,6 +2173,13 @@ public final class SystemMediaPipeline: NSObject, MediaPipeline, SCStreamOutput,
         isPublishingOutput && hasPublisher
     }
 
+    static func shouldAcceptRTMPPublisherEvent(
+        isCurrentPublisher: Bool,
+        isObservedConnectingPublisher: Bool
+    ) -> Bool {
+        isCurrentPublisher || isObservedConnectingPublisher
+    }
+
     static func shouldUpdateActiveStreamConfiguration(
         from previous: MediaPipelineConfiguration,
         to next: MediaPipelineConfiguration
@@ -2149,7 +2189,6 @@ public final class SystemMediaPipeline: NSObject, MediaPipeline, SCStreamOutput,
             || previous.queueDepth != next.queueDepth
             || previous.sceneKind != next.sceneKind
             || previous.capturesSystemAudio != next.capturesSystemAudio
-            || previous.cameraEnhancements != next.cameraEnhancements
             || previous.screenCaptureTarget != next.screenCaptureTarget
     }
 }
@@ -2160,6 +2199,21 @@ private struct PublishingCaptureState {
     var cameraSession: AVCaptureSession?
     var shouldStopMicrophoneSession: Bool
     var publisher: (any RTMPPublisher)?
+}
+
+private final class FirstPublishingVideoFrameCancellation: @unchecked Sendable {
+    private let lock = NSLock()
+    private var cancelled = false
+
+    var isCancelled: Bool {
+        lock.withLock { cancelled }
+    }
+
+    func cancel() {
+        lock.withLock {
+            cancelled = true
+        }
+    }
 }
 
 private struct RecordingWriterState {

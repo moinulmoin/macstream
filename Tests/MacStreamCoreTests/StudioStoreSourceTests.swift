@@ -428,7 +428,10 @@ func sourceMonitoringSamplesSelectedMicrophoneWithoutScreenMotion() async {
     store.startSourceMonitoring()
 
     #expect(provider.startCount == 1)
-    #expect(provider.lastConfiguration == StudioStore.sourceMonitoringSignalConfiguration(isMicrophoneEnabled: true))
+    #expect(provider.lastConfiguration == StudioStore.sourceMonitoringSignalConfiguration(
+        isMicrophoneEnabled: true,
+        microphoneDeviceID: "microphone-1"
+    ))
     #expect(provider.lastConfiguration?.isActivityContextEnabled == false)
     #expect(store.latestSignals.speechLevel == 0.82)
     #expect(store.latestSignals.isSpeaking)
@@ -437,6 +440,27 @@ func sourceMonitoringSamplesSelectedMicrophoneWithoutScreenMotion() async {
     store.stopSourceMonitoring()
 
     #expect(provider.stopCount == 1)
+}
+
+@Test
+func systemSignalProviderReportsUnavailableWhenMicrophoneIsEnabledWithoutSelectedDevice() async {
+    let provider = SystemSignalProvider()
+
+    provider.update(configuration: SignalSamplingConfiguration(
+        isMicrophoneEnabled: true,
+        microphoneDeviceID: nil,
+        isScreenMotionEnabled: false,
+        isActivityContextEnabled: false
+    ))
+    provider.start()
+    try? await Task.sleep(for: .milliseconds(30))
+
+    let snapshot = provider.snapshot()
+
+    #expect(snapshot.isMicMuted)
+    #expect(snapshot.speechLevel == 0)
+
+    provider.stop()
 }
 
 @Test

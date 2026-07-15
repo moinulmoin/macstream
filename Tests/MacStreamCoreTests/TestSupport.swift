@@ -640,11 +640,14 @@ actor CancellableDelayedSetupProvider: LocalIntelligenceProvider {
     private var started = 0
     private var completed = 0
     private var cancelled = 0
+    private var startedContinuation: CheckedContinuation<Void, Never>?
 
     func generateSetupPlan(for prompt: String) async throws -> SetupPlan {
         started += 1
+        startedContinuation?.resume()
+        startedContinuation = nil
         do {
-            try await Task.sleep(for: .milliseconds(250))
+            try await Task.sleep(for: .seconds(60))
         } catch is CancellationError {
             cancelled += 1
             throw CancellationError()
@@ -667,6 +670,13 @@ actor CancellableDelayedSetupProvider: LocalIntelligenceProvider {
 
     func cancelledCount() -> Int {
         cancelled
+    }
+
+    func waitUntilStarted() async {
+        guard started == 0 else { return }
+        await withCheckedContinuation { continuation in
+            startedContinuation = continuation
+        }
     }
 }
 

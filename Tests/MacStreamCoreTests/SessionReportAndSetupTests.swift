@@ -787,7 +787,7 @@ func setupRulesCancelInFlightGenerationWhenStreamStarts() async {
     )
 
     store.generateSetupPlan()
-    try? await Task.sleep(for: .milliseconds(10))
+    await provider.waitUntilStarted()
 
     #expect(store.isGeneratingSetupPlan)
 

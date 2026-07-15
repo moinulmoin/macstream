@@ -11,20 +11,35 @@ import SwiftUI
 @MainActor
 @Observable
 final class SparkleUpdater {
-    private let controller: SPUStandardUpdaterController
+    private var controller: SPUStandardUpdaterController?
     private var canCheckObservation: AnyCancellable?
 
     /// Mirrors `SPUUpdater.canCheckForUpdates` (KVO-compliant) so SwiftUI can
     /// enable/disable the check action while a check is already in flight.
-    private(set) var canCheckForUpdates = false
+    private(set) var canCheckForUpdates: Bool
 
     init() {
+        let publicKey = Bundle.main.object(forInfoDictionaryKey: "SUPublicEDKey") as? String
+        canCheckForUpdates = publicKey
+            .flatMap { Data(base64Encoded: $0) }
+            .map { $0.count == 32 }
+            ?? false
+    }
+
+    func checkForUpdates() {
+        guard canCheckForUpdates else { return }
+        if let controller {
+            controller.updater.checkForUpdates()
+            return
+        }
+
         let controller = SPUStandardUpdaterController(
-            startingUpdater: true,
+            startingUpdater: false,
             updaterDelegate: nil,
             userDriverDelegate: nil
         )
         self.controller = controller
+        controller.startUpdater()
         canCheckForUpdates = controller.updater.canCheckForUpdates
         canCheckObservation = controller.updater
             .publisher(for: \.canCheckForUpdates, options: [.initial, .new])
@@ -34,10 +49,6 @@ final class SparkleUpdater {
                     self?.canCheckForUpdates = canCheck
                 }
             }
-    }
-
-    /// Starts a user-initiated update check with Sparkle's standard progress UI.
-    func checkForUpdates() {
         controller.updater.checkForUpdates()
     }
 }

@@ -1,4 +1,42 @@
 import SwiftUI
+import MacStreamCore
+
+struct StudioMicrophoneLevelMeterView: View {
+    var store: StudioStore
+    var title = "Mic level"
+    var showsStatusDetail = false
+
+    var body: some View {
+        MicrophoneLevelMeterView(
+            level: store.latestSignals.speechLevel,
+            title: title,
+            detail: showsStatusDetail ? statusDetail : nil,
+            isActive: isActive
+        )
+        .help(helpText)
+    }
+
+    private var isActive: Bool {
+        store.isSourceEnabled(.microphone)
+            && store.sourceLevel(.microphone) > 0
+            && store.selectedMicrophoneDeviceID != nil
+    }
+
+    private var statusDetail: String {
+        if !store.isSourceEnabled(.microphone) { return "Off" }
+        if store.sourceLevel(.microphone) <= 0 { return "Muted" }
+        if store.selectedMicrophoneDeviceID == nil { return "No input" }
+        if store.latestSignals.isMicMuted { return "No signal" }
+        return "\(Int((store.latestSignals.speechLevel * 100).rounded()))%"
+    }
+
+    private var helpText: String {
+        if !store.isSourceEnabled(.microphone) { return "Turn the microphone source on in Sources." }
+        if store.sourceLevel(.microphone) <= 0 { return "Raise the microphone source level in Sources." }
+        if store.selectedMicrophoneDeviceID == nil { return "Choose a microphone in Sources or Capture preflight." }
+        return "Live microphone input level."
+    }
+}
 
 struct MicrophoneLevelMeterView: View {
     var level: Double

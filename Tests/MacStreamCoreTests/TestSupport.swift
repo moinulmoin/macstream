@@ -263,6 +263,45 @@ final class FlakyStartMediaPipeline: MediaPipeline, @unchecked Sendable {
     func stopRecording() async {}
 }
 
+final class SessionRecoveryMediaPipeline: MediaPipeline, @unchecked Sendable {
+    let streamTransport: StreamTransportKind = .rtmpPublish
+    var currentHealth: StreamHealth? = StreamHealth(
+        bitrateKbps: 4_000,
+        publishState: .publishing,
+        captureFPS: 30,
+        audioDeliveryState: .active
+    )
+    private(set) var startStreamCount = 0
+    private(set) var stopStreamCount = 0
+    private var remainingStartFailures = 0
+    var streamFailureDetail: String?
+
+    func failSession(_ detail: String, recoveryStartFailures: Int) {
+        streamFailureDetail = detail
+        remainingStartFailures = max(0, recoveryStartFailures)
+    }
+
+    func startStream(destination: StreamDestination) async throws {
+        startStreamCount += 1
+        if remainingStartFailures > 0 {
+            remainingStartFailures -= 1
+            throw TestStreamError(message: "Transient recovery failure \(startStreamCount)")
+        }
+        streamFailureDetail = nil
+    }
+
+    func stopStream() async {
+        stopStreamCount += 1
+        streamFailureDetail = nil
+    }
+
+    func startRecording() async throws -> URL {
+        URL(fileURLWithPath: "/tmp/macstream-session-recovery.mov")
+    }
+
+    func stopRecording() async {}
+}
+
 final class DelayedStartMediaPipeline: MediaPipeline, @unchecked Sendable {
     var streamTransport: StreamTransportKind = .preview
     var startCount = 0
@@ -368,6 +407,106 @@ final class NonCancellableDelayedRecordingPipeline: MediaPipeline, @unchecked Se
 
     func stopRecording() async {
         stopRecordingCount += 1
+    }
+}
+
+@MainActor
+final class LifecycleTrackingMediaPipeline: MediaPipeline, @unchecked Sendable {
+    nonisolated let streamTransport: StreamTransportKind = .preview
+    var suspendsStreamStart = false
+    var suspendsRecordingStart = false
+    var holdsStreamStop = false
+    private(set) var startStreamCount = 0
+    private(set) var stopStreamCount = 0
+    private(set) var startRecordingCount = 0
+    private(set) var stopRecordingCount = 0
+    private(set) var streamStartCancellationCount = 0
+    private(set) var recordingStartCancellationCount = 0
+    private(set) var transitions: [String] = []
+    private var streamStartCalledContinuation: CheckedContinuation<Void, Never>?
+    private var recordingStartCalledContinuation: CheckedContinuation<Void, Never>?
+    private var streamStopCalledContinuation: CheckedContinuation<Void, Never>?
+    private var streamStopContinuation: CheckedContinuation<Void, Never>?
+    private var shouldFinishStreamStop = false
+
+    func startStream(destination: StreamDestination) async throws {
+        startStreamCount += 1
+        transitions.append("startStream")
+        streamStartCalledContinuation?.resume()
+        streamStartCalledContinuation = nil
+
+        guard suspendsStreamStart else { return }
+        do {
+            try await Task.sleep(for: .seconds(60))
+        } catch {
+            streamStartCancellationCount += 1
+            throw error
+        }
+    }
+
+    func stopStream() async {
+        stopStreamCount += 1
+        transitions.append("stopStream")
+        streamStopCalledContinuation?.resume()
+        streamStopCalledContinuation = nil
+
+        guard holdsStreamStop else { return }
+        await withCheckedContinuation { continuation in
+            if shouldFinishStreamStop {
+                continuation.resume()
+            } else {
+                streamStopContinuation = continuation
+            }
+        }
+    }
+
+    func startRecording() async throws -> URL {
+        startRecordingCount += 1
+        transitions.append("startRecording")
+        recordingStartCalledContinuation?.resume()
+        recordingStartCalledContinuation = nil
+
+        if suspendsRecordingStart {
+            do {
+                try await Task.sleep(for: .seconds(60))
+            } catch {
+                recordingStartCancellationCount += 1
+                throw error
+            }
+        }
+        return URL(fileURLWithPath: "/tmp/macstream-lifecycle.mov")
+    }
+
+    func stopRecording() async {
+        stopRecordingCount += 1
+        transitions.append("stopRecording")
+    }
+
+    func waitUntilStreamStartCalled() async {
+        guard startStreamCount == 0 else { return }
+        await withCheckedContinuation { continuation in
+            streamStartCalledContinuation = continuation
+        }
+    }
+
+    func waitUntilRecordingStartCalled() async {
+        guard startRecordingCount == 0 else { return }
+        await withCheckedContinuation { continuation in
+            recordingStartCalledContinuation = continuation
+        }
+    }
+
+    func waitUntilStreamStopCalled() async {
+        guard stopStreamCount == 0 else { return }
+        await withCheckedContinuation { continuation in
+            streamStopCalledContinuation = continuation
+        }
+    }
+
+    func finishStreamStop() {
+        shouldFinishStreamStop = true
+        streamStopContinuation?.resume()
+        streamStopContinuation = nil
     }
 }
 

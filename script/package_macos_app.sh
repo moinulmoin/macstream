@@ -243,9 +243,21 @@ sign_app() {
 
 verify_developer_id_signature() {
   local code_path="$1"
-  local signing_details
-  signing_details="$(/usr/bin/codesign -dv "$code_path" 2>&1)"
-  if [[ "$signing_details" != *"Authority=Developer ID Application:"* ]]; then
+  local certificate_dir
+  certificate_dir="$(/usr/bin/mktemp -d "${TMPDIR:-/tmp}/macstream-signature.XXXXXX")"
+  local certificate_prefix="$certificate_dir/certificate"
+
+  if ! /usr/bin/codesign -d --extract-certificates="$certificate_prefix" "$code_path" >/dev/null 2>&1; then
+    rm -rf "$certificate_dir"
+    echo "could not extract signing certificate for $code_path" >&2
+    exit 1
+  fi
+
+  local certificate_subject
+  certificate_subject="$(/usr/bin/openssl x509 -inform DER -in "${certificate_prefix}0" -noout -subject 2>/dev/null || true)"
+  rm -rf "$certificate_dir"
+
+  if [[ "$certificate_subject" != *"CN=Developer ID Application:"* ]]; then
     echo "expected Developer ID Application signature for $code_path" >&2
     exit 1
   fi

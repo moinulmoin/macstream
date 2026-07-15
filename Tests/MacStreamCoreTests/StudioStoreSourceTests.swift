@@ -401,6 +401,22 @@ func sourceMonitoringDoesNotStartWithoutSelectedMicrophone() {
 
 @Test
 @MainActor
+func sourceMonitoringDoesNotRepublishUnchangedMutedState() {
+    let store = StudioStore(signalProvider: MutableSignalProvider())
+
+    store.startSourceMonitoring()
+    let publishedTimestamp = store.latestSignals.timestamp
+    store.advanceSourceMonitoring()
+
+    #expect(store.latestSignals.timestamp == publishedTimestamp)
+    #expect(store.latestSignals.isMicMuted)
+    #expect(store.health.audioLevel == 0)
+
+    store.stopSourceMonitoring()
+}
+
+@Test
+@MainActor
 func sourceMonitoringSamplesSelectedMicrophoneWithoutScreenMotion() async {
     let provider = MutableSignalProvider(
         snapshot: SignalSnapshot(
@@ -440,6 +456,42 @@ func sourceMonitoringSamplesSelectedMicrophoneWithoutScreenMotion() async {
     store.stopSourceMonitoring()
 
     #expect(provider.stopCount == 1)
+}
+
+@Test
+@MainActor
+func recordingGatesIdleMicrophoneMonitoringAndRestoresItAfterCapture() async {
+    let provider = ConfigurableSignalProvider()
+    let store = StudioStore(
+        mediaPipeline: ConfigurableMediaPipeline(),
+        signalProvider: provider
+    )
+
+    #expect(provider.lastConfiguration?.isMicrophoneEnabled == true)
+
+    store.startRecording()
+
+    #expect(store.recordingState == .starting)
+    #expect(provider.lastConfiguration?.isMicrophoneEnabled == false)
+
+    for _ in 0..<100 {
+        guard store.recordingState != .recording else { break }
+        await Task.yield()
+    }
+
+    #expect(store.recordingState == .recording)
+    #expect(provider.lastConfiguration?.isMicrophoneEnabled == false)
+    #expect(provider.lastConfiguration?.isActivityContextEnabled == true)
+    #expect(provider.lastConfiguration?.isScreenMotionEnabled == true)
+
+    store.stopRecording()
+    for _ in 0..<100 {
+        guard store.recordingState != .stopped else { break }
+        await Task.yield()
+    }
+
+    #expect(store.recordingState == .stopped)
+    #expect(provider.lastConfiguration?.isMicrophoneEnabled == true)
 }
 
 @Test
@@ -485,14 +537,15 @@ func studioStoreAppliesPerformanceModeToMediaPipeline() async {
 
 @Test
 @MainActor
-func studioStorePrefersMediaPipelineHealthSnapshotWhenAvailable() async {
+func studioStoreScalesPipelineMicrophoneSignalAndUsesDeliveryStateForMuteTruth() async {
     let pipeline = ConfigurableMediaPipeline()
     pipeline.currentHealth = StreamHealth(
         bitrateKbps: 3_200,
         droppedFrames: 7,
         captureFPS: 48,
         audioLevel: 0.12,
-        roundTripMs: 16
+        roundTripMs: 16,
+        microphoneDeliveryState: .stalled
     )
     let provider = FixedSignalProvider(
         snapshot: SignalSnapshot(
@@ -505,6 +558,8 @@ func studioStorePrefersMediaPipelineHealthSnapshotWhenAvailable() async {
         )
     )
     let store = StudioStore(mediaPipeline: pipeline, signalProvider: provider)
+    let microphone = store.sources.first { $0.kind == .microphone }!
+    store.updateLevel(for: microphone, level: 0.5)
 
     store.startStream()
     try? await Task.sleep(for: .milliseconds(50))
@@ -513,8 +568,37 @@ func studioStorePrefersMediaPipelineHealthSnapshotWhenAvailable() async {
     #expect(store.health.bitrateKbps == 3_200)
     #expect(store.health.droppedFrames == 7)
     #expect(store.health.captureFPS == 48)
-    #expect(store.health.audioLevel == 0.74)
+    #expect(store.health.audioLevel == 0.12)
+    #expect(abs(store.latestSignals.speechLevel - 0.06) < 0.000_001)
+    #expect(!store.latestSignals.isSpeaking)
+    #expect(store.latestSignals.isMicMuted)
     #expect(store.health.roundTripMs == 16)
+}
+
+@Test
+@MainActor
+func studioStorePreservesZeroCaptureFPSFromPipelineHealth() async {
+    let pipeline = ConfigurableMediaPipeline()
+    pipeline.currentHealth = StreamHealth(captureFPS: 0)
+    let store = StudioStore(mediaPipeline: pipeline)
+
+    store.startStream()
+    try? await Task.sleep(for: .milliseconds(50))
+    store.advanceDirector()
+
+    #expect(store.health.captureFPS == 0)
+}
+
+@Test
+@MainActor
+func studioStoreKeepsOfflineCaptureFPSAtZeroWhenHealthIsSampled() {
+    let store = StudioStore(mediaPipeline: ConfigurableMediaPipeline())
+
+    store.advanceDirector()
+
+    #expect(store.streamState == .offline)
+    #expect(store.recordingState == .stopped)
+    #expect(store.health.captureFPS == 0)
 }
 
 @Test

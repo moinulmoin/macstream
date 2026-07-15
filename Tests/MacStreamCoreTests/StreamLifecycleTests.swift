@@ -5,6 +5,38 @@ import Network
 import Testing
 @testable import MacStreamCore
 
+@MainActor
+private func waitUntilStreamIsLive(_ store: StudioStore) async {
+    for _ in 0..<100 {
+        guard !store.streamState.isLive else { return }
+        await Task.yield()
+    }
+}
+
+@MainActor
+private func waitUntilStreamIsOffline(_ store: StudioStore) async {
+    for _ in 0..<100 {
+        guard store.streamState != .offline || store.isStreamStopping else { return }
+        await Task.yield()
+    }
+}
+
+@MainActor
+private func waitUntilRecordingIsActive(_ store: StudioStore) async {
+    for _ in 0..<100 {
+        guard store.recordingState != .recording else { return }
+        await Task.yield()
+    }
+}
+
+@MainActor
+private func waitUntilCaptureScanCompletes(_ store: StudioStore) async {
+    for _ in 0..<100 {
+        guard !store.hasRunInitialCaptureScan else { return }
+        await Task.yield()
+    }
+}
+
 @Test
 @MainActor
 func studioStoreUsesPreviewTransportForDefaultDestination() {
@@ -306,6 +338,75 @@ func rtmpStreamStartRetriesTransientFailures() async {
     #expect(store.streamStartMaxAttempts == 3)
     #expect(pipeline.startCount == 3)
     #expect(store.events.contains { $0.title == "Retrying RTMP Publish" })
+}
+
+@Test
+@MainActor
+func liveRTMPDisconnectStopsOldPublisherAndRecoversWithBoundedRetry() async {
+    let pipeline = SessionRecoveryMediaPipeline()
+    let store = StudioStore(
+        mediaPipeline: pipeline,
+        streamStartRetryPolicy: StreamStartRetryPolicy(maxAttempts: 3, backoffMilliseconds: [1, 1])
+    )
+    store.destination = StreamDestination(
+        name: "Twitch",
+        rtmpURL: "rtmps://live.example.com/app/sk_live_secret"
+    )
+
+    store.startStream()
+    await waitUntilStreamIsLive(store)
+    #expect(pipeline.startStreamCount == 1)
+
+    pipeline.failSession("RTMP connection closed by the server.", recoveryStartFailures: 2)
+    store.advanceDirector()
+    #expect(store.isStreamConnecting)
+
+    for _ in 0..<1_000 {
+        guard !store.streamState.isLive || pipeline.startStreamCount < 4 else { break }
+        await Task.yield()
+    }
+
+    #expect(store.streamState == .live)
+    #expect(pipeline.stopStreamCount == 1)
+    #expect(pipeline.startStreamCount == 4)
+    #expect(store.streamStartAttempt == 3)
+    #expect(store.events.contains { $0.title == "Stream interrupted" })
+    #expect(store.events.contains { $0.title == "Stream recovered" })
+    #expect(!store.events.contains { $0.title == "Stream recovery failed" })
+
+    store.stopStream()
+    await waitUntilStreamIsOffline(store)
+}
+
+@Test
+@MainActor
+func liveRTMPRecoveryEndsInTruthfulFailureAfterRetryBudget() async {
+    let pipeline = SessionRecoveryMediaPipeline()
+    let store = StudioStore(
+        mediaPipeline: pipeline,
+        streamStartRetryPolicy: StreamStartRetryPolicy(maxAttempts: 2, backoffMilliseconds: [1])
+    )
+    store.destination = StreamDestination(
+        name: "Twitch",
+        rtmpURL: "rtmps://live.example.com/app/sk_live_secret"
+    )
+
+    store.startStream()
+    await waitUntilStreamIsLive(store)
+    pipeline.failSession("RTMP connection failed.", recoveryStartFailures: 3)
+    store.advanceDirector()
+
+    for _ in 0..<1_000 {
+        if case .failed = store.streamState { break }
+        await Task.yield()
+    }
+
+    #expect(store.streamState == .failed("Transient recovery failure 3"))
+    #expect(pipeline.stopStreamCount == 1)
+    #expect(pipeline.startStreamCount == 3)
+    #expect(store.streamStartAttempt == 2)
+    #expect(store.events.contains { $0.title == "Stream recovery failed" })
+    #expect(!store.canStopStream)
 }
 
 @Test
@@ -638,6 +739,67 @@ func recordingFailureDuringLiveStreamFailsRecordingOnly() async {
 
 @Test
 @MainActor
+func sharedCaptureFailureStopsRecordingBeforeStreamRecovery() async {
+    let pipeline = SharedCaptureFailureMediaPipeline()
+    let store = StudioStore(
+        mediaPipeline: pipeline,
+        preferences: StudioPreferences(recordWhileStreaming: true),
+        streamStartRetryPolicy: StreamStartRetryPolicy(maxAttempts: 2, backoffMilliseconds: [1])
+    )
+    store.destination = StreamDestination(
+        name: "Twitch",
+        rtmpURL: "rtmps://live.example.com/app/sk_live_secret"
+    )
+
+    store.startStream()
+    await waitUntilStreamIsLive(store)
+    await waitUntilRecordingIsActive(store)
+    #expect(pipeline.transitions == ["startStream", "startRecording"])
+
+    pipeline.recordingFailureDetail = "Shared camera capture failed while recording"
+    pipeline.streamFailureDetail = "Shared camera capture failed while publishing"
+    store.advanceDirector()
+
+    for _ in 0..<100 {
+        guard store.recordingState != .failed("Shared camera capture failed while recording") else { break }
+        await Task.yield()
+    }
+
+    #expect(store.recordingState == .failed("Shared camera capture failed while recording"))
+    #expect(store.streamState.isLive)
+    #expect(pipeline.startStreamCount == 1)
+    #expect(pipeline.transitions == ["startStream", "startRecording", "stopRecording"])
+    #expect(store.events.contains {
+        $0.kind == .warning
+            && $0.title == "Recording failed"
+            && $0.detail == "Shared camera capture failed while recording"
+    })
+
+    store.advanceDirector()
+    for _ in 0..<100 {
+        if case .failed = store.streamState, !store.isStreamStopping { break }
+        await Task.yield()
+    }
+
+    #expect(store.recordingState == .failed("Shared camera capture failed while recording"))
+    #expect(store.streamState == .failed("Shared camera capture failed while publishing"))
+    #expect(pipeline.startStreamCount == 1)
+    #expect(pipeline.transitions == ["startStream", "startRecording", "stopRecording", "stopStream"])
+    #expect(store.events.contains {
+        $0.kind == .warning
+            && $0.title == "Recording failed"
+            && $0.detail == "Shared camera capture failed while recording"
+    })
+    #expect(store.events.contains {
+        $0.kind == .warning
+            && $0.title == "Stream failed"
+            && $0.detail == "Shared camera capture failed while publishing"
+    })
+    #expect(!store.events.contains { $0.title == "Stream recovered" })
+}
+
+@Test
+@MainActor
 func stopRecordingWithFailureDetailReportsFailedInsteadOfStopped() async {
     let pipeline = ConfigurableMediaPipeline()
     let store = StudioStore(mediaPipeline: pipeline)
@@ -658,4 +820,252 @@ func stopRecordingWithFailureDetailReportsFailedInsteadOfStopped() async {
     #expect(!store.events.contains {
         $0.title == "Recording stopped" && $0.detail == "Local archive closed."
     })
+}
+
+@Test
+@MainActor
+func lifecycleShutdownWhenIdleStopsMonitoringWithoutTouchingMediaPipeline() async {
+    let pipeline = LifecycleTrackingMediaPipeline()
+    let signalProvider = MutableSignalProvider()
+    let report = CapturePreflightReport(
+        devices: [
+            CaptureDeviceInfo(
+                id: "microphone-1",
+                kind: .microphone,
+                name: "Studio Mic",
+                permission: .granted
+            )
+        ],
+        summary: "Microphone is ready."
+    )
+    let store = StudioStore(
+        mediaPipeline: pipeline,
+        captureDeviceProvider: FixedCaptureDeviceProvider(report: report),
+        signalProvider: signalProvider
+    )
+    store.scanCaptureDevices()
+    await waitUntilCaptureScanCompletes(store)
+    store.startSourceMonitoring()
+    #expect(signalProvider.startCount == 1)
+
+    await store.shutdownForLifecycle()
+
+    #expect(pipeline.stopStreamCount == 0)
+    #expect(pipeline.stopRecordingCount == 0)
+    #expect(signalProvider.stopCount == 1)
+    #expect(store.streamState == .offline)
+    #expect(store.recordingState == .stopped)
+}
+
+@Test
+@MainActor
+func lifecycleShutdownStopsActiveStreamAndDirector() async {
+    let pipeline = LifecycleTrackingMediaPipeline()
+    let signalProvider = ConfigurableSignalProvider()
+    let store = StudioStore(
+        mediaPipeline: pipeline,
+        signalProvider: signalProvider,
+        isDirectorRuntimeEnabled: true
+    )
+    store.startStream()
+    await waitUntilStreamIsLive(store)
+    #expect(store.streamState.isLive)
+    #expect(signalProvider.startCount == 1)
+
+    await store.shutdownForLifecycle()
+
+    #expect(pipeline.stopStreamCount == 1)
+    #expect(pipeline.stopRecordingCount == 0)
+    #expect(signalProvider.stopCount == 1)
+    #expect(store.streamState == .offline)
+    #expect(store.recordingState == .stopped)
+    #expect(!store.isStreamStopping)
+}
+
+@Test
+@MainActor
+func lifecycleShutdownStopsActiveRecording() async {
+    let pipeline = LifecycleTrackingMediaPipeline()
+    let store = StudioStore(mediaPipeline: pipeline)
+    store.startRecording()
+    await waitUntilRecordingIsActive(store)
+    #expect(store.recordingState == .recording)
+
+    await store.shutdownForLifecycle()
+
+    #expect(pipeline.stopStreamCount == 0)
+    #expect(pipeline.stopRecordingCount == 1)
+    #expect(store.streamState == .offline)
+    #expect(store.recordingState == .stopped)
+    #expect(!store.isRecordingStopping)
+}
+
+@Test
+@MainActor
+func lifecycleShutdownStopsStreamBeforeSharedRecording() async {
+    let pipeline = LifecycleTrackingMediaPipeline()
+    let store = StudioStore(mediaPipeline: pipeline)
+    store.startStream()
+    await waitUntilStreamIsLive(store)
+    store.startRecording()
+    await waitUntilRecordingIsActive(store)
+    #expect(store.streamState.isLive)
+    #expect(store.recordingState == .recording)
+
+    await store.shutdownForLifecycle()
+
+    #expect(pipeline.transitions == [
+        "startStream",
+        "startRecording",
+        "stopStream",
+        "stopRecording"
+    ])
+    #expect(store.streamState == .offline)
+    #expect(store.recordingState == .stopped)
+}
+
+@Test
+@MainActor
+func lifecycleShutdownCancelsInFlightStreamStartBeforeStoppingPipeline() async {
+    let pipeline = LifecycleTrackingMediaPipeline()
+    pipeline.suspendsStreamStart = true
+    let store = StudioStore(mediaPipeline: pipeline)
+    store.startStream()
+    await pipeline.waitUntilStreamStartCalled()
+    #expect(store.isStreamConnecting)
+
+    await store.shutdownForLifecycle()
+
+    #expect(pipeline.streamStartCancellationCount == 1)
+    #expect(pipeline.stopStreamCount == 1)
+    #expect(pipeline.transitions == ["startStream", "stopStream"])
+    #expect(store.streamState == .offline)
+    #expect(!store.isStreamStopping)
+}
+
+@Test
+@MainActor
+func lifecycleShutdownCancelsInFlightRecordingStartBeforeStoppingPipeline() async {
+    let pipeline = LifecycleTrackingMediaPipeline()
+    pipeline.suspendsRecordingStart = true
+    let store = StudioStore(mediaPipeline: pipeline)
+    store.startRecording()
+    await pipeline.waitUntilRecordingStartCalled()
+    #expect(store.recordingState == .starting)
+
+    await store.shutdownForLifecycle()
+
+    #expect(pipeline.recordingStartCancellationCount == 1)
+    #expect(pipeline.stopRecordingCount == 1)
+    #expect(pipeline.transitions == ["startRecording", "stopRecording"])
+    #expect(store.recordingState == .stopped)
+    #expect(!store.isRecordingStopping)
+}
+
+@Test
+@MainActor
+func concurrentLifecycleShutdownsAwaitOneReusableTeardown() async {
+    let pipeline = LifecycleTrackingMediaPipeline()
+    pipeline.holdsStreamStop = true
+    let store = StudioStore(mediaPipeline: pipeline)
+    store.startStream()
+    await waitUntilStreamIsLive(store)
+
+    var completedShutdownCount = 0
+    let firstShutdown = Task { @MainActor in
+        await store.shutdownForLifecycle()
+        completedShutdownCount += 1
+    }
+    await pipeline.waitUntilStreamStopCalled()
+    let secondShutdown = Task { @MainActor in
+        await store.shutdownForLifecycle()
+        completedShutdownCount += 1
+    }
+    await Task.yield()
+
+    #expect(pipeline.stopStreamCount == 1)
+    #expect(completedShutdownCount == 0)
+
+    pipeline.finishStreamStop()
+    await firstShutdown.value
+    await secondShutdown.value
+    await store.shutdownForLifecycle()
+
+    #expect(completedShutdownCount == 2)
+    #expect(pipeline.stopStreamCount == 1)
+    #expect(pipeline.stopRecordingCount == 0)
+    #expect(store.streamState == .offline)
+    #expect(store.recordingState == .stopped)
+
+    store.startStream()
+    await waitUntilStreamIsLive(store)
+
+    #expect(store.streamState.isLive)
+    #expect(pipeline.startStreamCount == 2)
+
+    pipeline.holdsStreamStop = false
+    await store.shutdownForLifecycle()
+}
+
+@Test
+@MainActor
+func repeatedStreamLifecycleLeavesNoPendingOwnershipOrStopState() async {
+    let pipeline = LifecycleTrackingMediaPipeline()
+    let store = StudioStore(mediaPipeline: pipeline)
+    let cycleCount = 100
+
+    for _ in 0..<cycleCount {
+        store.startStream()
+        await waitUntilStreamIsLive(store)
+        #expect(store.streamState.isLive)
+
+        store.stopStream()
+        await waitUntilStreamIsOffline(store)
+        #expect(store.streamState == .offline)
+        #expect(!store.isStreamStopping)
+    }
+
+    #expect(pipeline.startStreamCount == cycleCount)
+    #expect(pipeline.stopStreamCount == cycleCount)
+    #expect(pipeline.transitions.count == cycleCount * 2)
+    #expect(store.recordingState == .stopped)
+
+    await store.shutdownForLifecycle()
+
+    #expect(pipeline.stopStreamCount == cycleCount)
+}
+
+private final class SharedCaptureFailureMediaPipeline: MediaPipeline, @unchecked Sendable {
+    let streamTransport: StreamTransportKind = .rtmpPublish
+    var currentHealth: StreamHealth? = StreamHealth(
+        bitrateKbps: 4_000,
+        publishState: .publishing,
+        captureFPS: 30,
+        microphoneDeliveryState: .active
+    )
+    var recordingFailureDetail: String?
+    var streamFailureDetail: String?
+    private(set) var startStreamCount = 0
+    private(set) var transitions: [String] = []
+
+    func update(configuration: MediaPipelineConfiguration) {}
+
+    func startStream(destination: StreamDestination) async throws {
+        startStreamCount += 1
+        transitions.append("startStream")
+    }
+
+    func stopStream() async {
+        transitions.append("stopStream")
+        streamFailureDetail = nil
+    }
+
+    func startRecording() async throws -> URL {
+        transitions.append("startRecording")
+        return URL(fileURLWithPath: "/tmp/macstream-shared-capture-failure.mov")
+    }
+
+    func stopRecording() async {
+        transitions.append("stopRecording")
+    }
 }

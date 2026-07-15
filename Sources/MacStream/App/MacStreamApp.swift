@@ -2,10 +2,154 @@ import AppKit
 import SwiftUI
 import MacStreamCore
 
+@MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
+    var prepareForTermination: (() async -> Void)?
+    var prepareForSleep: (() async -> Void)?
+    var resumeAfterWake: (() async -> Void)?
+    var openStudioWindow: (() -> Void)?
+    var isStudioWindowVisible = false
+
+    private static let terminationTimeout: Duration = .seconds(15)
+
+    private var terminationTask: Task<Void, Never>?
+    private var terminationTimeoutTask: Task<Void, Never>?
+    private var terminationAttemptID: UUID?
+    private var sleepPreparationTask: Task<Void, Never>?
+
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.regular)
-        NSApp.activate(ignoringOtherApps: true)
+        let workspaceNotifications = NSWorkspace.shared.notificationCenter
+        workspaceNotifications.addObserver(
+            self,
+            selector: #selector(workspaceWillSleep(_:)),
+            name: NSWorkspace.willSleepNotification,
+            object: nil
+        )
+        workspaceNotifications.addObserver(
+            self,
+            selector: #selector(workspaceDidWake(_:)),
+            name: NSWorkspace.didWakeNotification,
+            object: nil
+        )
+
+        Task { @MainActor [weak self] in
+            self?.openStudioWindowIfNeeded()
+        }
+    }
+
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        if !flag {
+            openStudioWindowIfNeeded()
+        }
+        return true
+    }
+
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        guard let prepareForTermination else { return .terminateNow }
+        guard terminationTask == nil else { return .terminateLater }
+
+        let attemptID = UUID()
+        terminationAttemptID = attemptID
+        terminationTask = Task { [weak self] in
+            if let sleepPreparationTask = self?.sleepPreparationTask {
+                await sleepPreparationTask.value
+            }
+            await prepareForTermination()
+            guard let self, self.terminationAttemptID == attemptID else { return }
+            self.terminationTimeoutTask?.cancel()
+            self.terminationTimeoutTask = nil
+            self.terminationAttemptID = nil
+            sender.reply(toApplicationShouldTerminate: true)
+        }
+        terminationTimeoutTask = Task { [weak self] in
+            do {
+                try await Task.sleep(for: Self.terminationTimeout)
+            } catch {
+                return
+            }
+            guard let self, self.terminationAttemptID == attemptID else { return }
+            self.terminationAttemptID = nil
+            self.terminationTask?.cancel()
+            self.terminationTask = nil
+            self.terminationTimeoutTask = nil
+            sender.reply(toApplicationShouldTerminate: false)
+        }
+        return .terminateLater
+    }
+
+    func applicationWillTerminate(_ notification: Notification) {
+        terminationTimeoutTask?.cancel()
+        NSWorkspace.shared.notificationCenter.removeObserver(self)
+    }
+
+    @objc
+    private func workspaceWillSleep(_ notification: Notification) {
+        guard sleepPreparationTask == nil, let prepareForSleep else { return }
+
+        sleepPreparationTask = Task { [weak self] in
+            await prepareForSleep()
+            self?.sleepPreparationTask = nil
+        }
+    }
+
+    @objc
+    private func workspaceDidWake(_ notification: Notification) {
+        guard terminationTask == nil, isStudioWindowVisible else { return }
+        let pendingSleepPreparation = sleepPreparationTask
+        Task { [weak self] in
+            if let pendingSleepPreparation {
+                await pendingSleepPreparation.value
+            }
+            guard let self,
+                  self.terminationTask == nil,
+                  self.isStudioWindowVisible
+            else {
+                return
+            }
+            await self.resumeAfterWake?()
+        }
+    }
+
+    func refreshStudioWindowVisibility() -> Bool {
+        let isVisible = NSApp.windows.contains { window in
+            window.isVisible && isStudioWindow(window)
+        }
+        isStudioWindowVisible = isVisible
+        return isVisible
+    }
+
+    private func openStudioWindowIfNeeded() {
+        guard terminationTask == nil, !refreshStudioWindowVisibility() else { return }
+        if presentExistingStudioWindow() {
+            return
+        }
+
+        openStudioWindow?()
+        DispatchQueue.main.async { [weak self] in
+            self?.presentExistingStudioWindow()
+        }
+    }
+
+    @discardableResult
+    private func presentExistingStudioWindow() -> Bool {
+        guard let window = NSApp.windows.first(where: isStudioWindow) else {
+            return false
+        }
+
+        if window.frame.width < 2 || window.frame.height < 2 {
+            window.setContentSize(NSSize(width: 1180, height: 760))
+            window.center()
+        }
+        NSApp.unhideWithoutActivation()
+        window.orderFront(nil)
+        isStudioWindowVisible = window.isVisible
+        return true
+    }
+
+    private func isStudioWindow(_ window: NSWindow) -> Bool {
+        window.identifier?.rawValue.hasPrefix("studio") == true
+            || window.title == "MacStream"
     }
 }
 
@@ -13,6 +157,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 struct MacStreamApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     @Environment(\.scenePhase) private var scenePhase
+    @Environment(\.openWindow) private var openWindow
     @AppStorage("recordWhileStreaming") private var recordWhileStreaming = false
     @AppStorage("directorCountdownSeconds") private var directorCountdownSeconds = 2.0
     @AppStorage("performanceMode") private var performanceModeRaw = StudioPerformanceMode.balanced.rawValue
@@ -29,10 +174,6 @@ struct MacStreamApp: App {
     @AppStorage("microphoneDeviceIDPreference") private var savedMicrophoneDeviceID = ""
     @AppStorage("cameraEnhancementSettings") private var cameraEnhancementSettingsJSON = ""
     @AppStorage("layoutSettings") private var layoutSettingsJSON = ""
-    @AppStorage("localIntelligenceProviderKind") private var localIntelligenceProviderKindRaw = LocalIntelligenceProviderKind.rules.rawValue
-    @AppStorage("openAICompatibleBaseURL") private var openAICompatibleBaseURL = OpenAICompatibleProviderConfiguration.defaultBaseURL.absoluteString
-    @AppStorage("openAICompatibleModel") private var openAICompatibleModel = OpenAICompatibleProviderConfiguration.defaultModel
-    @AppStorage("openAICompatibleTimeout") private var openAICompatibleTimeout = OpenAICompatibleProviderConfiguration.defaultTimeout
     @State private var store = StudioStore(
         mediaPipeline: SystemMediaPipeline(),
         intelligenceProvider: RuleBasedLocalIntelligenceProvider(),
@@ -41,20 +182,26 @@ struct MacStreamApp: App {
     )
     @State private var updater = SparkleUpdater()
     @State private var didApplyLaunchSetupDefaults = false
+    @State private var didApplyStartupConfiguration = false
+    @State private var lastPersistedDestination: StreamDestination?
     @State private var destinationSaveTask: Task<Void, Never>?
     @State private var sourceConfigurationSaveTask: Task<Void, Never>?
     private static let persistenceDebounceDuration: Duration = .milliseconds(350)
 
     var body: some Scene {
+        let _ = configureApplicationLifecycle()
+
         Window("MacStream", id: "studio") {
             studioWindowContent
         }
+        .defaultSize(width: 1180, height: 760)
+        .restorationBehavior(.disabled)
         .windowStyle(.titleBar)
         .commands {
             CommandGroup(after: .appInfo) {
                 CheckForUpdatesCommand(updater: updater)
             }
-            CommandGroup(after: .newItem) {
+            CommandGroup(replacing: .newItem) {
                 Button(streamCommandTitle) {
                     if store.canStopStream {
                         store.stopStream()
@@ -126,11 +273,41 @@ struct MacStreamApp: App {
     private var studioWindowContent: some View {
         let baseContent = ContentView(store: store)
             .frame(minWidth: 1180, minHeight: 760)
-            .task {
+            .onAppear {
+                appDelegate.isStudioWindowVisible = true
+                guard !didApplyStartupConfiguration else { return }
+                didApplyStartupConfiguration = true
                 applyStartupConfiguration()
+            }
+            .onDisappear {
+                Task {
+                    await handleStudioWindowDisappearance()
+                }
             }
 
         return persistenceObservers(preferenceObservers(baseContent))
+    }
+
+    private func handleStudioWindowDisappearance() async {
+        await Task.yield()
+        guard !appDelegate.refreshStudioWindowVisibility() else { return }
+        await store.shutdownForLifecycle()
+    }
+
+    private func configureApplicationLifecycle() {
+        appDelegate.prepareForTermination = {
+            await store.shutdownForLifecycle()
+        }
+        appDelegate.prepareForSleep = {
+            await store.shutdownForLifecycle()
+        }
+        appDelegate.resumeAfterWake = {
+            store.startSourceMonitoring()
+            store.scanCaptureDevices()
+        }
+        appDelegate.openStudioWindow = {
+            openWindow(id: "studio")
+        }
     }
 
     private func preferenceObservers<Content: View>(_ content: Content) -> some View {
@@ -164,7 +341,6 @@ struct MacStreamApp: App {
 
     private func applyStartupConfiguration() {
         applyLaunchSetupDefaultsIfNeeded()
-        applySavedLocalIntelligenceProvider()
         applySavedDestination()
         applySavedSourceConfiguration()
         applySavedScreenCaptureTargetPreference()
@@ -184,58 +360,47 @@ struct MacStreamApp: App {
         )
     }
 
-    private func applySavedLocalIntelligenceProvider() {
-        _ = store.setIntelligenceProvider(makeLocalIntelligenceProvider())
-    }
-
-    private func makeLocalIntelligenceProvider() -> any LocalIntelligenceProvider {
-        let kind = LocalIntelligenceProviderKind(rawValue: localIntelligenceProviderKindRaw) ?? .rules
-        switch kind {
-        case .rules:
-            return RuleBasedLocalIntelligenceProvider()
-        case .mlx:
-            return MLXLocalIntelligenceProvider()
-        case .openAICompatible:
-            return OpenAICompatibleLocalIntelligenceProvider(
-                configuration: OpenAICompatibleProviderConfiguration(
-                    baseURL: URL(string: openAICompatibleBaseURL) ?? OpenAICompatibleProviderConfiguration.defaultBaseURL,
-                    model: openAICompatibleModel,
-                    apiKey: MacStreamProviderKeychain.loadOpenAICompatibleAPIKey(),
-                    timeout: openAICompatibleTimeout
-                )
-            )
-        }
-    }
-
     private func applySavedDestination() {
         let mode = StreamDestinationMode(rawValue: destinationModeRaw) ?? .preview
+        // Startup intentionally leaves RTMP endpoints blank because Security.framework reads can block first-window rendering. Restoration is explicit in Settings.
         let rtmpURL = mode == .rtmp
-            ? (MacStreamDestinationKeychain.loadRTMPURL() ?? "")
+            ? ""
             : "preview"
         let fallbackName = mode == .rtmp ? "RTMP Destination" : "Preview Session"
         let trimmedName = destinationName.trimmingCharacters(in: .whitespacesAndNewlines)
 
-        store.applySavedDestination(
-            StreamDestination(
-                mode: mode,
-                name: trimmedName.isEmpty ? fallbackName : trimmedName,
-                rtmpURL: rtmpURL
-            )
+        let savedDestination = StreamDestination(
+            mode: mode,
+            name: trimmedName.isEmpty ? fallbackName : trimmedName,
+            rtmpURL: rtmpURL
         )
+        lastPersistedDestination = savedDestination
+        store.applySavedDestination(savedDestination)
     }
 
     private func saveDestination(_ destination: StreamDestination) {
+        guard destination != lastPersistedDestination else { return }
+
+        let endpointChanged = lastPersistedDestination?.mode != destination.mode
+            || lastPersistedDestination?.rtmpURL != destination.rtmpURL
         destinationModeRaw = destination.mode.rawValue
         destinationName = destination.name
 
-        if destination.isPersistableEndpoint {
+        var didPersistEndpoint = true
+        if endpointChanged, destination.isPersistableEndpoint {
             if !MacStreamDestinationKeychain.saveRTMPURL(destination.rtmpURL) {
+                didPersistEndpoint = false
                 store.reportPersistenceFailure("RTMP destination could not be saved to Keychain.")
             }
-        } else {
+        } else if endpointChanged {
             if !MacStreamDestinationKeychain.deleteRTMPURL() {
+                didPersistEndpoint = false
                 store.reportPersistenceFailure("RTMP destination could not be removed from Keychain.")
             }
+        }
+
+        if didPersistEndpoint {
+            lastPersistedDestination = destination
         }
     }
 

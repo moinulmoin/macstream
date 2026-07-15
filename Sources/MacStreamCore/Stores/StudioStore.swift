@@ -80,6 +80,7 @@ public final class StudioStore {
     @ObservationIgnored private var sourceMonitoringTask: Task<Void, Never>?
     @ObservationIgnored private var streamStartTask: Task<Void, Never>?
     @ObservationIgnored private var streamStartID: UUID?
+    @ObservationIgnored private var streamStopTask: Task<Void, Never>?
     @ObservationIgnored private var setupGenerationTask: Task<Void, Never>?
     @ObservationIgnored private var setupGenerationID: UUID?
     @ObservationIgnored private var recommendationExplanationTask: Task<Void, Never>?
@@ -88,6 +89,8 @@ public final class StudioStore {
     @ObservationIgnored private var pendingAutoRecommendation: DirectorRecommendation?
     @ObservationIgnored private var recordingStartTask: Task<Void, Never>?
     @ObservationIgnored private var recordingStartID: UUID?
+    @ObservationIgnored private var recordingStopTask: Task<Void, Never>?
+    @ObservationIgnored private var lifecycleShutdownTask: Task<Void, Never>?
     @ObservationIgnored private var recordingOwnedByStream = false
     @ObservationIgnored private var lastAutomaticClipMarkerAt: Date?
     @ObservationIgnored private var lastPerformanceWarningAt: Date?
@@ -95,6 +98,7 @@ public final class StudioStore {
     @ObservationIgnored private var activeHealthDegradationReason: String?
     @ObservationIgnored private var lastObservedDroppedFrames = 0
     @ObservationIgnored private var captureHealthRecoverySampleCount = 0
+    @ObservationIgnored private var zeroCaptureFPSObservedAt: ContinuousClock.Instant?
     @ObservationIgnored private var hasOpenCaptureSession = false
     @ObservationIgnored private var lastAppliedSignalConfiguration: SignalSamplingConfiguration?
     @ObservationIgnored private var lastAppliedMediaConfiguration: MediaPipelineConfiguration?
@@ -102,6 +106,7 @@ public final class StudioStore {
     @ObservationIgnored private var isRevertingDestinationChange = false
     @ObservationIgnored private var activeOutputCaptureSettings: OutputCaptureSettings?
     private static let requiredCaptureHealthRecoverySamples = 2
+    static let zeroCaptureFPSPressureDelay: Duration = .seconds(2)
     private static let sourceMonitoringSampleIntervalMilliseconds = 250
     private static let maxRetainedEvents = 40
     private static let maxClipMarkerReasonCharacters = 240
@@ -186,6 +191,7 @@ public final class StudioStore {
         !streamState.isLive
             && !isStreamConnecting
             && !isStreamStopping
+            && lifecycleShutdownTask == nil
             && !isRecordingStarting
             && !isRecordingStopping
             && destination.isReadyToStart
@@ -212,6 +218,7 @@ public final class StudioStore {
         recordingState != .recording
             && recordingState != .starting
             && !isRecordingStopping
+            && lifecycleShutdownTask == nil
             && !isStreamConnecting
             && !isStreamStopping
             && recordingStartBlockedReason == nil
@@ -270,8 +277,10 @@ public final class StudioStore {
     public var shouldUseMediaOutputPreview: Bool {
         guard mediaPreviewFrameSource != nil else { return false }
         let isRealStreamActive = streamTransport == .rtmpPublish
-            && (streamState.isLive || isStreamStopping)
-        let isRecordingActive = recordingState == .recording || isRecordingStopping
+            && (streamState.isLive || isStreamConnecting || isStreamStopping)
+        let isRecordingActive = recordingState == .starting
+            || recordingState == .recording
+            || isRecordingStopping
         return isRealStreamActive || isRecordingActive
     }
 
@@ -871,7 +880,6 @@ public final class StudioStore {
                     startID: startID
                 )
                 guard isCurrentStreamStart(startID) else {
-                    await mediaPipeline.stopStream()
                     return
                 }
                 streamStartTask = nil
@@ -916,7 +924,8 @@ public final class StudioStore {
     public func stopStream() {
         guard canStopStream else { return }
         let shouldStopOwnedRecording = recordingOwnedByStream
-        streamStartTask?.cancel()
+        let pendingStartTask = streamStartTask
+        pendingStartTask?.cancel()
         streamStartTask = nil
         streamStartID = nil
         streamStartAttempt = 0
@@ -925,7 +934,8 @@ public final class StudioStore {
         clearRecommendation(cancelAutoCue: false)
         cancelPendingAutoCue()
         stopDirectorLoop()
-        Task {
+        let stopTask = Task {
+            await pendingStartTask?.value
             await mediaPipeline.stopStream()
             isStreamStopping = false
             streamState = .offline
@@ -939,7 +949,9 @@ public final class StudioStore {
             addEvent(kind: .stream, title: "Offline", detail: "Stream stopped.")
             endCaptureSessionIfIdle()
             releaseOutputCaptureSettingsIfIdle()
+            streamStopTask = nil
         }
+        streamStopTask = stopTask
     }
 
     public func startRecording() {
@@ -955,8 +967,8 @@ public final class StudioStore {
         lockOutputCaptureSettingsIfNeeded()
         prepareCaptureSessionIfIdle()
         sampleSystemPressure()
-        applyPerformanceConfiguration()
         recordingState = .starting
+        applyPerformanceConfiguration()
         cancelSetupGenerationIfNeeded(reason: "Stop recording before generating local setup rules.")
         addEvent(kind: .stream, title: "Recording", detail: "Preparing local archive.")
 
@@ -964,7 +976,6 @@ public final class StudioStore {
             do {
                 let url = try await mediaPipeline.startRecording()
                 guard isCurrentRecordingStart(startID) else {
-                    await mediaPipeline.stopRecording()
                     return
                 }
                 recordingStartTask = nil
@@ -987,6 +998,7 @@ public final class StudioStore {
                 recordingStartID = nil
                 recordingOwnedByStream = false
                 recordingState = .failed(error.localizedDescription)
+                applyPerformanceConfiguration()
                 releaseOutputCaptureSettingsIfIdle()
                 syncMediaHealthLoop()
                 if !streamState.isLive {
@@ -999,12 +1011,14 @@ public final class StudioStore {
 
     public func stopRecording() {
         guard canStopRecording else { return }
-        recordingStartTask?.cancel()
+        let pendingStartTask = recordingStartTask
+        pendingStartTask?.cancel()
         recordingStartTask = nil
         recordingStartID = nil
         recordingOwnedByStream = false
         isRecordingStopping = true
-        Task {
+        let stopTask = Task {
+            await pendingStartTask?.value
             await mediaPipeline.stopRecording()
             let failureDetail = mediaPipeline.recordingFailureDetail
             isRecordingStopping = false
@@ -1013,6 +1027,7 @@ public final class StudioStore {
             } else {
                 recordingState = .stopped
             }
+            applyPerformanceConfiguration()
             if !streamState.isLive {
                 resetCaptureHealthPressure()
             }
@@ -1024,7 +1039,59 @@ public final class StudioStore {
             }
             endCaptureSessionIfIdle()
             releaseOutputCaptureSettingsIfIdle()
+            recordingStopTask = nil
         }
+        recordingStopTask = stopTask
+    }
+
+    public func shutdownForLifecycle() async {
+        if let lifecycleShutdownTask {
+            await lifecycleShutdownTask.value
+            return
+        }
+
+        let shutdownTask = Task {
+            await performLifecycleShutdown()
+        }
+        lifecycleShutdownTask = shutdownTask
+        await shutdownTask.value
+        lifecycleShutdownTask = nil
+    }
+
+    private func performLifecycleShutdown() async {
+        stopSourceMonitoring()
+        stopDirectorLoop()
+        stopMediaHealthLoopIfNeeded()
+
+        let pendingStreamStart = streamStartTask
+        let pendingRecordingStart = recordingStartTask
+        streamStartID = nil
+        recordingStartID = nil
+        pendingStreamStart?.cancel()
+        pendingRecordingStart?.cancel()
+        await pendingStreamStart?.value
+        await pendingRecordingStart?.value
+
+        if streamStopTask == nil, canStopStream {
+            stopStream()
+        }
+        if let streamStopTask {
+            await streamStopTask.value
+        }
+
+        if recordingStopTask == nil, canStopRecording {
+            stopRecording()
+        }
+        if let recordingStopTask {
+            await recordingStopTask.value
+        }
+
+        stopMediaHealthLoopIfNeeded()
+        clearRecommendation()
+        health = StreamHealth()
+        resetCaptureHealthPressure()
+        endCaptureSessionIfIdle()
+        releaseOutputCaptureSettingsIfIdle()
     }
 
     public func toggleSource(_ source: StudioSource) {
@@ -1502,6 +1569,7 @@ public final class StudioStore {
                 self?.advanceSourceMonitoring()
             }
         }
+        applyPerformanceConfiguration()
         advanceSourceMonitoring()
     }
 
@@ -1512,24 +1580,48 @@ public final class StudioStore {
     }
 
     func advanceSourceMonitoring() {
+        guard !shouldUseMediaPipelineMicrophoneCapture else {
+            return
+        }
+
         guard sourceMonitoringTask != nil || shouldSampleSourceMonitoringInput else {
-            latestSignals = signalSnapshotApplyingSourceState(SignalSnapshot(isMicMuted: true))
-            health.audioLevel = latestSignals.speechLevel
+            publishSourceMonitoringSnapshot(SignalSnapshot(isMicMuted: true))
             stopSignalProviderIfNeeded()
             return
         }
 
         guard shouldSampleSourceMonitoringInput else {
-            latestSignals = signalSnapshotApplyingSourceState(SignalSnapshot(isMicMuted: true))
-            health.audioLevel = latestSignals.speechLevel
+            publishSourceMonitoringSnapshot(SignalSnapshot(isMicMuted: true))
             stopSignalProviderIfNeeded()
             return
         }
 
-        applyPerformanceConfiguration()
         startSignalProviderIfNeeded()
-        latestSignals = signalSnapshotApplyingSourceState(signalProvider.snapshot())
-        health.audioLevel = latestSignals.speechLevel
+        publishSourceMonitoringSnapshot(signalProvider.snapshot())
+    }
+
+    private func publishSourceMonitoringSnapshot(_ snapshot: SignalSnapshot) {
+        let nextSnapshot = signalSnapshotApplyingSourceState(snapshot)
+        if !Self.hasSameSourceMonitoringValues(nextSnapshot, latestSignals) {
+            latestSignals = nextSnapshot
+        }
+        if health.audioLevel != nextSnapshot.speechLevel {
+            health.audioLevel = nextSnapshot.speechLevel
+        }
+    }
+
+    private static func hasSameSourceMonitoringValues(
+        _ lhs: SignalSnapshot,
+        _ rhs: SignalSnapshot
+    ) -> Bool {
+        lhs.isSpeaking == rhs.isSpeaking
+            && lhs.speechLevel == rhs.speechLevel
+            && lhs.screenMotion == rhs.screenMotion
+            && lhs.hasFace == rhs.hasFace
+            && lhs.activeApplication == rhs.activeApplication
+            && lhs.idleSeconds == rhs.idleSeconds
+            && lhs.isScreenFrozen == rhs.isScreenFrozen
+            && lhs.isMicMuted == rhs.isMicMuted
     }
 
     private func finishCaptureScan(with report: CapturePreflightReport) {
@@ -1630,15 +1722,15 @@ public final class StudioStore {
     }
 
     private var shouldKeepSignalProviderForSourceMonitoring: Bool {
-        sourceMonitoringTask != nil && shouldSampleSourceMonitoringInput
+        sourceMonitoringTask != nil
+            && shouldSampleSourceMonitoringInput
+            && !shouldUseMediaPipelineMicrophoneCapture
     }
 
     private var shouldUseSourceMonitoringSignalConfiguration: Bool {
         sourceMonitoringTask != nil
             && directorLoopTask == nil
-            && !hasActiveMediaCapture
-            && !isStreamConnecting
-            && recordingState != .starting
+            && !shouldUseMediaPipelineMicrophoneCapture
     }
 
     private var shouldSampleSourceMonitoringInput: Bool {
@@ -1654,6 +1746,10 @@ public final class StudioStore {
 
     private var hasActiveMediaCapture: Bool {
         streamState.isLive || recordingState == .recording
+    }
+
+    private var shouldUseMediaPipelineMicrophoneCapture: Bool {
+        hasActiveMediaCapture || isStreamConnecting || recordingState == .starting
     }
 
     private func syncMediaHealthLoop() {
@@ -1688,7 +1784,7 @@ public final class StudioStore {
     }
 
     private func advanceMediaHealthIfNeeded() {
-        if handleStreamFailureIfNeeded() || handleRecordingFailureIfNeeded() {
+        if handleRecordingFailureIfNeeded() || handleStreamFailureIfNeeded() {
             return
         }
 
@@ -1725,6 +1821,12 @@ public final class StudioStore {
             return false
         }
 
+        if streamTransport == .rtmpPublish,
+           mediaPipeline.recordingFailureDetail == nil {
+            beginStreamRecovery(after: detail)
+            return true
+        }
+
         let shouldStopOwnedRecording = recordingOwnedByStream
         addWarningEventIfNeeded(title: "Stream failed", detail: detail)
         isStreamStopping = true
@@ -1733,7 +1835,7 @@ public final class StudioStore {
         resetCaptureHealthPressure()
         cancelPendingAutoCue()
         stopDirectorLoop()
-        Task {
+        let stopTask = Task {
             await mediaPipeline.stopStream()
             isStreamStopping = false
             syncMediaHealthLoop()
@@ -1741,8 +1843,70 @@ public final class StudioStore {
                 stopRecording()
             }
             endCaptureSessionIfIdle()
+            streamStopTask = nil
         }
+        streamStopTask = stopTask
         return true
+    }
+
+    private func beginStreamRecovery(after detail: String) {
+        let recoveryID = UUID()
+        let recoveryDestination = destination
+        let retryPolicy = streamStartRetryPolicy
+        streamStartTask?.cancel()
+        streamStartID = recoveryID
+        streamStartAttempt = 1
+        streamStartMaxAttempts = retryPolicy.maxAttempts
+        streamState = .connecting
+        health = StreamHealth()
+        resetCaptureHealthPressure()
+        cancelPendingAutoCue()
+        stopDirectorLoop()
+        applyPerformanceConfiguration()
+        addWarningEventIfNeeded(title: "Stream interrupted", detail: detail)
+
+        streamStartTask = Task {
+            await mediaPipeline.stopStream()
+            guard isCurrentStreamStart(recoveryID) else { return }
+
+            do {
+                try await startStreamWithRetry(
+                    destination: recoveryDestination,
+                    policy: retryPolicy,
+                    startID: recoveryID
+                )
+                guard isCurrentStreamStart(recoveryID) else { return }
+
+                streamStartTask = nil
+                streamStartID = nil
+                streamState = .live
+                applyPerformanceConfiguration()
+                health = mediaPipeline.currentHealth ?? StreamHealth(
+                    bitrateKbps: 0,
+                    publishState: .handshaking,
+                    captureFPS: currentMediaPipelineConfiguration.framesPerSecond
+                )
+                addEvent(kind: .stream, title: "Stream recovered", detail: recoveryDestination.safeDisplayDetail)
+                startDirectorLoop()
+                syncMediaHealthLoop()
+            } catch {
+                guard isCurrentStreamStart(recoveryID) else { return }
+
+                streamStartTask = nil
+                streamStartID = nil
+                streamState = .failed(error.localizedDescription)
+                applyPerformanceConfiguration()
+                health = StreamHealth()
+                resetCaptureHealthPressure()
+                syncMediaHealthLoop()
+                addEvent(kind: .warning, title: "Stream recovery failed", detail: error.localizedDescription)
+                if recordingOwnedByStream {
+                    stopRecording()
+                }
+                endCaptureSessionIfIdle()
+                releaseOutputCaptureSettingsIfIdle()
+            }
+        }
     }
 
     private func addEvent(kind: StudioEventKind, title: String, detail: String) {
@@ -1875,6 +2039,7 @@ public final class StudioStore {
             isRTMPPublishing: isRTMPPublishing
         )
         signalConfiguration.isMicrophoneEnabled = isSourceEnabled(.microphone)
+            && !shouldUseMediaPipelineMicrophoneCapture
         signalConfiguration.microphoneDeviceID = selectedMicrophoneDeviceID
         signalConfiguration.isScreenMotionEnabled = isSourceEnabled(.screen) && sourceLevel(.screen) > 0
         signalConfiguration.screenCaptureTarget = selectedScreenCaptureTarget
@@ -2504,27 +2669,30 @@ public final class StudioStore {
     }
 
     private func refreshStreamHealth() {
-        if handleStreamFailureIfNeeded() || handleRecordingFailureIfNeeded() {
+        if handleRecordingFailureIfNeeded() || handleStreamFailureIfNeeded() {
             return
         }
         let mediaConfiguration = currentMediaPipelineConfiguration
-        if var pipelineHealth = mediaPipeline.currentHealth {
-            pipelineHealth.audioLevel = latestSignals.speechLevel
-            if pipelineHealth.captureFPS == 0 {
-                pipelineHealth.captureFPS = mediaConfiguration.framesPerSecond
-            }
+        if let pipelineHealth = mediaPipeline.currentHealth {
+            let microphoneSourceLevel = isSourceEnabled(.microphone) ? sourceLevel(.microphone) : 0
+            let scaledMicrophoneLevel = min(max(pipelineHealth.audioLevel * microphoneSourceLevel, 0), 1)
+            latestSignals.speechLevel = scaledMicrophoneLevel
+            latestSignals.isSpeaking = scaledMicrophoneLevel > 0.18
+            latestSignals.isMicMuted = microphoneSourceLevel == 0
+                || pipelineHealth.microphoneDeliveryState == .inactive
+                || pipelineHealth.microphoneDeliveryState == .stalled
             health = pipelineHealth
             applyCaptureHealthPressure()
             return
         }
 
-        health.audioLevel = latestSignals.speechLevel
+        health.audioLevel = shouldUseMediaPipelineMicrophoneCapture ? 0 : latestSignals.speechLevel
         health.bitrateKbps = streamState.isLive && streamTransport != .rtmpPublish
             ? (mediaConfiguration.videoBitrate / 1_000) + Int(latestSignals.screenMotion * 350)
             : 0
         health.outboundBytesPerSecond = 0
         health.publishState = streamState.isLive ? .publishing : .disconnected
-        health.captureFPS = mediaConfiguration.framesPerSecond
+        health.captureFPS = hasActiveMediaCapture ? mediaConfiguration.framesPerSecond : 0
         health.droppedFrames = latestSignals.isScreenFrozen ? health.droppedFrames + 12 : max(health.droppedFrames - 1, 0)
         applyCaptureHealthPressure()
     }
@@ -2532,6 +2700,7 @@ public final class StudioStore {
     private func applyCaptureHealthPressure() {
         guard hasActiveMediaCapture else {
             lastObservedDroppedFrames = health.droppedFrames
+            zeroCaptureFPSObservedAt = nil
             return
         }
 
@@ -2543,10 +2712,28 @@ public final class StudioStore {
         let lowFPSLimit = max(10, Int((Double(targetFPS) * 0.67).rounded(.down)))
         let recoveredFPSLimit = max(10, Int((Double(targetFPS) * 0.8).rounded(.down)))
 
+        let zeroFPSAge: Duration?
+        if health.captureFPS == 0 {
+            let now = ContinuousClock().now
+            if let zeroCaptureFPSObservedAt {
+                zeroFPSAge = now - zeroCaptureFPSObservedAt
+            } else {
+                zeroCaptureFPSObservedAt = now
+                zeroFPSAge = .zero
+            }
+        } else {
+            zeroCaptureFPSObservedAt = nil
+            zeroFPSAge = nil
+        }
+
         let droppedFramePressure = droppedFramesSinceLastSample >= droppedFrameLimit
-        let lowFPSPressure = health.captureFPS > 0 && health.captureFPS < lowFPSLimit
+        let lowFPSPressure = Self.captureFPSIndicatesPressure(
+            health.captureFPS,
+            lowFPSLimit: lowFPSLimit,
+            zeroFPSAge: zeroFPSAge
+        )
         let recoveredSample = droppedFramesSinceLastSample == 0
-            && (health.captureFPS == 0 || health.captureFPS >= recoveredFPSLimit)
+            && health.captureFPS >= recoveredFPSLimit
 
         let nextCaptureUnderPressure: Bool
         if isCaptureUnderPressure {
@@ -2789,7 +2976,18 @@ public final class StudioStore {
         activeHealthDegradationReason = nil
         lastObservedDroppedFrames = 0
         captureHealthRecoverySampleCount = 0
+        zeroCaptureFPSObservedAt = nil
         updateEffectivePerformanceMode()
+    }
+
+    static func captureFPSIndicatesPressure(
+        _ captureFPS: Int,
+        lowFPSLimit: Int,
+        zeroFPSAge: Duration?
+    ) -> Bool {
+        guard captureFPS == 0 else { return captureFPS < lowFPSLimit }
+        guard let zeroFPSAge else { return false }
+        return zeroFPSAge >= zeroCaptureFPSPressureDelay
     }
 }
 

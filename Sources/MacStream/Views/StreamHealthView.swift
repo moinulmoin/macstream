@@ -40,6 +40,9 @@ struct StreamHealthView: View {
                 metric("TX", "\(store.health.outboundBytesPerSecond)", "B/s")
                 metric("Frames", "\(store.health.droppedFrames)", "dropped")
                 metric("Capture", "\(store.health.captureFPS)", "fps")
+                metric("Audio", audioDeliveryTitle, "")
+                metric("Mic", microphoneDeliveryTitle, "")
+                metric("Audio queue", "\(store.health.rtmpAudioAppendRejections)", "rejected")
                 metric("Thermal", store.systemPressure.thermalPressure.title, "")
                 metric("Memory", "\(store.systemPressure.memoryUsedMB)", "MB")
             }
@@ -118,6 +121,23 @@ struct StreamHealthView: View {
         case .starting: StudioPalette.warning
         case .recording: StudioPalette.recording
         case .failed: StudioPalette.live
+        }
+    }
+
+    private var audioDeliveryTitle: String {
+        deliveryTitle(for: store.health.audioDeliveryState)
+    }
+
+    private var microphoneDeliveryTitle: String {
+        deliveryTitle(for: store.health.microphoneDeliveryState)
+    }
+
+    private func deliveryTitle(for state: AudioDeliveryState) -> String {
+        switch state {
+        case .inactive: "Inactive"
+        case .awaiting: "Awaiting"
+        case .active: "Active"
+        case .stalled: "Stalled"
         }
     }
 

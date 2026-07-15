@@ -68,8 +68,29 @@ func studioStoreUsesPipelineOutputPreviewOnlyDuringRealCapture() async {
     #expect(!store.shouldUseMediaOutputPreview)
 }
 
+@Test
+@MainActor
+func studioStoreReleasesIdlePreviewWhileRecordingStarts() async {
+    let pipeline = PreviewFrameMediaPipeline(recordingStartDelay: .milliseconds(60))
+    let store = StudioStore(mediaPipeline: pipeline)
+
+    store.startRecording()
+    try? await Task.sleep(for: .milliseconds(10))
+
+    #expect(store.recordingState == .starting)
+    #expect(store.shouldUseMediaOutputPreview)
+
+    try? await Task.sleep(for: .milliseconds(80))
+    #expect(store.recordingState == .recording)
+}
+
 private final class PreviewFrameMediaPipeline: MediaPipeline, @unchecked Sendable {
     let source = MediaPreviewFrameSource()
+    let recordingStartDelay: Duration?
+
+    init(recordingStartDelay: Duration? = nil) {
+        self.recordingStartDelay = recordingStartDelay
+    }
 
     var mediaPreviewFrameSource: MediaPreviewFrameSource? { source }
 
@@ -77,7 +98,10 @@ private final class PreviewFrameMediaPipeline: MediaPipeline, @unchecked Sendabl
     func stopStream() async {}
 
     func startRecording() async throws -> URL {
-        URL(fileURLWithPath: "/tmp/macstream-preview-source.mov")
+        if let recordingStartDelay {
+            try await Task.sleep(for: recordingStartDelay)
+        }
+        return URL(fileURLWithPath: "/tmp/macstream-preview-source.mov")
     }
 
     func stopRecording() async {}

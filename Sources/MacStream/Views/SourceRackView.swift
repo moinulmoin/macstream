@@ -88,10 +88,9 @@ struct SourceRackView: View {
                 deviceSelector(for: source.kind)
 
                 if source.kind == .microphone, source.isEnabled {
-                    MicrophoneLevelMeterView(
-                        level: store.latestSignals.speechLevel,
-                        title: "Input level",
-                        isActive: store.sourceLevel(.microphone) > 0 && store.selectedMicrophoneDeviceID != nil
+                    StudioMicrophoneLevelMeterView(
+                        store: store,
+                        title: "Input level"
                     )
                 }
 

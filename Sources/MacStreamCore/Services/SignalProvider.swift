@@ -133,9 +133,167 @@ private struct ScreenMotionSnapshot: Sendable {
     var isUnavailable: Bool
 }
 
+struct AudioLevelMeasurement: Equatable, Sendable {
+    var level: Double
+    var isSpeaking: Bool
+}
+
+struct AudioLevelMeterState: Equatable, Sendable {
+    private(set) var measurement = AudioLevelMeasurement(level: 0, isSpeaking: false)
+
+    mutating func record(normalizedLevel: Double) -> AudioLevelMeasurement {
+        let normalizedLevel = min(max(normalizedLevel, 0), 1)
+        measurement.level = (measurement.level * 0.7) + (normalizedLevel * 0.3)
+        measurement.isSpeaking = normalizedLevel > 0.18
+        return measurement
+    }
+
+    mutating func reset() {
+        measurement = AudioLevelMeasurement(level: 0, isSpeaking: false)
+    }
+}
+
+final class ReusableAudioLevelMeter: @unchecked Sendable {
+    private let lock = NSLock()
+    private var state = AudioLevelMeterState()
+    private var audioDataScratch: UnsafeMutableRawPointer?
+    private var audioDataScratchCapacity = 0
+
+    deinit {
+        audioDataScratch?.deallocate()
+    }
+
+    func measure(_ sampleBuffer: CMSampleBuffer) -> AudioLevelMeasurement? {
+        lock.lock()
+        defer { lock.unlock() }
+        guard let normalizedLevel = normalizedLevel(from: sampleBuffer) else { return nil }
+        return state.record(normalizedLevel: normalizedLevel)
+    }
+
+    func reset() {
+        lock.lock()
+        state.reset()
+        lock.unlock()
+    }
+
+    private func normalizedLevel(from sampleBuffer: CMSampleBuffer) -> Double? {
+        guard let formatDescription = CMSampleBufferGetFormatDescription(sampleBuffer),
+              let streamDescription = CMAudioFormatDescriptionGetStreamBasicDescription(formatDescription),
+              streamDescription.pointee.mFormatID == kAudioFormatLinearPCM else {
+            return nil
+        }
+
+        let bitsPerChannel = Int(streamDescription.pointee.mBitsPerChannel)
+        guard bitsPerChannel > 0 else { return nil }
+
+        guard let blockBuffer = CMSampleBufferGetDataBuffer(sampleBuffer),
+              let audioData = audioDataPointer(from: blockBuffer)
+        else {
+            return nil
+        }
+
+        return withExtendedLifetime(blockBuffer) {
+            let flags = streamDescription.pointee.mFormatFlags
+            let isFloat = flags & kAudioFormatFlagIsFloat != 0
+            let isSignedInteger = flags & kAudioFormatFlagIsSignedInteger != 0
+            var sumSquares = 0.0
+            var sampleCount = 0
+
+            if isFloat, bitsPerChannel == 32 {
+                let samples = audioData.pointer.bindMemory(
+                    to: Float.self,
+                    capacity: audioData.byteCount / MemoryLayout<Float>.stride
+                )
+                for index in 0..<(audioData.byteCount / MemoryLayout<Float>.stride) {
+                    let sample = Double(samples[index])
+                    sumSquares += sample * sample
+                    sampleCount += 1
+                }
+            } else if isSignedInteger, bitsPerChannel == 16 {
+                let samples = audioData.pointer.bindMemory(
+                    to: Int16.self,
+                    capacity: audioData.byteCount / MemoryLayout<Int16>.stride
+                )
+                for index in 0..<(audioData.byteCount / MemoryLayout<Int16>.stride) {
+                    let sample = Double(samples[index]) / Double(Int16.max)
+                    sumSquares += sample * sample
+                    sampleCount += 1
+                }
+            } else if isSignedInteger, bitsPerChannel == 32 {
+                let samples = audioData.pointer.bindMemory(
+                    to: Int32.self,
+                    capacity: audioData.byteCount / MemoryLayout<Int32>.stride
+                )
+                for index in 0..<(audioData.byteCount / MemoryLayout<Int32>.stride) {
+                    let sample = Double(samples[index]) / Double(Int32.max)
+                    sumSquares += sample * sample
+                    sampleCount += 1
+                }
+            } else {
+                return nil
+            }
+
+            guard sampleCount > 0 else { return nil }
+            let meanSquare = sumSquares / Double(sampleCount)
+            guard meanSquare > 0 else { return 0 }
+
+            let rms = sqrt(meanSquare)
+            let decibels = 20 * log10(max(rms, 0.000_001))
+            return min(max((decibels + 60) / 60, 0), 1)
+        }
+    }
+
+    private func audioDataPointer(
+        from blockBuffer: CMBlockBuffer
+    ) -> (pointer: UnsafeRawPointer, byteCount: Int)? {
+        var lengthAtOffset = 0
+        var totalLength = 0
+        var contiguousPointer: UnsafeMutablePointer<Int8>?
+        let status = CMBlockBufferGetDataPointer(
+            blockBuffer,
+            atOffset: 0,
+            lengthAtOffsetOut: &lengthAtOffset,
+            totalLengthOut: &totalLength,
+            dataPointerOut: &contiguousPointer
+        )
+        if status == kCMBlockBufferNoErr,
+           lengthAtOffset == totalLength,
+           let contiguousPointer,
+           totalLength > 0 {
+            return (UnsafeRawPointer(contiguousPointer), totalLength)
+        }
+
+        let byteCount = CMBlockBufferGetDataLength(blockBuffer)
+        guard byteCount > 0 else { return nil }
+        ensureAudioDataScratchCapacity(byteCount)
+        guard let audioDataScratch,
+              CMBlockBufferCopyDataBytes(
+                  blockBuffer,
+                  atOffset: 0,
+                  dataLength: byteCount,
+                  destination: audioDataScratch
+              ) == kCMBlockBufferNoErr
+        else {
+            return nil
+        }
+        return (UnsafeRawPointer(audioDataScratch), byteCount)
+    }
+
+    private func ensureAudioDataScratchCapacity(_ requiredCapacity: Int) {
+        guard requiredCapacity > audioDataScratchCapacity else { return }
+        audioDataScratch?.deallocate()
+        audioDataScratch = UnsafeMutableRawPointer.allocate(
+            byteCount: requiredCapacity,
+            alignment: 16
+        )
+        audioDataScratchCapacity = requiredCapacity
+    }
+}
+
 private final class MicrophoneLevelMonitor: NSObject, AVCaptureAudioDataOutputSampleBufferDelegate, @unchecked Sendable {
     private let sessionQueue = DispatchQueue(label: "com.macstream.signal.microphone-session", qos: .utility)
     private let sampleQueue = DispatchQueue(label: "com.macstream.signal.microphone-samples", qos: .userInitiated)
+    private let levelMeter = ReusableAudioLevelMeter()
     private let lock = NSLock()
     private var level: Double = 0
     private var isSpeaking = false
@@ -147,12 +305,6 @@ private final class MicrophoneLevelMonitor: NSObject, AVCaptureAudioDataOutputSa
     private var activeDeviceID: String?
     private var session: AVCaptureSession?
     private var output: AVCaptureAudioDataOutput?
-    private var audioBufferListScratch: UnsafeMutableRawPointer?
-    private var audioBufferListScratchCapacity = 0
-
-    deinit {
-        audioBufferListScratch?.deallocate()
-    }
 
     func start(deviceID: String?) {
         sessionQueue.async { [weak self] in
@@ -291,6 +443,8 @@ private final class MicrophoneLevelMonitor: NSObject, AVCaptureAudioDataOutputSa
         output = nil
         session = nil
         activeDeviceID = nil
+        levelMeter.reset()
+        update(level: 0, isSpeaking: false, isUnavailable: true)
     }
 
     private static func device(matching id: String) -> AVCaptureDevice? {
@@ -311,8 +465,13 @@ private final class MicrophoneLevelMonitor: NSObject, AVCaptureAudioDataOutputSa
         from connection: AVCaptureConnection
     ) {
         guard isActiveOutput(output) else { return }
-        guard let level = normalizedLevel(from: sampleBuffer) else { return }
-        update(level: level, isSpeaking: level > 0.18, isUnavailable: false, from: output)
+        guard let measurement = levelMeter.measure(sampleBuffer) else { return }
+        update(
+            level: measurement.level,
+            isSpeaking: measurement.isSpeaking,
+            isUnavailable: false,
+            from: output
+        )
     }
 
     private func isActiveOutput(_ output: AVCaptureOutput) -> Bool {
@@ -337,137 +496,17 @@ private final class MicrophoneLevelMonitor: NSObject, AVCaptureAudioDataOutputSa
         defer { lock.unlock() }
         guard activeOutputIdentifier == ObjectIdentifier(output) else { return }
 
-        let smoothed = (self.level * 0.7) + (level * 0.3)
-        self.level = min(max(smoothed, 0), 1)
+        self.level = min(max(level, 0), 1)
         self.isSpeaking = isSpeaking
         self.isUnavailable = isUnavailable
     }
 
     private func update(level: Double, isSpeaking: Bool, isUnavailable: Bool) {
         lock.lock()
-        let smoothed = (self.level * 0.7) + (level * 0.3)
-        self.level = min(max(smoothed, 0), 1)
+        self.level = min(max(level, 0), 1)
         self.isSpeaking = isSpeaking
         self.isUnavailable = isUnavailable
         lock.unlock()
-    }
-
-    private func normalizedLevel(from sampleBuffer: CMSampleBuffer) -> Double? {
-        guard let formatDescription = CMSampleBufferGetFormatDescription(sampleBuffer),
-              let streamDescription = CMAudioFormatDescriptionGetStreamBasicDescription(formatDescription),
-              streamDescription.pointee.mFormatID == kAudioFormatLinearPCM else {
-            return nil
-        }
-
-        let bitsPerChannel = Int(streamDescription.pointee.mBitsPerChannel)
-        guard bitsPerChannel > 0 else { return nil }
-
-        if audioBufferListScratchCapacity == 0 {
-            let initialCapacity = MemoryLayout<AudioBufferList>.size
-            audioBufferListScratch = UnsafeMutableRawPointer.allocate(
-                byteCount: initialCapacity,
-                alignment: MemoryLayout<AudioBufferList>.alignment
-            )
-            audioBufferListScratchCapacity = initialCapacity
-        }
-
-        guard var audioBufferListScratch else { return nil }
-        var audioBufferList = audioBufferListScratch.bindMemory(to: AudioBufferList.self, capacity: 1)
-        var neededSize = 0
-        var blockBuffer: CMBlockBuffer?
-        var status = copyAudioBufferList(
-            from: sampleBuffer,
-            into: audioBufferList,
-            capacity: audioBufferListScratchCapacity,
-            neededSize: &neededSize,
-            blockBuffer: &blockBuffer
-        )
-
-        if status != noErr, neededSize > audioBufferListScratchCapacity {
-            self.audioBufferListScratch?.deallocate()
-            let resizedScratch = UnsafeMutableRawPointer.allocate(
-                byteCount: neededSize,
-                alignment: MemoryLayout<AudioBufferList>.alignment
-            )
-            self.audioBufferListScratch = resizedScratch
-            audioBufferListScratchCapacity = neededSize
-            audioBufferListScratch = resizedScratch
-            audioBufferList = resizedScratch.bindMemory(to: AudioBufferList.self, capacity: 1)
-            blockBuffer = nil
-            status = copyAudioBufferList(
-                from: sampleBuffer,
-                into: audioBufferList,
-                capacity: neededSize,
-                neededSize: &neededSize,
-                blockBuffer: &blockBuffer
-            )
-        }
-        guard status == noErr else { return nil }
-
-        return withExtendedLifetime((audioBufferListScratch, blockBuffer)) {
-            let flags = streamDescription.pointee.mFormatFlags
-            let isFloat = flags & kAudioFormatFlagIsFloat != 0
-            let isSignedInteger = flags & kAudioFormatFlagIsSignedInteger != 0
-            var sumSquares = 0.0
-            var sampleCount = 0
-
-            for audioBuffer in UnsafeMutableAudioBufferListPointer(audioBufferList) {
-                guard let data = audioBuffer.mData else { continue }
-                let byteCount = Int(audioBuffer.mDataByteSize)
-
-                if isFloat, bitsPerChannel == 32 {
-                    let samples = data.bindMemory(to: Float.self, capacity: byteCount / MemoryLayout<Float>.stride)
-                    for index in 0..<(byteCount / MemoryLayout<Float>.stride) {
-                        let sample = Double(samples[index])
-                        sumSquares += sample * sample
-                        sampleCount += 1
-                    }
-                } else if isSignedInteger, bitsPerChannel == 16 {
-                    let samples = data.bindMemory(to: Int16.self, capacity: byteCount / MemoryLayout<Int16>.stride)
-                    for index in 0..<(byteCount / MemoryLayout<Int16>.stride) {
-                        let sample = Double(samples[index]) / Double(Int16.max)
-                        sumSquares += sample * sample
-                        sampleCount += 1
-                    }
-                } else if isSignedInteger, bitsPerChannel == 32 {
-                    let samples = data.bindMemory(to: Int32.self, capacity: byteCount / MemoryLayout<Int32>.stride)
-                    for index in 0..<(byteCount / MemoryLayout<Int32>.stride) {
-                        let sample = Double(samples[index]) / Double(Int32.max)
-                        sumSquares += sample * sample
-                        sampleCount += 1
-                    }
-                } else {
-                    return nil
-                }
-            }
-
-            guard sampleCount > 0 else { return nil }
-            let meanSquare = sumSquares / Double(sampleCount)
-            guard meanSquare > 0 else { return 0 }
-
-            let rms = sqrt(meanSquare)
-            let decibels = 20 * log10(max(rms, 0.000_001))
-            return min(max((decibels + 60) / 60, 0), 1)
-        }
-    }
-
-    private func copyAudioBufferList(
-        from sampleBuffer: CMSampleBuffer,
-        into audioBufferList: UnsafeMutablePointer<AudioBufferList>,
-        capacity: Int,
-        neededSize: inout Int,
-        blockBuffer: inout CMBlockBuffer?
-    ) -> OSStatus {
-        CMSampleBufferGetAudioBufferListWithRetainedBlockBuffer(
-            sampleBuffer,
-            bufferListSizeNeededOut: &neededSize,
-            bufferListOut: audioBufferList,
-            bufferListSize: capacity,
-            blockBufferAllocator: kCFAllocatorDefault,
-            blockBufferMemoryAllocator: kCFAllocatorDefault,
-            flags: UInt32(kCMSampleBufferFlag_AudioBufferList_Assure16ByteAlignment),
-            blockBufferOut: &blockBuffer
-        )
     }
 }
 

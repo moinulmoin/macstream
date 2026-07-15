@@ -21,6 +21,9 @@ struct SettingsView: View {
     @State private var providerProbeTask: Task<Void, Never>?
     @State private var providerProbeMessage = "Not checked"
     @State private var providerApplyPending = false
+    @State private var restoreEndpointTask: Task<Void, Never>?
+    @State private var restoreEndpointRequestID = UUID()
+    @State private var restoreEndpointMessage: String?
 
     var body: some View {
         TabView {
@@ -34,11 +37,6 @@ struct SettingsView: View {
                     Label("Destination", systemImage: "dot.radiowaves.left.and.right")
                 }
 
-            aiSetupTab
-                .tabItem {
-                    Label("AI Setup", systemImage: "wand.and.stars")
-                }
-
             aboutTab
                 .tabItem {
                     Label("About", systemImage: "info.circle")
@@ -46,15 +44,17 @@ struct SettingsView: View {
         }
         .frame(width: 580)
         .frame(minHeight: 420)
-        .onAppear {
-            openAICompatibleAPIKey = MacStreamProviderKeychain.loadOpenAICompatibleAPIKey() ?? ""
-            applySelectedIntelligenceProvider()
-        }
         .onDisappear {
             providerProbeTask?.cancel()
+            restoreEndpointTask?.cancel()
         }
-        .onChange(of: providerReapplyTrigger) { _, _ in
-            applyPendingIntelligenceProviderIfNeeded()
+        .onChange(of: store.destination) { oldDestination, newDestination in
+            guard oldDestination.mode != newDestination.mode
+                || oldDestination.rtmpURL != newDestination.rtmpURL
+            else {
+                return
+            }
+            cancelSavedEndpointRestore()
         }
     }
 
@@ -140,6 +140,29 @@ struct SettingsView: View {
 
                     SecureField("Stream key", text: rtmpStreamKey)
                         .disabled(!store.canEditDestination)
+
+                    Button {
+                        restoreSavedEndpoint()
+                    } label: {
+                        if restoreEndpointTask != nil {
+                            HStack(spacing: 6) {
+                                ProgressView()
+                                    .controlSize(.small)
+                                Text("Restoring…")
+                            }
+                        } else {
+                            Label("Restore Saved Endpoint", systemImage: "arrow.clockwise")
+                        }
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                    .disabled(!store.canEditDestination || restoreEndpointTask != nil)
+
+                    if let restoreEndpointMessage {
+                        Text(restoreEndpointMessage)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
 
                     Text(store.destination.safeDisplayDetail)
                         .font(.caption)
@@ -388,6 +411,53 @@ struct SettingsView: View {
             get: { store.destination.rtmpStreamKey },
             set: { store.setRTMPStreamKey($0) }
         )
+    }
+
+    private func restoreSavedEndpoint() {
+        restoreEndpointTask?.cancel()
+
+        let requestedMode = store.destination.mode
+        let requestedEndpoint = store.destination.rtmpURL
+        let requestID = UUID()
+        restoreEndpointRequestID = requestID
+        restoreEndpointMessage = "Restoring…"
+
+        let loadTask = Task.detached(priority: .userInitiated) {
+            MacStreamDestinationKeychain.loadRTMPURL(allowUserInteraction: true)
+        }
+        restoreEndpointTask = Task { @MainActor in
+            let savedEndpoint = await loadTask.value
+            guard !Task.isCancelled,
+                  requestID == restoreEndpointRequestID
+            else {
+                return
+            }
+            guard store.destination.mode == requestedMode,
+                  store.destination.rtmpURL == requestedEndpoint
+            else {
+                restoreEndpointTask = nil
+                restoreEndpointMessage = "Restore cancelled"
+                return
+            }
+
+            restoreEndpointTask = nil
+            guard let savedEndpoint, !savedEndpoint.isEmpty else {
+                restoreEndpointMessage = "No saved endpoint found"
+                return
+            }
+
+            let restoredEndpoint = StreamDestination(mode: .rtmp, rtmpURL: savedEndpoint)
+            store.setRTMPServerURL(restoredEndpoint.rtmpServerURL)
+            store.setRTMPStreamKey(restoredEndpoint.rtmpStreamKey)
+            restoreEndpointMessage = "Saved endpoint restored"
+        }
+    }
+
+    private func cancelSavedEndpointRestore() {
+        guard restoreEndpointTask != nil else { return }
+        restoreEndpointTask?.cancel()
+        restoreEndpointTask = nil
+        restoreEndpointMessage = "Restore cancelled"
     }
 
     private var destinationDetailTint: Color {

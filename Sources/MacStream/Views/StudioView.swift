@@ -57,7 +57,6 @@ private struct PreviewColumnView: View {
         VStack(spacing: 14) {
             PreviewCanvasView(
                 scene: store.selectedScene,
-                signals: store.latestSignals,
                 previewConfiguration: previewConfiguration,
                 cameraEnhancements: store.preferences.cameraEnhancements,
                 layoutSettings: store.preferences.layoutSettings,
@@ -252,11 +251,10 @@ private struct LiveStatusPanelView: View {
                 statusTile("Record", value: recordingTitle, symbol: recordingSymbol, tint: recordingTint)
             }
 
-            MicrophoneLevelMeterView(
-                level: store.latestSignals.speechLevel,
+            StudioMicrophoneLevelMeterView(
+                store: store,
                 title: "Mic",
-                detail: microphoneDetail,
-                isActive: isMicrophoneMeterActive
+                showsStatusDetail: true
             )
 
             ViewThatFits(in: .horizontal) {
@@ -408,19 +406,6 @@ private struct LiveStatusPanelView: View {
         "Preview \(store.preferences.previewRenderQuality.title)"
     }
 
-    private var microphoneDetail: String {
-        if !store.isSourceEnabled(.microphone) { return "Off" }
-        if store.sourceLevel(.microphone) <= 0 { return "Muted" }
-        if store.selectedMicrophoneDeviceID == nil { return "No input" }
-        if store.latestSignals.isMicMuted { return "No signal" }
-        return "\(Int((store.latestSignals.speechLevel * 100).rounded()))%"
-    }
-
-    private var isMicrophoneMeterActive: Bool {
-        store.isSourceEnabled(.microphone)
-            && store.sourceLevel(.microphone) > 0
-            && store.selectedMicrophoneDeviceID != nil
-    }
 }
 
 private struct InspectorRailView: View {

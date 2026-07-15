@@ -4,7 +4,6 @@ import AppKit
 
 struct PreviewCanvasView: View {
     var scene: StudioScene
-    var signals: SignalSnapshot
     var previewConfiguration = PreviewCaptureConfiguration()
     var cameraEnhancements = CameraEnhancementSettings()
     var layoutSettings = StudioLayoutSettings()
@@ -80,7 +79,7 @@ struct PreviewCanvasView: View {
     }
 
     private var previewAccessibilityValue: String {
-        "\(cameraAccessibilityValue). \(screenAccessibilityValue). Active app \(signals.activeApplication)."
+        "\(cameraAccessibilityValue). \(screenAccessibilityValue)."
     }
 
     private var cameraAccessibilityValue: String {

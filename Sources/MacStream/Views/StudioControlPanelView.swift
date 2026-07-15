@@ -175,13 +175,11 @@ struct StudioControlPanelView: View {
     }
 
     private var microphoneControls: some View {
-        MicrophoneLevelMeterView(
-            level: store.latestSignals.speechLevel,
+        StudioMicrophoneLevelMeterView(
+            store: store,
             title: "Input",
-            detail: microphoneDetail,
-            isActive: isMicrophoneMeterActive
+            showsStatusDetail: true
         )
-        .help(microphoneHelp)
     }
 
     private var performanceControls: some View {
@@ -282,27 +280,6 @@ struct StudioControlPanelView: View {
 
     private var performanceMenuTitle: String {
         "\(outputResolutionTitle) \(outputFrameRateTitle) · \(store.preferences.previewRenderQuality.title) preview"
-    }
-
-    private var microphoneDetail: String {
-        if !store.isSourceEnabled(.microphone) { return "Off" }
-        if store.sourceLevel(.microphone) <= 0 { return "Muted" }
-        if store.selectedMicrophoneDeviceID == nil { return "No input" }
-        if store.latestSignals.isMicMuted { return "No signal" }
-        return "\(Int((store.latestSignals.speechLevel * 100).rounded()))%"
-    }
-
-    private var isMicrophoneMeterActive: Bool {
-        store.isSourceEnabled(.microphone)
-            && store.sourceLevel(.microphone) > 0
-            && store.selectedMicrophoneDeviceID != nil
-    }
-
-    private var microphoneHelp: String {
-        if !store.isSourceEnabled(.microphone) { return "Turn the microphone source on in Sources." }
-        if store.sourceLevel(.microphone) <= 0 { return "Raise the microphone source level in Sources." }
-        if store.selectedMicrophoneDeviceID == nil { return "Choose a microphone in Sources or Capture preflight." }
-        return "Live microphone input level."
     }
 
     private var performanceMenuSymbol: String {
@@ -447,6 +424,13 @@ struct StudioControlPanelView: View {
     }
 
     private var primaryActionBlockerDetail: String? {
+        if store.recordingState.isFailed {
+            return store.recordingStatusDetail
+        }
+        if isStreamFailed {
+            return store.streamStatusDetail
+        }
+
         if !store.canStartStream, !store.canStopStream {
             if let startBlockedReason = store.streamStartBlockedReason {
                 return startBlockedReason

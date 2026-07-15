@@ -259,6 +259,13 @@ public enum RTMPPublishState: String, Codable, Equatable, Sendable {
     }
 }
 
+public enum AudioDeliveryState: String, Codable, Equatable, Sendable {
+    case inactive
+    case awaiting
+    case active
+    case stalled
+}
+
 public struct StreamHealth: Codable, Equatable, Sendable {
     public var bitrateKbps: Int
     public var outboundBytesPerSecond: Int64
@@ -267,15 +274,21 @@ public struct StreamHealth: Codable, Equatable, Sendable {
     public var captureFPS: Int
     public var audioLevel: Double
     public var roundTripMs: Int
+    public var audioDeliveryState: AudioDeliveryState
+    public var microphoneDeliveryState: AudioDeliveryState
+    public var rtmpAudioAppendRejections: Int
 
     public init(
         bitrateKbps: Int = 0,
         outboundBytesPerSecond: Int64 = 0,
         publishState: RTMPPublishState = .disconnected,
         droppedFrames: Int = 0,
-        captureFPS: Int = 60,
+        captureFPS: Int = 0,
         audioLevel: Double = 0,
-        roundTripMs: Int = 0
+        roundTripMs: Int = 0,
+        audioDeliveryState: AudioDeliveryState = .inactive,
+        microphoneDeliveryState: AudioDeliveryState = .inactive,
+        rtmpAudioAppendRejections: Int = 0
     ) {
         self.bitrateKbps = bitrateKbps
         self.outboundBytesPerSecond = outboundBytesPerSecond
@@ -284,6 +297,45 @@ public struct StreamHealth: Codable, Equatable, Sendable {
         self.captureFPS = captureFPS
         self.audioLevel = audioLevel
         self.roundTripMs = roundTripMs
+        self.audioDeliveryState = audioDeliveryState
+        self.microphoneDeliveryState = microphoneDeliveryState
+        self.rtmpAudioAppendRejections = rtmpAudioAppendRejections
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case bitrateKbps
+        case outboundBytesPerSecond
+        case publishState
+        case droppedFrames
+        case captureFPS
+        case audioLevel
+        case roundTripMs
+        case audioDeliveryState
+        case microphoneDeliveryState
+        case rtmpAudioAppendRejections
+    }
+
+    public init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        bitrateKbps = try container.decode(Int.self, forKey: .bitrateKbps)
+        outboundBytesPerSecond = try container.decode(Int64.self, forKey: .outboundBytesPerSecond)
+        publishState = try container.decode(RTMPPublishState.self, forKey: .publishState)
+        droppedFrames = try container.decode(Int.self, forKey: .droppedFrames)
+        captureFPS = try container.decode(Int.self, forKey: .captureFPS)
+        audioLevel = try container.decode(Double.self, forKey: .audioLevel)
+        roundTripMs = try container.decode(Int.self, forKey: .roundTripMs)
+        audioDeliveryState = try container.decodeIfPresent(
+            AudioDeliveryState.self,
+            forKey: .audioDeliveryState
+        ) ?? .inactive
+        microphoneDeliveryState = try container.decodeIfPresent(
+            AudioDeliveryState.self,
+            forKey: .microphoneDeliveryState
+        ) ?? .inactive
+        rtmpAudioAppendRejections = try container.decodeIfPresent(
+            Int.self,
+            forKey: .rtmpAudioAppendRejections
+        ) ?? 0
     }
 }
 

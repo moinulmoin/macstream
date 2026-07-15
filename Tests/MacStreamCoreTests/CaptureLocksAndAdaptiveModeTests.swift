@@ -5,6 +5,14 @@ import Network
 import Testing
 @testable import MacStreamCore
 
+private func expectedSignalConfigurationDuringMediaCapture(
+    _ mode: StudioPerformanceMode
+) -> SignalSamplingConfiguration {
+    var configuration = mode.signalSamplingConfiguration
+    configuration.isMicrophoneEnabled = false
+    return configuration
+}
+
 @Test
 @MainActor
 func screenCaptureTargetCannotChangeWhileRecording() async {
@@ -318,8 +326,18 @@ func adaptivePerformanceModeUsesEfficiencyWhenCaptureHealthDrops() async {
 
     #expect(store.effectivePerformanceMode == .efficiency)
     #expect(pipeline.lastConfiguration == expectedMediaConfiguration(.efficiency))
-    #expect(signalProvider.lastConfiguration == StudioPerformanceMode.efficiency.signalSamplingConfiguration)
+    #expect(signalProvider.lastConfiguration == expectedSignalConfigurationDuringMediaCapture(.efficiency))
     #expect(store.streamState == .degraded("Dropped frames detected; reducing capture cost."))
+}
+
+@Test
+@MainActor
+func zeroCaptureFPSRequiresStaleIntervalBeforePressure() {
+    #expect(!StudioStore.captureFPSIndicatesPressure(0, lowFPSLimit: 20, zeroFPSAge: nil))
+    #expect(!StudioStore.captureFPSIndicatesPressure(0, lowFPSLimit: 20, zeroFPSAge: .milliseconds(1_999)))
+    #expect(StudioStore.captureFPSIndicatesPressure(0, lowFPSLimit: 20, zeroFPSAge: .seconds(2)))
+    #expect(StudioStore.captureFPSIndicatesPressure(10, lowFPSLimit: 20, zeroFPSAge: nil))
+    #expect(!StudioStore.captureFPSIndicatesPressure(24, lowFPSLimit: 20, zeroFPSAge: nil))
 }
 
 @Test
@@ -400,7 +418,7 @@ func adaptivePerformanceModeRecoversWhenCaptureHealthStabilizes() async {
 
     #expect(store.effectivePerformanceMode == .efficiency)
     #expect(pipeline.lastConfiguration == expectedMediaConfiguration(.efficiency))
-    #expect(signalProvider.lastConfiguration == StudioPerformanceMode.efficiency.signalSamplingConfiguration)
+    #expect(signalProvider.lastConfiguration == expectedSignalConfigurationDuringMediaCapture(.efficiency))
     #expect(store.streamState == .degraded("Dropped frames detected; reducing capture cost."))
 
     pipeline.currentHealth = StreamHealth(
@@ -414,13 +432,13 @@ func adaptivePerformanceModeRecoversWhenCaptureHealthStabilizes() async {
 
     #expect(store.effectivePerformanceMode == .efficiency)
     #expect(pipeline.lastConfiguration == expectedMediaConfiguration(.efficiency))
-    #expect(signalProvider.lastConfiguration == StudioPerformanceMode.efficiency.signalSamplingConfiguration)
+    #expect(signalProvider.lastConfiguration == expectedSignalConfigurationDuringMediaCapture(.efficiency))
     #expect(store.streamState == .degraded("Dropped frames detected; reducing capture cost."))
 
     store.advanceDirector()
 
     #expect(store.effectivePerformanceMode == .balanced)
     #expect(pipeline.lastConfiguration == expectedMediaConfiguration(.balanced))
-    #expect(signalProvider.lastConfiguration == StudioPerformanceMode.balanced.signalSamplingConfiguration)
+    #expect(signalProvider.lastConfiguration == expectedSignalConfigurationDuringMediaCapture(.balanced))
     #expect(store.streamState == .live)
 }

@@ -378,7 +378,7 @@ public struct PreviewMediaPipeline: MediaPipeline {
     }
 }
 
-public final class SystemMediaPipeline: NSObject, MediaPipeline, SCStreamOutput, AVCaptureAudioDataOutputSampleBufferDelegate, AVCaptureVideoDataOutputSampleBufferDelegate, @unchecked Sendable {
+public final class SystemMediaPipeline: NSObject, MediaPipeline, SCStreamOutput, SCStreamDelegate, AVCaptureAudioDataOutputSampleBufferDelegate, AVCaptureVideoDataOutputSampleBufferDelegate, @unchecked Sendable {
     public let mediaPreviewFrameSource: MediaPreviewFrameSource? = MediaPreviewFrameSource()
     private let queue = DispatchQueue(label: "com.macstream.media.recording", qos: .userInitiated)
     private let rtmpPublisherFactory: @Sendable (RTMPPublishTarget) -> any RTMPPublisher
@@ -416,8 +416,11 @@ public final class SystemMediaPipeline: NSObject, MediaPipeline, SCStreamOutput,
     private var publishingOwnsMicrophoneSession = false
     private var recordingUsesPublishingMicrophoneSession = false
     private var mediaHealth = StreamHealth()
-    private var frameWindowStartedAt = Date()
+    private let microphoneLevelMeter = ReusableAudioLevelMeter()
+    private var audioDeliveryHealthTracker = AudioDeliveryHealthTracker()
+    private var frameWindowStartedAtNanoseconds = DispatchTime.now().uptimeNanoseconds
     private var frameWindowCount = 0
+    private var lastVideoFrameAtNanoseconds: UInt64?
     private var firstPublishingVideoContinuation: CheckedContinuation<Void, any Error>?
     private var firstPublishingVideoTimeoutTask: Task<Void, Never>?
     private var didPublishFirstVideoFrame = false
@@ -427,6 +430,8 @@ public final class SystemMediaPipeline: NSObject, MediaPipeline, SCStreamOutput,
     private var lastRTMPByteCount: Int64?
     private var lastRTMPByteSampledAt: Date?
     private var publishingAudioTrackPlan: (systemAudio: UInt8?, microphone: UInt8?, mainTrack: UInt8) = (nil, nil, 0)
+    private var nextCameraRecoveryGeneration: UInt64 = 0
+    private var cameraRecoveryGenerations: [ObjectIdentifier: UInt64] = [:]
 
     public override init() {
         self.rtmpPublisherFactory = Self.makeRTMPPublisher
@@ -443,12 +448,24 @@ public final class SystemMediaPipeline: NSObject, MediaPipeline, SCStreamOutput,
     }
 
     public var currentHealth: StreamHealth? {
-        queue.sync {
+        queue.sync { () -> StreamHealth? in
             guard publishingStream != nil || stream != nil || writer != nil else {
                 return nil
             }
 
-            return mediaHealth
+            var health = mediaHealth
+            let now = DispatchTime.now().uptimeNanoseconds
+            let frameAge = lastVideoFrameAtNanoseconds.flatMap {
+                Self.elapsedSeconds(from: $0, to: now)
+            }
+            health.captureFPS = Self.reportedCaptureFPS(
+                sampledFPS: health.captureFPS,
+                frameAge: frameAge
+            )
+            health.audioDeliveryState = audioDeliveryHealthTracker.state(at: now)
+            health.microphoneDeliveryState = audioDeliveryHealthTracker.microphoneState(at: now)
+            health.rtmpAudioAppendRejections = audioDeliveryHealthTracker.rtmpAudioAppendRejections
+            return health
         }
     }
 
@@ -494,6 +511,8 @@ public final class SystemMediaPipeline: NSObject, MediaPipeline, SCStreamOutput,
 
     private static let rtmpLogger = Logger(subsystem: "com.ideaplexa.macstream", category: "rtmp")
     private static let firstPublishingVideoFrameTimeout: Duration = .seconds(8)
+    private static let cameraFirstFrameRetryDelay: DispatchTimeInterval = .seconds(1)
+    private static let cameraFirstFrameFailureDelay: DispatchTimeInterval = .seconds(2)
 
     static let sharesMicrophoneCaptureBetweenStreamAndRecording = true
 
@@ -505,6 +524,21 @@ public final class SystemMediaPipeline: NSObject, MediaPipeline, SCStreamOutput,
         ) = queue.sync {
             let previousConfiguration = self.mediaConfiguration
             self.mediaConfiguration = configuration
+            let now = DispatchTime.now().uptimeNanoseconds
+            let hasActiveCapture = self.stream != nil || self.publishingStream != nil || self.writer != nil
+            self.audioDeliveryHealthTracker.updateExpectations(
+                expectsSystemAudio: hasActiveCapture
+                    && Self.shouldProcessSystemAudioSample(configuration: configuration),
+                expectsMicrophone: hasActiveCapture
+                    && Self.shouldProcessMicrophoneAudioSample(configuration: configuration),
+                at: now
+            )
+            if !Self.shouldProcessMicrophoneAudioSample(configuration: configuration) {
+                self.microphoneLevelMeter.reset()
+                self.mediaHealth.audioLevel = 0
+            }
+            self.mediaHealth.audioDeliveryState = self.audioDeliveryHealthTracker.state(at: now)
+            self.mediaHealth.microphoneDeliveryState = self.audioDeliveryHealthTracker.microphoneState(at: now)
             if self.stream != nil,
                Self.shouldPublishCompositedVideoSample(sceneKind: configuration.sceneKind) {
                 self.updateRecordingVideoComposition(using: configuration)
@@ -621,6 +655,7 @@ public final class SystemMediaPipeline: NSObject, MediaPipeline, SCStreamOutput,
             streamFailureReason = nil
             publishingStream = nil
             publishingCaptureGeometry = nil
+            invalidateCameraFirstFrameRecovery(for: publishingCameraSession)
             publishingCameraSession = nil
             publishingCameraOutput = nil
             publishingMicrophoneSession = nil
@@ -635,12 +670,22 @@ public final class SystemMediaPipeline: NSObject, MediaPipeline, SCStreamOutput,
             didPublishFirstVideoFrame = false
             lastRTMPByteCount = nil
             lastRTMPByteSampledAt = nil
+            let now = DispatchTime.now().uptimeNanoseconds
+            audioDeliveryHealthTracker.resetRTMPAudioAppendRejections()
             if self.stream == nil, self.writer == nil {
                 self.mediaHealth = StreamHealth()
+                self.audioDeliveryHealthTracker.reset(
+                    expectsSystemAudio: false,
+                    expectsMicrophone: false,
+                    at: now
+                )
             } else {
                 self.mediaHealth.publishState = .disconnected
                 self.mediaHealth.outboundBytesPerSecond = 0
                 self.mediaHealth.bitrateKbps = 0
+                self.mediaHealth.audioDeliveryState = self.audioDeliveryHealthTracker.state(at: now)
+                self.mediaHealth.microphoneDeliveryState = self.audioDeliveryHealthTracker.microphoneState(at: now)
+                self.mediaHealth.rtmpAudioAppendRejections = 0
             }
             return PublishingCaptureState(
                 stream: stream,
@@ -836,7 +881,7 @@ public final class SystemMediaPipeline: NSObject, MediaPipeline, SCStreamOutput,
                 mediaConfiguration: mediaConfiguration
             )
 
-            stream = SCStream(filter: selection!.filter, configuration: configuration, delegate: nil)
+            stream = SCStream(filter: selection!.filter, configuration: configuration, delegate: self)
             try stream.addStreamOutput(self, type: .screen, sampleHandlerQueue: queue)
             if mediaConfiguration.capturesSystemAudio {
                 do {
@@ -958,6 +1003,7 @@ public final class SystemMediaPipeline: NSObject, MediaPipeline, SCStreamOutput,
             self.recordingCaptureGeometry = nil
             self.microphoneSession = nil
             self.microphoneOutput = nil
+            self.invalidateCameraFirstFrameRecovery(for: self.recordingCameraSession)
             self.recordingCameraSession = nil
             self.recordingCameraOutput = nil
             self.writer = nil
@@ -976,6 +1022,11 @@ public final class SystemMediaPipeline: NSObject, MediaPipeline, SCStreamOutput,
             }
             if publishingStream == nil {
                 mediaHealth = StreamHealth()
+                audioDeliveryHealthTracker.reset(
+                    expectsSystemAudio: false,
+                    expectsMicrophone: false,
+                    at: DispatchTime.now().uptimeNanoseconds
+                )
             }
             self.didStartSession = false
             currentURL = nil
@@ -1344,7 +1395,7 @@ public final class SystemMediaPipeline: NSObject, MediaPipeline, SCStreamOutput,
             mediaConfiguration: mediaConfiguration
         )
 
-        let stream = SCStream(filter: selection.filter, configuration: configuration, delegate: nil)
+        let stream = SCStream(filter: selection.filter, configuration: configuration, delegate: self)
         try stream.addStreamOutput(self, type: .screen, sampleHandlerQueue: queue)
         if mediaConfiguration.capturesSystemAudio {
             do {
@@ -1455,6 +1506,7 @@ public final class SystemMediaPipeline: NSObject, MediaPipeline, SCStreamOutput,
             try? await stream.stopCapture()
             queue.sync {
                 if self.publishingStream === stream {
+                    self.invalidateCameraFirstFrameRecovery(for: self.publishingCameraSession)
                     self.publishingStream = nil
                     self.publishingCaptureMode = restoreModeOnFailure
                     self.publishingCaptureGeometry = restoreModeOnFailure == .recordingOwned
@@ -1502,6 +1554,92 @@ public final class SystemMediaPipeline: NSObject, MediaPipeline, SCStreamOutput,
     private func startCameraSession(_ session: AVCaptureSession?) {
         queue.async {
             self.startCameraSessionIfNeeded(session)
+            self.scheduleCameraFirstFrameRecovery(for: session)
+        }
+    }
+
+    private func scheduleCameraFirstFrameRecovery(for session: AVCaptureSession?) {
+        guard let session,
+              Self.requiresCameraCapture(sceneKind: mediaConfiguration.sceneKind),
+              shouldRecoverCameraSession(session)
+        else {
+            return
+        }
+
+        let identifier = ObjectIdentifier(session)
+        guard cameraRecoveryGenerations[identifier] == nil else { return }
+        nextCameraRecoveryGeneration &+= 1
+        let generation = nextCameraRecoveryGeneration
+        cameraRecoveryGenerations[identifier] = generation
+
+        queue.asyncAfter(deadline: .now() + Self.cameraFirstFrameRetryDelay) { [weak self, weak session] in
+            guard let self, let session,
+                  self.shouldContinueCameraFirstFrameRecovery(for: session, generation: generation)
+            else {
+                return
+            }
+
+            if session.isRunning {
+                session.stopRunning()
+            }
+            self.startCameraSessionIfNeeded(session)
+            self.queue.asyncAfter(deadline: .now() + Self.cameraFirstFrameFailureDelay) { [weak self, weak session] in
+                guard let self, let session,
+                      self.shouldContinueCameraFirstFrameRecovery(for: session, generation: generation)
+                else {
+                    return
+                }
+                self.invalidateCameraFirstFrameRecovery(for: session)
+                self.recordCameraDeliveryFailure(for: session)
+            }
+        }
+    }
+
+    private func shouldContinueCameraFirstFrameRecovery(
+        for session: AVCaptureSession,
+        generation: UInt64
+    ) -> Bool {
+        Self.shouldContinueCameraFirstFrameRecovery(
+            requiresCameraCapture: Self.requiresCameraCapture(sceneKind: mediaConfiguration.sceneKind),
+            hasCurrentSession: recordingCameraSession === session || publishingCameraSession === session,
+            hasDeliveredFrame: !shouldRecoverCameraSession(session),
+            generationMatches: cameraRecoveryGenerations[ObjectIdentifier(session)] == generation
+        )
+    }
+
+    static func shouldContinueCameraFirstFrameRecovery(
+        requiresCameraCapture: Bool,
+        hasCurrentSession: Bool,
+        hasDeliveredFrame: Bool,
+        generationMatches: Bool
+    ) -> Bool {
+        requiresCameraCapture && hasCurrentSession && !hasDeliveredFrame && generationMatches
+    }
+
+    private func invalidateCameraFirstFrameRecovery(for session: AVCaptureSession?) {
+        guard let session else { return }
+        cameraRecoveryGenerations.removeValue(forKey: ObjectIdentifier(session))
+    }
+
+    private func shouldRecoverCameraSession(_ session: AVCaptureSession) -> Bool {
+        if recordingCameraSession === session {
+            return latestCameraPixelBuffer == nil
+        }
+        if publishingCameraSession === session {
+            return latestPublishingCameraPixelBuffer == nil
+        }
+        return false
+    }
+
+    private func recordCameraDeliveryFailure(for session: AVCaptureSession) {
+        let detail = "Webcam capture started but did not deliver video frames."
+        if recordingCameraSession === session, recordingFailureReason == nil {
+            recordingFailureReason = detail
+        }
+        if (publishingCameraSession === session
+            || (recordingCameraSession === session && rtmpPublisher != nil)),
+           streamFailureReason == nil {
+            streamFailureReason = detail
         }
     }
 
@@ -1615,9 +1753,13 @@ public final class SystemMediaPipeline: NSObject, MediaPipeline, SCStreamOutput,
         guard let recordingCameraSession else { return }
         if Self.requiresCameraCapture(sceneKind: mediaConfiguration.sceneKind) {
             startCameraSessionIfNeeded(recordingCameraSession)
-        } else if recordingCameraSession.isRunning {
+            scheduleCameraFirstFrameRecovery(for: recordingCameraSession)
+        } else {
+            invalidateCameraFirstFrameRecovery(for: recordingCameraSession)
             latestCameraPixelBuffer = nil
-            recordingCameraSession.stopRunning()
+            if recordingCameraSession.isRunning {
+                recordingCameraSession.stopRunning()
+            }
         }
     }
 
@@ -1657,9 +1799,13 @@ public final class SystemMediaPipeline: NSObject, MediaPipeline, SCStreamOutput,
         guard let publishingCameraSession else { return }
         if Self.requiresCameraCapture(sceneKind: mediaConfiguration.sceneKind) {
             startCameraSessionIfNeeded(publishingCameraSession)
-        } else if publishingCameraSession.isRunning {
+            scheduleCameraFirstFrameRecovery(for: publishingCameraSession)
+        } else {
+            invalidateCameraFirstFrameRecovery(for: publishingCameraSession)
             latestPublishingCameraPixelBuffer = nil
-            publishingCameraSession.stopRunning()
+            if publishingCameraSession.isRunning {
+                publishingCameraSession.stopRunning()
+            }
         }
     }
 
@@ -1692,6 +1838,35 @@ public final class SystemMediaPipeline: NSObject, MediaPipeline, SCStreamOutput,
         }
         if shouldStart {
             startCameraSession(cameraCapture.session)
+        }
+    }
+
+    public nonisolated func stream(_ stream: SCStream, didStopWithError error: any Error) {
+        let errorDescription = error.localizedDescription
+        queue.async {
+            let plan = Self.screenCaptureInterruptionPlan(
+                isRecordingStream: self.stream === stream,
+                isPublishingStream: self.publishingStream === stream,
+                publishingMode: self.publishingCaptureMode
+            )
+            let recordingFailureDetail = plan.recordingFailureDetail(errorDescription: errorDescription)
+            let streamFailureDetail = plan.streamFailureDetail(errorDescription: errorDescription)
+
+            if self.recordingFailureReason == nil, let recordingFailureDetail {
+                self.recordingFailureReason = recordingFailureDetail
+            }
+            if self.streamFailureReason == nil, let streamFailureDetail {
+                self.streamFailureReason = streamFailureDetail
+            }
+            if recordingFailureDetail != nil || streamFailureDetail != nil {
+                self.mediaHealth.captureFPS = 0
+                self.lastVideoFrameAtNanoseconds = nil
+            }
+            if let streamFailureDetail {
+                self.finishFirstPublishingVideoFrameWaitOnQueue(
+                    throwing: MediaPipelineError.unavailable(streamFailureDetail)
+                )
+            }
         }
     }
 
@@ -1731,11 +1906,11 @@ public final class SystemMediaPipeline: NSObject, MediaPipeline, SCStreamOutput,
                     recordDroppedFrameIfNeeded(outputType)
                 }
             case .audio:
-                guard Self.shouldProcessSystemAudioSample(configuration: mediaConfiguration),
-                      let track = publishingAudioTrackPlan.systemAudio
-                else { return }
+                guard Self.shouldProcessSystemAudioSample(configuration: mediaConfiguration) else { return }
+                recordSystemAudioCallback()
+                guard let track = publishingAudioTrackPlan.systemAudio else { return }
                 if Self.shouldPublishStreamSample(isPublishingStream: isDedicatedPublishingStream, hasPublisher: rtmpPublisher != nil) {
-                    _ = publish(sampleBuffer, track: track)
+                    _ = publishAudio(sampleBuffer, track: track)
                 }
             case .microphone:
                 break
@@ -1745,16 +1920,26 @@ public final class SystemMediaPipeline: NSObject, MediaPipeline, SCStreamOutput,
             return
         }
 
+        let isRecordingStream = self.stream === stream
+        let hasWriter = writer != nil
+        if outputType == .audio,
+           Self.shouldRecordSystemAudioCallback(
+               isRecordingStream: isRecordingStream,
+               hasWriter: hasWriter,
+               processesSystemAudio: Self.shouldProcessSystemAudioSample(configuration: mediaConfiguration)
+           ) {
+            recordSystemAudioCallback()
+        }
         guard Self.shouldProcessRecordingStreamSample(
-                  isRecordingStream: self.stream === stream,
-                  hasWriter: writer != nil
-              ),
-              let writer,
-              writer.status != .failed,
-              writer.status != .cancelled
+            isRecordingStream: isRecordingStream,
+            hasWriter: hasWriter
+        ), let writer
         else {
             return
         }
+        guard writer.status != .failed,
+              writer.status != .cancelled
+        else { return }
 
         if outputType == .screen, !didStartSession {
             if writer.status == .unknown, !writer.startWriting() {
@@ -1828,7 +2013,7 @@ public final class SystemMediaPipeline: NSObject, MediaPipeline, SCStreamOutput,
             if isSharedRecordingStream,
                let track = publishingAudioTrackPlan.systemAudio,
                rtmpPublisher != nil {
-                _ = publish(sampleBuffer, track: track)
+                _ = publishAudio(sampleBuffer, track: track)
             }
         case .microphone:
             break
@@ -1861,7 +2046,10 @@ public final class SystemMediaPipeline: NSObject, MediaPipeline, SCStreamOutput,
             self.streamFailureReason = nil
             self.lastRTMPByteCount = nil
             self.lastRTMPByteSampledAt = nil
-            self.mediaHealth.publishState = .handshaking
+            self.mediaHealth.publishState = Self.initialPublishState(
+                hasPublisher: true,
+                supportsPublishStatus: Self.capturesMediaForStreamTransport
+            )
             self.mediaHealth.outboundBytesPerSecond = 0
             self.mediaHealth.bitrateKbps = 0
         }
@@ -1996,6 +2184,30 @@ public final class SystemMediaPipeline: NSObject, MediaPipeline, SCStreamOutput,
 
     private func publish(_ sampleBuffer: CMSampleBuffer, track: UInt8 = 0) -> Bool {
         rtmpPublisher?.append(sampleBuffer, track: track) ?? true
+    }
+
+    private func publishAudio(_ sampleBuffer: CMSampleBuffer, track: UInt8) -> Bool {
+        let wasAccepted = publish(sampleBuffer, track: track)
+        audioDeliveryHealthTracker.recordRTMPAudioAppendResult(wasAccepted: wasAccepted)
+        mediaHealth.rtmpAudioAppendRejections = audioDeliveryHealthTracker.rtmpAudioAppendRejections
+        return wasAccepted
+    }
+
+    private func recordSystemAudioCallback() {
+        let now = DispatchTime.now().uptimeNanoseconds
+        audioDeliveryHealthTracker.recordSystemAudioCallback(at: now)
+        mediaHealth.audioDeliveryState = audioDeliveryHealthTracker.state(at: now)
+        mediaHealth.microphoneDeliveryState = audioDeliveryHealthTracker.microphoneState(at: now)
+    }
+
+    private func recordMicrophoneCallback(_ sampleBuffer: CMSampleBuffer) {
+        let now = DispatchTime.now().uptimeNanoseconds
+        audioDeliveryHealthTracker.recordMicrophoneCallback(at: now)
+        mediaHealth.audioDeliveryState = audioDeliveryHealthTracker.state(at: now)
+        mediaHealth.microphoneDeliveryState = audioDeliveryHealthTracker.microphoneState(at: now)
+        if let measurement = microphoneLevelMeter.measure(sampleBuffer) {
+            mediaHealth.audioLevel = measurement.level
+        }
     }
 
     private func publishCompositedVideoSample(
@@ -2264,13 +2476,26 @@ public final class SystemMediaPipeline: NSObject, MediaPipeline, SCStreamOutput,
     }
 
     private func resetHealth(using configuration: MediaPipelineConfiguration) {
+        let now = DispatchTime.now().uptimeNanoseconds
+        microphoneLevelMeter.reset()
+        audioDeliveryHealthTracker.reset(
+            expectsSystemAudio: Self.shouldProcessSystemAudioSample(configuration: configuration),
+            expectsMicrophone: Self.shouldProcessMicrophoneAudioSample(configuration: configuration),
+            at: now
+        )
         mediaHealth = StreamHealth(
             bitrateKbps: 0,
-            publishState: .handshaking,
-            captureFPS: 0
+            publishState: Self.initialPublishState(
+                hasPublisher: rtmpPublisher != nil,
+                supportsPublishStatus: Self.capturesMediaForStreamTransport
+            ),
+            captureFPS: 0,
+            audioDeliveryState: audioDeliveryHealthTracker.state(at: now),
+            microphoneDeliveryState: audioDeliveryHealthTracker.microphoneState(at: now)
         )
-        frameWindowStartedAt = Date()
+        frameWindowStartedAtNanoseconds = now
         frameWindowCount = 0
+        lastVideoFrameAtNanoseconds = nil
     }
 
     private func recordVideoSampleIfNeeded(_ outputType: SCStreamOutputType, isPublishingStream: Bool) {
@@ -2283,12 +2508,17 @@ public final class SystemMediaPipeline: NSObject, MediaPipeline, SCStreamOutput,
         }
 
         frameWindowCount += 1
-        let now = Date()
-        let elapsed = now.timeIntervalSince(frameWindowStartedAt)
+        let now = DispatchTime.now().uptimeNanoseconds
+        lastVideoFrameAtNanoseconds = now
+        guard let elapsed = Self.elapsedSeconds(from: frameWindowStartedAtNanoseconds, to: now) else {
+            frameWindowStartedAtNanoseconds = now
+            frameWindowCount = 0
+            return
+        }
         guard elapsed >= 1 else { return }
 
         mediaHealth.captureFPS = max(1, Int((Double(frameWindowCount) / elapsed).rounded()))
-        frameWindowStartedAt = now
+        frameWindowStartedAtNanoseconds = now
         frameWindowCount = 0
     }
 
@@ -2307,6 +2537,13 @@ public final class SystemMediaPipeline: NSObject, MediaPipeline, SCStreamOutput,
             isPublishingStream: isPublishingStream,
             hasPublisher: hasPublisher
         )
+    }
+
+    static func initialPublishState(
+        hasPublisher: Bool,
+        supportsPublishStatus: Bool
+    ) -> RTMPPublishState {
+        hasPublisher && supportsPublishStatus ? .handshaking : .disconnected
     }
 
     static func shouldPublishCompositedVideoSample(sceneKind: SceneKind) -> Bool {
@@ -2332,11 +2569,54 @@ public final class SystemMediaPipeline: NSObject, MediaPipeline, SCStreamOutput,
         return isPublishingStream || !hasDedicatedPublishingStream
     }
 
+    static let captureFPSStaleInterval: TimeInterval = 2
+
+    static func elapsedSeconds(from startNanoseconds: UInt64, to endNanoseconds: UInt64) -> TimeInterval? {
+        guard endNanoseconds >= startNanoseconds else { return nil }
+        return Double(endNanoseconds - startNanoseconds) / 1_000_000_000
+    }
+
+    static func reportedCaptureFPS(sampledFPS: Int, frameAge: TimeInterval?) -> Int {
+        guard let frameAge, frameAge < captureFPSStaleInterval else { return 0 }
+        return sampledFPS
+    }
+
+    static func screenCaptureInterruptionPlan(
+        isRecordingStream: Bool,
+        isPublishingStream: Bool,
+        publishingMode: PublishingCaptureMode
+    ) -> ScreenCaptureInterruptionPlan {
+        let reportsStreamFailure = switch publishingMode {
+        case .none:
+            false
+        case .dedicated:
+            isPublishingStream
+        case .recordingOwned:
+            isRecordingStream
+        }
+
+        return ScreenCaptureInterruptionPlan(
+            reportsRecordingFailure: isRecordingStream,
+            reportsStreamFailure: reportsStreamFailure
+        )
+    }
+
     static func shouldProcessRecordingStreamSample(
         isRecordingStream: Bool,
         hasWriter: Bool
     ) -> Bool {
         isRecordingStream && hasWriter
+    }
+
+    static func shouldRecordSystemAudioCallback(
+        isRecordingStream: Bool,
+        hasWriter: Bool,
+        processesSystemAudio: Bool
+    ) -> Bool {
+        processesSystemAudio && shouldProcessRecordingStreamSample(
+            isRecordingStream: isRecordingStream,
+            hasWriter: hasWriter
+        )
     }
 
     static func shouldShareRecordingCaptureForPublishing(
@@ -2706,6 +2986,7 @@ public final class SystemMediaPipeline: NSObject, MediaPipeline, SCStreamOutput,
     ) {
         guard sampleBuffer.isValid else { return }
         if isRecordingCameraOutput(output) {
+            invalidateCameraFirstFrameRecovery(for: recordingCameraSession)
             latestCameraPixelBuffer = sampleBuffer.imageBuffer
             if publishingCaptureMode == .recordingOwned {
                 latestPublishingCameraPixelBuffer = sampleBuffer.imageBuffer
@@ -2713,6 +2994,7 @@ public final class SystemMediaPipeline: NSObject, MediaPipeline, SCStreamOutput,
             return
         }
         if isPublishingCameraOutput(output) {
+            invalidateCameraFirstFrameRecovery(for: publishingCameraSession)
             latestPublishingCameraPixelBuffer = sampleBuffer.imageBuffer
             return
         }
@@ -2721,13 +3003,14 @@ public final class SystemMediaPipeline: NSObject, MediaPipeline, SCStreamOutput,
             isActiveOutput: isActiveMicrophoneOutput(output),
             configuration: mediaConfiguration
         ) else { return }
+        recordMicrophoneCallback(sampleBuffer)
 
         if Self.shouldPublishMicrophoneOutputSample(
             isPublishingOutput: isPublishingMicrophoneOutput(output)
                 || (publishingCaptureMode == .recordingOwned && output === microphoneOutput),
             hasPublisher: rtmpPublisher != nil
         ), let track = publishingAudioTrackPlan.microphone {
-            _ = publish(sampleBuffer, track: track)
+            _ = publishAudio(sampleBuffer, track: track)
         }
 
         guard let writer,
@@ -2835,10 +3118,141 @@ public final class SystemMediaPipeline: NSObject, MediaPipeline, SCStreamOutput,
     }
 }
 
+struct AudioDeliveryHealthTracker: Equatable, Sendable {
+    static let stalledAfterNanoseconds: UInt64 = 2_000_000_000
+
+    private var systemAudio = AudioCallbackExpectation()
+    private var microphone = AudioCallbackExpectation()
+    private(set) var rtmpAudioAppendRejections = 0
+
+    init() {}
+
+    mutating func reset(
+        expectsSystemAudio: Bool,
+        expectsMicrophone: Bool,
+        at now: UInt64
+    ) {
+        systemAudio.reset(isExpected: expectsSystemAudio, at: now)
+        microphone.reset(isExpected: expectsMicrophone, at: now)
+        rtmpAudioAppendRejections = 0
+    }
+
+    mutating func updateExpectations(
+        expectsSystemAudio: Bool,
+        expectsMicrophone: Bool,
+        at now: UInt64
+    ) {
+        systemAudio.update(isExpected: expectsSystemAudio, at: now)
+        microphone.update(isExpected: expectsMicrophone, at: now)
+    }
+
+    mutating func recordSystemAudioCallback(at now: UInt64) {
+        systemAudio.recordCallback(at: now)
+    }
+
+    mutating func recordMicrophoneCallback(at now: UInt64) {
+        microphone.recordCallback(at: now)
+    }
+
+    mutating func recordRTMPAudioAppendResult(wasAccepted: Bool) {
+        guard !wasAccepted, rtmpAudioAppendRejections < Int.max else { return }
+        rtmpAudioAppendRejections += 1
+    }
+
+    mutating func resetRTMPAudioAppendRejections() {
+        rtmpAudioAppendRejections = 0
+    }
+
+    func state(at now: UInt64) -> AudioDeliveryState {
+        let systemAudioState = systemAudio.state(
+            at: now,
+            stalledAfterNanoseconds: Self.stalledAfterNanoseconds
+        )
+        let microphoneState = microphone.state(
+            at: now,
+            stalledAfterNanoseconds: Self.stalledAfterNanoseconds
+        )
+
+        if systemAudioState == .stalled || microphoneState == .stalled {
+            return .stalled
+        }
+        if systemAudioState == .awaiting || microphoneState == .awaiting {
+            return .awaiting
+        }
+        if systemAudioState == .active || microphoneState == .active {
+            return .active
+        }
+        return .inactive
+    }
+
+    func microphoneState(at now: UInt64) -> AudioDeliveryState {
+        microphone.state(
+            at: now,
+            stalledAfterNanoseconds: Self.stalledAfterNanoseconds
+        )
+    }
+}
+
+private struct AudioCallbackExpectation: Equatable, Sendable {
+    private var expectedSinceNanoseconds: UInt64?
+    private var lastCallbackAtNanoseconds: UInt64?
+
+    mutating func reset(isExpected: Bool, at now: UInt64) {
+        expectedSinceNanoseconds = isExpected ? now : nil
+        lastCallbackAtNanoseconds = nil
+    }
+
+    mutating func update(isExpected: Bool, at now: UInt64) {
+        guard isExpected else {
+            expectedSinceNanoseconds = nil
+            lastCallbackAtNanoseconds = nil
+            return
+        }
+        if expectedSinceNanoseconds == nil {
+            expectedSinceNanoseconds = now
+            lastCallbackAtNanoseconds = nil
+        }
+    }
+
+    mutating func recordCallback(at now: UInt64) {
+        guard expectedSinceNanoseconds != nil else { return }
+        lastCallbackAtNanoseconds = now
+    }
+
+    func state(
+        at now: UInt64,
+        stalledAfterNanoseconds: UInt64
+    ) -> AudioDeliveryState {
+        guard let expectedSinceNanoseconds else { return .inactive }
+        let reference = lastCallbackAtNanoseconds ?? expectedSinceNanoseconds
+        let isFresh = now < reference || now - reference < stalledAfterNanoseconds
+
+        if lastCallbackAtNanoseconds == nil {
+            return isFresh ? .awaiting : .stalled
+        }
+        return isFresh ? .active : .stalled
+    }
+}
+
 enum PublishingCaptureMode: Equatable, Sendable {
     case none
     case dedicated
     case recordingOwned
+}
+
+struct ScreenCaptureInterruptionPlan: Equatable, Sendable {
+    var reportsRecordingFailure: Bool
+    var reportsStreamFailure: Bool
+
+    func recordingFailureDetail(errorDescription: String) -> String? {
+        guard reportsRecordingFailure else { return nil }
+        return "Screen capture stopped unexpectedly while recording: \(errorDescription)"
+    }
+
+    func streamFailureDetail(errorDescription: String) -> String? {
+        guard reportsStreamFailure else { return nil }
+        return "Screen capture stopped unexpectedly while publishing: \(errorDescription)"
+    }
 }
 
 struct PublishingStopPlan: Equatable, Sendable {
@@ -3126,9 +3540,98 @@ final class OrderedMediaAppendQueue<Element: Sendable>: @unchecked Sendable {
         }
     }
 
+    private final class CloseWaiter: @unchecked Sendable {
+        private let lock = NSLock()
+        private var continuation: CheckedContinuation<Bool, Never>?
+        private var result: Bool?
+        private var observerTasks: [Task<Void, Never>] = []
+
+        func wait(
+            for consumerTask: Task<Bool, Never>,
+            timeout: Duration
+        ) async -> Bool {
+            await withTaskCancellationHandler {
+                await withCheckedContinuation { (continuation: CheckedContinuation<Bool, Never>) in
+                    install(continuation: continuation)
+                    startObservers(for: consumerTask, timeout: timeout)
+                }
+            } onCancel: {
+                if resolve(false) {
+                    consumerTask.cancel()
+                }
+            }
+        }
+
+        private func startObservers(for consumerTask: Task<Bool, Never>, timeout: Duration) {
+            lock.lock()
+            let shouldStart = result == nil
+            lock.unlock()
+            guard shouldStart else { return }
+
+            let completionTask = Task { [self] in
+                let didDrain = await consumerTask.value
+                _ = resolve(didDrain)
+            }
+            install(observerTask: completionTask)
+
+            let timeoutTask = Task { [self] in
+                do {
+                    try await Task.sleep(for: timeout)
+                } catch {
+                    return
+                }
+                if resolve(false) {
+                    consumerTask.cancel()
+                }
+            }
+            install(observerTask: timeoutTask)
+        }
+
+        private func install(continuation: CheckedContinuation<Bool, Never>) {
+            lock.lock()
+            guard let result else {
+                self.continuation = continuation
+                lock.unlock()
+                return
+            }
+            lock.unlock()
+            continuation.resume(returning: result)
+        }
+
+        private func install(observerTask: Task<Void, Never>) {
+            lock.lock()
+            guard result == nil else {
+                lock.unlock()
+                observerTask.cancel()
+                return
+            }
+            observerTasks.append(observerTask)
+            lock.unlock()
+        }
+
+        @discardableResult
+        private func resolve(_ result: Bool) -> Bool {
+            lock.lock()
+            guard self.result == nil else {
+                lock.unlock()
+                return false
+            }
+            self.result = result
+            let continuation = self.continuation
+            self.continuation = nil
+            let observerTasks = self.observerTasks
+            self.observerTasks.removeAll()
+            lock.unlock()
+
+            observerTasks.forEach { $0.cancel() }
+            continuation?.resume(returning: result)
+            return true
+        }
+    }
+
     private let state: State
     private let continuation: AsyncStream<Element>.Continuation
-    private let consumerTask: Task<Void, Never>
+    private let consumerTask: Task<Bool, Never>
 
     init(maxPendingAppends: Int = 3, handler: @escaping Handler) {
         let state = State(maxPendingAppends: maxPendingAppends)
@@ -3143,7 +3646,11 @@ final class OrderedMediaAppendQueue<Element: Sendable>: @unchecked Sendable {
             for await item in streamAndContinuation.stream {
                 await handler(item)
                 state.gate.finishAppend()
+                if Task.isCancelled {
+                    break
+                }
             }
+            return !Task.isCancelled
         }
     }
 
@@ -3171,11 +3678,42 @@ final class OrderedMediaAppendQueue<Element: Sendable>: @unchecked Sendable {
         state.hasStartedClose
     }
 
-    func closeAndWait() async {
+    func closeAndWait(timeout: Duration = .seconds(5)) async -> Bool {
         if state.startClose() {
             continuation.finish()
         }
+        if Task.isCancelled {
+            consumerTask.cancel()
+            return false
+        }
+        return await CloseWaiter().wait(for: consumerTask, timeout: timeout)
+    }
+
+    func waitUntilFinished() async -> Bool {
         await consumerTask.value
+    }
+}
+
+enum RTMPPublisherShutdown {
+    static func perform<Element: Sendable>(
+        appendQueue: OrderedMediaAppendQueue<Element>,
+        timeout: Duration = .seconds(5),
+        closeTransport: @escaping @Sendable () async -> Void,
+        finishMediaTeardown: @escaping @Sendable () async -> Void
+    ) async {
+        let didDrainAppends = await appendQueue.closeAndWait(timeout: timeout)
+
+        await closeTransport()
+
+        if didDrainAppends {
+            await finishMediaTeardown()
+            return
+        }
+
+        Task {
+            _ = await appendQueue.waitUntilFinished()
+            await finishMediaTeardown()
+        }
     }
 }
 
@@ -3192,6 +3730,8 @@ private final class HaishinKitRTMPPublisher: RTMPPublisher, @unchecked Sendable 
     private let mixer = MediaMixer(captureSessionMode: .manual, multiTrackAudioMixingEnabled: true)
     private let eventStream: AsyncStream<RTMPPublisherEvent>
     private let eventContinuation: AsyncStream<RTMPPublisherEvent>.Continuation
+    private let closeLock = NSLock()
+    private var closeTask: Task<Void, Never>?
     private var statusTasks: [Task<Void, Never>] = []
 
     private struct PendingMediaAppend: @unchecked Sendable {
@@ -3299,14 +3839,38 @@ private final class HaishinKitRTMPPublisher: RTMPPublisher, @unchecked Sendable 
 
 
     func close() async {
-        await appendQueue.closeAndWait()
-        statusTasks.forEach { $0.cancel() }
-        statusTasks.removeAll()
+        await shutdownTask().value
+    }
+
+    private func shutdownTask() -> Task<Void, Never> {
+        closeLock.lock()
+        if let closeTask {
+            closeLock.unlock()
+            return closeTask
+        }
+        let task = Task { [self] in
+            statusTasks.forEach { $0.cancel() }
+            statusTasks.removeAll()
+            await RTMPPublisherShutdown.perform(
+                appendQueue: appendQueue,
+                closeTransport: { [connection, eventContinuation] in
+                    _ = try? await connection.close()
+                    eventContinuation.finish()
+                },
+                finishMediaTeardown: { [self] in
+                    await finishMediaTeardown()
+                }
+            )
+        }
+        closeTask = task
+        closeLock.unlock()
+        return task
+    }
+
+    private func finishMediaTeardown() async {
         await mixer.removeOutput(stream)
         await mixer.stopRunning()
         _ = try? await stream.close()
-        _ = try? await connection.close()
-        eventContinuation.finish()
     }
 }
 #endif

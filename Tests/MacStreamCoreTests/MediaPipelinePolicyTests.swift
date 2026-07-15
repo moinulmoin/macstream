@@ -17,6 +17,56 @@ func mediaPipelinesReportStreamTransport() {
 }
 
 @Test
+func mediaPipelineOnlyReportsHandshakingWhenPublisherExists() {
+    #expect(SystemMediaPipeline.initialPublishState(
+        hasPublisher: true,
+        supportsPublishStatus: true
+    ) == .handshaking)
+    #expect(SystemMediaPipeline.initialPublishState(
+        hasPublisher: true,
+        supportsPublishStatus: false
+    ) == .disconnected)
+    #expect(SystemMediaPipeline.initialPublishState(
+        hasPublisher: false,
+        supportsPublishStatus: true
+    ) == .disconnected)
+}
+
+@Test
+func cameraFirstFrameRecoveryOnlyContinuesForCurrentRequiredCapture() {
+    #expect(SystemMediaPipeline.shouldContinueCameraFirstFrameRecovery(
+        requiresCameraCapture: true,
+        hasCurrentSession: true,
+        hasDeliveredFrame: false,
+        generationMatches: true
+    ))
+    #expect(!SystemMediaPipeline.shouldContinueCameraFirstFrameRecovery(
+        requiresCameraCapture: false,
+        hasCurrentSession: true,
+        hasDeliveredFrame: false,
+        generationMatches: true
+    ))
+    #expect(!SystemMediaPipeline.shouldContinueCameraFirstFrameRecovery(
+        requiresCameraCapture: true,
+        hasCurrentSession: false,
+        hasDeliveredFrame: false,
+        generationMatches: true
+    ))
+    #expect(!SystemMediaPipeline.shouldContinueCameraFirstFrameRecovery(
+        requiresCameraCapture: true,
+        hasCurrentSession: true,
+        hasDeliveredFrame: true,
+        generationMatches: true
+    ))
+    #expect(!SystemMediaPipeline.shouldContinueCameraFirstFrameRecovery(
+        requiresCameraCapture: true,
+        hasCurrentSession: true,
+        hasDeliveredFrame: false,
+        generationMatches: false
+    ))
+}
+
+@Test
 func systemMediaPipelineSkipsZeroLevelAudioSamples() {
     var configuration = MediaPipelineConfiguration()
 
@@ -34,6 +84,181 @@ func systemMediaPipelineSkipsZeroLevelAudioSamples() {
     #expect(!SystemMediaPipeline.shouldProcessSystemAudioSample(configuration: configuration))
     #expect(!SystemMediaPipeline.shouldProcessMicrophoneAudioSample(configuration: configuration))
     #expect(!SystemMediaPipeline.shouldProcessMicrophoneOutputSample(isActiveOutput: true, configuration: configuration))
+}
+
+@Test
+func audioLevelMeterSmoothsNormalizedMicrophoneSamples() {
+    var state = AudioLevelMeterState()
+
+    let loud = state.record(normalizedLevel: 1)
+    let quiet = state.record(normalizedLevel: 0)
+
+    #expect(abs(loud.level - 0.3) < 0.000_001)
+    #expect(loud.isSpeaking)
+    #expect(abs(quiet.level - 0.21) < 0.000_001)
+    #expect(!quiet.isSpeaking)
+}
+
+@Test
+func audioLevelMeterResetClearsStaleLevelAndSpeakingState() {
+    var state = AudioLevelMeterState()
+    _ = state.record(normalizedLevel: 1)
+
+    state.reset()
+
+    #expect(state.measurement.level == 0)
+    #expect(!state.measurement.isSpeaking)
+}
+
+@Test
+func systemMediaPipelineRecordsRecordingSystemAudioCallbacksBeforeWriterSessionStarts() {
+    #expect(SystemMediaPipeline.shouldRecordSystemAudioCallback(
+        isRecordingStream: true,
+        hasWriter: true,
+        processesSystemAudio: true
+    ))
+    #expect(!SystemMediaPipeline.shouldRecordSystemAudioCallback(
+        isRecordingStream: false,
+        hasWriter: true,
+        processesSystemAudio: true
+    ))
+    #expect(!SystemMediaPipeline.shouldRecordSystemAudioCallback(
+        isRecordingStream: true,
+        hasWriter: false,
+        processesSystemAudio: true
+    ))
+    #expect(!SystemMediaPipeline.shouldRecordSystemAudioCallback(
+        isRecordingStream: true,
+        hasWriter: true,
+        processesSystemAudio: false
+    ))
+}
+
+@Test
+func streamHealthDecodesLegacyPayloadWithInactiveAudioDelivery() throws {
+    let payload = Data(
+        """
+        {
+          "bitrateKbps": 4500,
+          "outboundBytesPerSecond": 562500,
+          "publishState": "publishing",
+          "droppedFrames": 2,
+          "captureFPS": 30,
+          "audioLevel": 0.4,
+          "roundTripMs": 24
+        }
+        """.utf8
+    )
+
+    let health = try JSONDecoder().decode(StreamHealth.self, from: payload)
+
+    #expect(health.audioDeliveryState == .inactive)
+    #expect(health.microphoneDeliveryState == .inactive)
+    #expect(health.rtmpAudioAppendRejections == 0)
+}
+
+@Test
+func streamHealthRoundTripsAudioDeliveryFields() throws {
+    let health = StreamHealth(
+        audioDeliveryState: .stalled,
+        microphoneDeliveryState: .active,
+        rtmpAudioAppendRejections: 7
+    )
+
+    let decoded = try JSONDecoder().decode(
+        StreamHealth.self,
+        from: JSONEncoder().encode(health)
+    )
+
+    #expect(decoded == health)
+}
+
+@Test
+func audioDeliveryHealthTransitionsFromAwaitingToStalledAtBoundary() {
+    var tracker = AudioDeliveryHealthTracker()
+    tracker.reset(
+        expectsSystemAudio: true,
+        expectsMicrophone: false,
+        at: 1_000_000_000
+    )
+
+    #expect(tracker.state(at: 1_000_000_000) == .awaiting)
+    #expect(tracker.state(at: 2_999_999_999) == .awaiting)
+    #expect(tracker.state(at: 3_000_000_000) == .stalled)
+}
+
+@Test
+func audioDeliveryHealthRequiresEveryExpectedSourceToRemainFresh() {
+    var tracker = AudioDeliveryHealthTracker()
+    tracker.reset(
+        expectsSystemAudio: true,
+        expectsMicrophone: true,
+        at: 10_000_000_000
+    )
+
+    tracker.recordSystemAudioCallback(at: 10_500_000_000)
+    #expect(tracker.state(at: 10_500_000_000) == .awaiting)
+
+    tracker.recordMicrophoneCallback(at: 10_750_000_000)
+    #expect(tracker.state(at: 10_750_000_000) == .active)
+    #expect(tracker.state(at: 12_499_999_999) == .active)
+    #expect(tracker.state(at: 12_500_000_000) == .stalled)
+}
+
+@Test
+func audioDeliveryHealthReportsMicrophoneIndependentlyFromSystemAudio() {
+    var tracker = AudioDeliveryHealthTracker()
+    tracker.reset(
+        expectsSystemAudio: true,
+        expectsMicrophone: true,
+        at: 1_000_000_000
+    )
+    tracker.recordMicrophoneCallback(at: 3_000_000_000)
+
+    #expect(tracker.state(at: 3_000_000_000) == .stalled)
+    #expect(tracker.microphoneState(at: 3_000_000_000) == .active)
+}
+
+@Test
+func audioDeliveryHealthResetStartsANewCaptureLifecycle() {
+    var tracker = AudioDeliveryHealthTracker()
+    tracker.reset(
+        expectsSystemAudio: true,
+        expectsMicrophone: false,
+        at: 1_000
+    )
+    tracker.recordSystemAudioCallback(at: 2_000)
+    tracker.recordRTMPAudioAppendResult(wasAccepted: false)
+
+    tracker.reset(
+        expectsSystemAudio: false,
+        expectsMicrophone: true,
+        at: 3_000
+    )
+    tracker.recordSystemAudioCallback(at: 3_500)
+
+    #expect(tracker.state(at: 3_500) == .awaiting)
+    #expect(tracker.rtmpAudioAppendRejections == 0)
+
+    tracker.recordMicrophoneCallback(at: 4_000)
+    #expect(tracker.state(at: 4_000) == .active)
+}
+
+@Test
+func audioDeliveryHealthCountsRepeatedRTMPAppendRejections() {
+    var tracker = AudioDeliveryHealthTracker()
+    tracker.reset(
+        expectsSystemAudio: true,
+        expectsMicrophone: false,
+        at: 0
+    )
+
+    for _ in 0..<50_000 {
+        tracker.recordRTMPAudioAppendResult(wasAccepted: false)
+    }
+    tracker.recordRTMPAudioAppendResult(wasAccepted: true)
+
+    #expect(tracker.rtmpAudioAppendRejections == 50_000)
 }
 
 @Test
@@ -236,6 +461,75 @@ func systemMediaPipelineReportsRecordingWriterFailureDetail() {
     #expect(SystemMediaPipeline.writerFailureDetail(status: .completed, errorDescription: "disk full") == nil)
     #expect(SystemMediaPipeline.writerFailureDetail(status: .cancelled, errorDescription: "disk full") == nil)
     #expect(SystemMediaPipeline.writerFailureDetail(status: .unknown, errorDescription: "disk full") == nil)
+}
+
+@Test
+func systemMediaPipelineReportsUnexpectedRecordingCaptureStopAsRecordingFailure() {
+    let plan = SystemMediaPipeline.screenCaptureInterruptionPlan(
+        isRecordingStream: true,
+        isPublishingStream: false,
+        publishingMode: .none
+    )
+
+    #expect(
+        plan.recordingFailureDetail(errorDescription: "display removed")
+            == "Screen capture stopped unexpectedly while recording: display removed"
+    )
+    #expect(plan.streamFailureDetail(errorDescription: "display removed") == nil)
+}
+
+@Test
+func systemMediaPipelineReportsUnexpectedPublishingCaptureStopAsStreamFailure() {
+    let plan = SystemMediaPipeline.screenCaptureInterruptionPlan(
+        isRecordingStream: false,
+        isPublishingStream: true,
+        publishingMode: .dedicated
+    )
+
+    #expect(plan.recordingFailureDetail(errorDescription: "display removed") == nil)
+    #expect(
+        plan.streamFailureDetail(errorDescription: "display removed")
+            == "Screen capture stopped unexpectedly while publishing: display removed"
+    )
+}
+
+@Test
+func systemMediaPipelineReportsSharedCaptureStopToRecordingAndPublishing() {
+    let plan = SystemMediaPipeline.screenCaptureInterruptionPlan(
+        isRecordingStream: true,
+        isPublishingStream: false,
+        publishingMode: .recordingOwned
+    )
+
+    #expect(plan.recordingFailureDetail(errorDescription: "capture interrupted") != nil)
+    #expect(plan.streamFailureDetail(errorDescription: "capture interrupted") != nil)
+}
+
+@Test
+func systemMediaPipelineIgnoresCaptureStopAfterNormalTeardown() {
+    let plan = SystemMediaPipeline.screenCaptureInterruptionPlan(
+        isRecordingStream: false,
+        isPublishingStream: false,
+        publishingMode: .none
+    )
+
+    #expect(plan.recordingFailureDetail(errorDescription: "capture stopped") == nil)
+    #expect(plan.streamFailureDetail(errorDescription: "capture stopped") == nil)
+}
+
+@Test
+func systemMediaPipelineReportsZeroCaptureFPSAtStaleBoundary() {
+    #expect(StreamHealth().captureFPS == 0)
+    #expect(SystemMediaPipeline.captureFPSStaleInterval == 2)
+    #expect(SystemMediaPipeline.reportedCaptureFPS(sampledFPS: 30, frameAge: nil) == 0)
+    #expect(SystemMediaPipeline.reportedCaptureFPS(sampledFPS: 30, frameAge: 1.999) == 30)
+    #expect(SystemMediaPipeline.reportedCaptureFPS(sampledFPS: 30, frameAge: 2) == 0)
+}
+
+@Test
+func systemMediaPipelineUsesMonotonicElapsedTimeForCaptureHealth() {
+    #expect(SystemMediaPipeline.elapsedSeconds(from: 1_000_000_000, to: 2_500_000_000) == 1.5)
+    #expect(SystemMediaPipeline.elapsedSeconds(from: 2, to: 1) == nil)
 }
 
 @Test
@@ -784,7 +1078,7 @@ func orderedMediaAppendQueuePreservesFIFOOrderUnderAsyncConsumer() async {
 
     await recorder.waitForCount(8)
     #expect(await recorder.values == Array(0..<8))
-    await queue.closeAndWait()
+    #expect(await queue.closeAndWait())
 }
 
 @Test
@@ -802,7 +1096,7 @@ func orderedMediaAppendQueueRejectsWhenPendingCapacityIsFull() async {
     #expect(!queue.enqueue(3))
 
     await blocker.releaseAll()
-    await queue.closeAndWait()
+    #expect(await queue.closeAndWait())
     #expect(await blocker.startedCount == 3)
 }
 
@@ -829,8 +1123,74 @@ func orderedMediaAppendQueueStopsAcceptingAndProcessingAfterClose() async {
     #expect(await recorder.values == [1])
 
     await blocker.releaseAll()
-    await closeTask.value
+    #expect(await closeTask.value)
     #expect(await recorder.values == [1])
+}
+
+@Test
+func orderedMediaAppendQueueCloseAndWaitTimesOutPromptlyAndRejectsAdmission() async {
+    let blocker = OrderedAppendBlocker()
+    let queue = OrderedMediaAppendQueue<Int>(maxPendingAppends: 3) { value in
+        await blocker.append(value)
+    }
+
+    #expect(queue.enqueue(1))
+    await blocker.waitForStartedCount(1)
+    #expect(queue.enqueue(2))
+
+    let clock = ContinuousClock()
+    let closeStartedAt = clock.now
+    let closeTask = Task {
+        await queue.closeAndWait(timeout: .milliseconds(50))
+    }
+    for _ in 0..<100 where !queue.isClosed {
+        await Task.yield()
+    }
+
+    #expect(queue.isClosed)
+    #expect(!queue.enqueue(3))
+
+    let didDrain = await closeTask.value
+    let elapsed = closeStartedAt.duration(to: clock.now)
+    #expect(!didDrain)
+    #expect(elapsed < .seconds(1))
+    #expect(await blocker.startedCount == 1)
+
+    let completionTask = Task {
+        await queue.waitUntilFinished()
+    }
+    await blocker.releaseAll()
+    #expect(await completionTask.value == false)
+}
+
+@Test
+func rtmpPublisherShutdownClosesTransportBeforeDeferredMediaTeardown() async {
+    let blocker = OrderedAppendBlocker()
+    let shutdownRecorder = PublisherShutdownRecorder()
+    let queue = OrderedMediaAppendQueue<Int>(maxPendingAppends: 1) { value in
+        await blocker.append(value)
+    }
+
+    #expect(queue.enqueue(1))
+    await blocker.waitForStartedCount(1)
+
+    await RTMPPublisherShutdown.perform(
+        appendQueue: queue,
+        timeout: .milliseconds(50),
+        closeTransport: {
+            await shutdownRecorder.recordTransportClose()
+        },
+        finishMediaTeardown: {
+            await shutdownRecorder.recordMediaTeardown()
+        }
+    )
+
+    #expect(await shutdownRecorder.didCloseTransport)
+    #expect(!(await shutdownRecorder.didFinishMediaTeardown))
+
+    await blocker.releaseAll()
+    await shutdownRecorder.waitForMediaTeardown()
+    #expect(await shutdownRecorder.didFinishMediaTeardown)
 }
 
 @Test
@@ -938,6 +1298,30 @@ private actor OrderedAppendRecorder {
             }
         }
         waiters = pendingWaiters
+    }
+}
+
+private actor PublisherShutdownRecorder {
+    private(set) var didCloseTransport = false
+    private(set) var didFinishMediaTeardown = false
+    private var teardownWaiters: [CheckedContinuation<Void, Never>] = []
+
+    func recordTransportClose() {
+        didCloseTransport = true
+    }
+
+    func recordMediaTeardown() {
+        didFinishMediaTeardown = true
+        let waiters = teardownWaiters
+        teardownWaiters.removeAll()
+        waiters.forEach { $0.resume() }
+    }
+
+    func waitForMediaTeardown() async {
+        guard !didFinishMediaTeardown else { return }
+        await withCheckedContinuation { continuation in
+            teardownWaiters.append(continuation)
+        }
     }
 }
 

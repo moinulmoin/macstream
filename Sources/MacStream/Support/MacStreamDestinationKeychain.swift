@@ -7,12 +7,11 @@ enum MacStreamDestinationKeychain {
     private static let account = "rtmp-url"
 
     static func loadRTMPURL(allowUserInteraction: Bool = false) -> String? {
+        guard allowUserInteraction else { return nil }
+
         var query = baseQuery()
         query[kSecReturnData as String] = true
         query[kSecMatchLimit as String] = kSecMatchLimitOne
-        if !allowUserInteraction {
-            query[kSecUseAuthenticationContext as String] = nonInteractiveAuthenticationContext()
-        }
 
         var item: CFTypeRef?
         let status = SecItemCopyMatching(query as CFDictionary, &item)

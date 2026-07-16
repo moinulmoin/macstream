@@ -1,74 +1,48 @@
-# Current State And Next Build Plan
+# Current State
 
-## Decision
+MacStream is a personal-use macOS 26 prototype focused on Apple Silicon
+streaming performance and reliability.
 
-The project is now MacStream. The working product direction is a macOS 26-only native streaming studio for solo screen + camera creators.
+## Implemented
 
-The build strategy is core-first:
+- Native SwiftUI studio with Webcam, Screen + Webcam, Screen, and BRB scenes.
+- AVFoundation camera and microphone capture.
+- ScreenCaptureKit display and window capture.
+- Configurable backgrounds, padding, source gap, split presets, corner radius,
+  source zoom, and viewport positioning.
+- Independent preview-cost and encoded-output settings.
+- Permission and source preflight with idle-only device rescans.
+- Local Screen and composited Screen + Webcam `.mov` recording.
+- Optional record-while-streaming behavior.
+- RTMP/RTMPS endpoint validation in the dependency-light build.
+- HaishinKit publishing build for real RTMP/RTMPS media output.
+- Runtime reconnect with interruption, outcome, and downtime metrics.
+- A/V drift, throughput, dropped-frame, and RTMP append-queue health.
+- Adaptive performance response to capture pressure and macOS system state.
+- Clip markers and redacted session reports.
+- Keychain-backed stream destination secrets.
+- Sparkle updates through signed ZIP artifacts.
+- Developer ID, hardened runtime, notarization, and DMG release automation.
 
-1. make capture, recording, preview, streaming state, permissions, packaging, and release QA boring;
-2. then add provider-first AI where it improves real user workflows;
-3. keep every live scene decision deterministic.
+## v0.3 Release Gates
 
-## What Exists
+- Complete long-duration RTMP and RTMP-plus-recording runs.
+- Validate short and sustained network interruption recovery.
+- Collect CPU, memory, and thread-count evidence under representative capture.
+- Confirm acceptable A/V drift and no unbounded RTMP queue growth.
+- Test packaged permission recovery on a clean macOS user or machine.
+- Prove the final signed, notarized, and stapled DMG through Gatekeeper.
 
-- SwiftPM package renamed to `MacStream` with `MacStreamCore` as the core library.
-- Single macOS studio window.
-- Fixed scenes: Face, Screen + Face, Screen, BRB.
-- AVFoundation camera preview.
-- ScreenCaptureKit display/window preview.
-- Capture preflight for camera, microphone, display/window, and permission state.
-- Idle-only capture rescans so device enumeration does not fight active capture.
-- Source toggles and levels wired through preview, capture, and signals.
-- Local Screen recording.
-- Local composited Screen + Face recording.
-- Preview stream mode and RTMP endpoint-validation mode.
-- Optional HaishinKit build path for full RTMP Screen and composited Screen + Face publish experiments.
-- Deterministic director engine with Suggest, Auto, and Paused modes.
-- Adaptive performance pressure handling from system state and capture health.
-- Clip markers and session report export with RTMP secrets redacted.
-- Local setup-rule seam with a rules fallback and an experimental MLX adapter shell.
+The detailed budgets and scenarios are in
+[v0.3-reliability-goal.md](v0.3-reliability-goal.md).
 
-## What Is Not Solid Enough Yet
+## Deferred
 
-- Full RTMP publish now routes `Screen + Face` through the compositor, but it is not yet the same proven quality bar as local recording.
-- Real RTMP publish still needs live QA with `MAC_STREAM_ENABLE_HAISHINKIT=1`, including remote PiP verification, A/V sync, bitrate stability, reconnect behavior, and long-session health.
-- Recording output still needs repeated playback/AV sync verification across long sessions.
-- Fresh-Mac permission/TCC flow needs QA with the packaged app and final bundle identifier.
-- Developer ID signing, notarization, stapling, and Gatekeeper launch need release-run proof.
-- Provider-first AI adapters are not implemented yet; current app runtime uses rules by default.
+- Multi-destination simultaneous streaming.
+- Presenter cutout and green-screen-style webcam composition.
+- Native camera effects such as Center Stage, Portrait, and Studio Light control.
+- Video editing and post-production.
+- AI setup, transcription, summaries, and cue explanations.
 
-## Core Build Priorities
-
-1. Prove packaged app launch and permission recovery on macOS 26.
-2. Prove local Screen and Screen + Face recording outputs with audio and no black/frozen frames.
-3. Prove HaishinKit RTMP Screen and composited Screen + Face outputs against a real ingest endpoint.
-4. Prove preview, recording, and streaming state transitions cannot overlap or get stuck.
-5. Keep adaptive mode tied to real capture pressure, not cosmetic status.
-6. Split high-risk media/store/release tests as implementation grows so source-text guardrails do not become the only safety net.
-
-## AI Build Priorities
-
-1. Add `OpenAICompatibleLocalIntelligenceProvider` for LM Studio, Ollama, llama.cpp, MLX server, and other user-owned endpoints.
-2. Add Foundation Models provider for macOS 26 Apple Intelligence systems.
-3. Add provider settings: base URL, model, optional API key, timeout, and capability probe.
-4. Add JSON setup-plan smoke test and visible provider fallback.
-5. Keep setup generation disabled during streaming, connecting, recording, or stopping.
-6. Only revisit managed MLX after benchmarking cold start, tokens/sec, memory pressure, GPU contention, unload reliability, model footprint, and crash isolation.
-
-## AI User Scenarios Worth Building
-
-- Setup assistant: convert “I’m teaching SwiftUI with screen and camera” into a typed director profile.
-- Preflight coach: explain missing permissions, muted mic, zero-level sources, wrong capture target, or missing destination.
-- Director explanation: explain why a cue appeared using local signals and stream health.
-- Clip review: title clip markers and summarize why they were interesting.
-- Session report: summarize health drops, scene changes, frozen-screen warnings, and capture pressure after a session.
-- Slow sampled-frame analysis: optional VLM review for screen safety or attention cues, converted into bounded typed signals outside the live hot path.
-
-## Non-Negotiables
-
-- No model-controlled live scene switching.
-- No direct VLM calls from the live director loop.
-- No AI work competing with capture/encode while live.
-- No claim of full Screen + Face RTMP streaming until the publish path uses composition.
-- No managed MLX runtime in the app until benchmarks prove it is worth owning.
+Existing experimental provider and MLX scaffolding remains optional, must compile
+in CI, and cannot enter or block the live capture path.

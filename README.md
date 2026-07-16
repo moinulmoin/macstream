@@ -4,138 +4,119 @@
 
 # MacStream
 
-### Build the stream layout, preview it, and go live with confidence.
-
-A Mac-native streaming studio for solo creators who stream camera and screen,
-with recording and AI as secondary, optional layers.
+### A native macOS studio for screen and webcam livestreams.
 
 ![macOS 26](https://img.shields.io/badge/macOS-26-111?logo=apple&logoColor=white)
 ![Swift 6](https://img.shields.io/badge/Swift-6.0-F05138?logo=swift&logoColor=white)
-![SwiftUI](https://img.shields.io/badge/UI-SwiftUI-0A84FF)
-![ScreenCaptureKit](https://img.shields.io/badge/capture-ScreenCaptureKit-5E6AD2)
-![Tests](https://img.shields.io/badge/tests-14%20suites-30A46C)
-![Version](https://img.shields.io/badge/version-v0.2.2-6366F1)
+![Release](https://img.shields.io/github/v/release/moinulmoin/macstream?display_name=tag)
+![CI](https://github.com/moinulmoin/macstream/actions/workflows/ci.yml/badge.svg)
 
-<img src=".github/assets/macstream-studio.png" width="860" alt="MacStream Studio showing preview, control room, and preflight" />
+<img src=".github/assets/macstream-studio.png" width="860" alt="MacStream Studio with the program preview and control room" />
 
 </div>
 
----
+## Overview
 
-## What is MacStream?
+MacStream is a focused streaming app for Apple Silicon Macs. It is built for
+solo creators who combine a display or window with a webcam: coding streams,
+product demos, design sessions, workshops, and similar live formats.
 
-MacStream is a macOS-native streaming studio for solo creators who do coding
-streams, product demos, design streams, workshops, founder livestreams,
-screen-share podcasts — any format that pairs a camera with a screen.
+The project prioritizes a reliable live path over broad production-suite
+features:
 
-It is deliberately narrower than OBS. Instead of a node graph and a thousand knobs,
-you get a polished Mac control room built around the actual solo-creator live
-streaming workflow:
+- native ScreenCaptureKit and AVFoundation capture;
+- configurable screen and webcam layouts;
+- RTMP/RTMPS publishing;
+- lightweight preview and adaptive performance controls;
+- local recording as an optional companion to a stream;
+- stream health, reconnect, and session diagnostics.
 
-- **Preview first.** The program monitor fills the window — not a tiny debug thumbnail.
-- **Layout is core.** Background, canvas padding, split ratios, source zoom, and
-  preview cost are first-class controls.
-- **Preflight before panic.** Scene, capture, sources, destination, and permissions are
-  checked before the stream starts.
-- **Explicit device pickers.** Choose your real camera, microphone, and display or
-  window with refresh controls — no guessing what "Desktop Audio" means.
-- **AI stays out of the core.** AI-assisted setup and transcription belong on the
-  roadmap, but the live path remains deterministic, testable, and optimized first.
+MacStream is not a video editor and is not trying to match every OBS feature.
+AI-assisted setup, transcription, summaries, and camera effects are deferred
+until capture, publishing, performance, and long-session reliability are proven.
 
----
+## Install
+
+Download the latest signed and notarized DMG from
+[GitHub Releases](https://github.com/moinulmoin/macstream/releases), open it,
+and drag `MacStream.app` to `Applications`.
+
+The ZIP asset on each release is used by Sparkle for in-app updates. First-time
+installations should use the DMG.
+
+MacStream requires macOS 26 and Camera, Microphone, and Screen Recording
+permissions for the relevant sources.
 
 ## Features
 
-### Studio & Preview
+### Studio
 
-- **Four fixed scenes:** `Face`, `Screen + Face`, `Screen`, and `BRB`
-- Full-bleed SwiftUI program preview
-- AVFoundation camera preview pipeline
-- ScreenCaptureKit display and window capture
-- Control Room panel with scene deck, stream/recording output, live mic input,
-  and output performance controls
-- Tabbed inspector for Live, Layout, Sources, and Health
-- Studio Chrome design system: dark color scheme, glass-morphism cards,
-  status badges with pulse animation, adaptive layout via `ViewThatFits`
+- Webcam, Screen + Webcam, Screen, and BRB scenes
+- Display and individual-window capture
+- Explicit camera, microphone, display, and window selection
+- Live microphone input meter
+- Preflight checks for permissions, sources, and stream destination
+- Tabbed Live, Layout, Sources, and Health controls
 
-### Source Management
+### Layout
 
-- Camera picker with refresh (supports all AVCaptureDevice cameras)
-- Microphone picker with refresh (supports all audio inputs)
-- Screen and window picker with refresh (up to 6 shareable windows)
-- Per-source enable/disable toggle with active-capture locking
-- Adjustable levels for camera and microphone with live mic meter
-- Camera enhancement controls: mirror toggle, exposure boost with brightness slider,
-  rotation picker
-- Selections persist across preview, recording, RTMP configuration, director
-  signals, and session reports
+- Side-by-side screen and webcam presets
+- Adjustable source split, gap, and canvas padding
+- Independent screen and webcam zoom and viewport positioning
+- Adjustable source corner radius
+- Preset colors, custom colors, and local background images
+- Preview quality controls independent from encoded output quality
 
-### Recording & Streaming
+The program preview and the stream/recording compositor share the same layout
+settings so the configured output is represented before going live.
 
-- Local `.mov` recording for `Screen` (system audio + mic audio)
-- Local composited `.mov` recording for `Screen + Face` (camera PiP baked into
-  the video frame)
-- Destination presets for Twitch, YouTube, Facebook, X, Kick, and Custom
-- RTMP/RTMPS endpoint validation in the default build
-- Full RTMP/RTMPS publishing for `Screen` and composited `Screen + Face`
-  behind the HaishinKit build flag
-- Stream keys stored in Keychain and redacted in UI, logs, events, and exports
-- Live capture health monitoring: TX bytes/sec, dropped frames, capture FPS
-- Rich stream state: `offline → connecting → live → degraded → failed`
-- In-app auto-update via Sparkle — **Check for Updates…** in **Settings → About & Updates**, with updates delivered from EdDSA-signed GitHub Releases (`appcast.xml`)
+### Streaming And Recording
 
-### AI Roadmap
+- RTMP and RTMPS publishing with the HaishinKit release build
+- Destination presets for Twitch, YouTube, Facebook, X, Kick, and custom ingest
+- Stream keys stored in Keychain and redacted from UI, logs, and exports
+- Automatic runtime reconnect with recovery outcome and downtime tracking
+- Optional record-while-streaming workflow
+- Local `.mov` recording for Screen and composited Screen + Webcam
+- Configurable output resolution and frame rate
+- Sparkle automatic updates from signed release ZIPs
 
-- AI-assisted setup, live transcription, summaries, and cue explanations are
-  roadmap features.
-- Any automated scene intelligence must stay deterministic and outside the hot
-  capture path.
-- Model-backed features must never compete with streaming, capture, publishing,
-  or Apple Silicon performance work.
+### Performance And Health
 
-### Adaptive Performance
+- Adaptive, Efficiency, Balanced, and Responsive performance modes
+- Reduced-cost preview without reducing encoded stream quality
+- Thermal state, memory pressure, Low Power Mode, FPS, and dropped-frame signals
+- RTMP throughput, append backlog, and backpressure monitoring
+- Current and maximum observed A/V drift
+- Recovery, interruption, and recording status in session reports
+- Long-session process metrics recorder for CPU, memory, and thread-count QA
 
-- Four performance modes: `Adaptive`, `Efficiency`, `Balanced`, `Responsive`
-- `Adaptive` watches real-time system state: dropped frames, capture FPS,
-  thermal pressure, Low Power Mode, memory pressure
-- Lowers capture resolution, preview frame rate, and signal sampling under pressure
-- Recovers to full quality when system health stabilizes
-- Lock-free: capture, recording, and publishing state machines never overlap or
-  get stuck
+## Current Scope
 
-### Clip Markers & Session Reports
+MacStream is a personal-use prototype shared for testing. It may contain bugs,
+and streams should be validated with a private or test destination before relying
+on it for important broadcasts.
 
-- Manual clip markers during capture (Cmd+Shift+M)
-- Stream cue markers for scene changes and signal spikes
-- JSON clip export with timestamp, scene, source state, and signal snapshot
-- Session reports: destination, transport, recording path, source states,
-  health timeline, signal history, clip markers, system pressure
-- RTMP secrets redacted in all exports
-- Duplicate-safe filenames: no collision on rapid re-export
+| Area | Current direction |
+| --- | --- |
+| Streaming | Primary product workflow |
+| Recording | Optional local copy during or outside a stream |
+| Video editing | Out of scope |
+| Multi-destination streaming | Planned, not implemented |
+| Native camera effects | Under evaluation |
+| AI and transcription | Deferred roadmap work |
+| Intel Macs | Not currently targeted |
 
-### Future AI Setup Assistant
+## Build From Source
 
-- Provider-first architecture is planned for optional setup help and future
-  transcription workflows.
-- Local and OpenAI-compatible providers remain opt-in, disabled during capture,
-  and outside the live hot path.
-- Experimental MLX adapter scaffolding is behind the `MAC_STREAM_ENABLE_MLX=1`
-  build flag.
+Prerequisites:
 
----
-
-## Getting Started
-
-### Prerequisites
-
-- **macOS 26** SDK and matching Xcode toolchain
-- **Swift 6.0**
-- Camera, Microphone, and Screen Recording permissions granted in System Settings
-
-### Quick Start
+- Xcode with the macOS 26 SDK
+- Swift 6
+- Apple Silicon Mac
 
 ```bash
-git clone git@github.com:moinulmoin/macstream.git
+git clone https://github.com/moinulmoin/macstream.git
 cd macstream
 
 swift build
@@ -143,156 +124,69 @@ swift test
 ./script/build_and_run.sh
 ```
 
-The packaged app lands at:
+The packaged app is written to `dist/MacStream.app`.
 
-```text
-dist/MacStream.app
-```
-
-Bundle identifier:
-
-```text
-com.ideaplexa.macstream
-```
-
-### Going Live
-
-1. Open **Settings → Destination**
-2. Pick a quick-connect platform preset (Twitch, YouTube, Facebook, etc.)
-3. Confirm or paste the **Server URL**
-4. Paste your private **Stream Key** in the dedicated field — it's stored in Keychain
-   and never shown in plaintext
-5. Build with the HaishinKit flag enabled for real RTMP publishing:
-
-   ```bash
-   MAC_STREAM_ENABLE_HAISHINKIT=1 swift build
-   ```
-
-6. Choose `Screen + Face` or `Screen` as your scene
-7. Confirm **Preflight** is green — all permissions granted, sources active, destination ready
-8. Click **Start Stream** in the Control Room
-
-**Important:** The default build validates RTMP endpoints but does not publish media.
-You must build with `MAC_STREAM_ENABLE_HAISHINKIT=1` to send video and audio to your
-ingest server. The Control Room label reflects this honestly: "Endpoint Check" in the
-default build, "Go Live" in the HaishinKit build.
-
-**Recording without streaming** works in all builds — no flags required:
-
-1. Choose `Screen` or `Screen + Face` as your scene
-2. Click **Start Recording** in the Control Room
-3. Local `.mov` files appear in `~/Movies/MacStream/`
-
----
-
-## Build Variants
-
-| Variant | Command | What you get |
-|---------|---------|--------------|
-| **Default** | `swift build` | Dependency-light. Full studio, preview, recording, endpoint validation. No media published. |
-| **HaishinKit** | `MAC_STREAM_ENABLE_HAISHINKIT=1 swift build` | Full RTMP/RTMPS publish for Screen and composited Screen+Face |
-| **MLX** | `MAC_STREAM_ENABLE_MLX=1 swift build` | Experimental on-device MLX adapter for setup plan generation |
-| **Full** | `MAC_STREAM_ENABLE_HAISHINKIT=1 MAC_STREAM_ENABLE_MLX=1 swift build` | Both HaishinKit and MLX |
-
-All four configurations are validated in CI on every push to `main`.
+### Build Variants
 
 ```bash
-# Dependency-light default
+# Dependency-light development build.
 swift build
 
-# RTMP publishing path
+# Real RTMP/RTMPS publishing.
 MAC_STREAM_ENABLE_HAISHINKIT=1 swift build
 
-# Experimental MLX adapter
+# Experimental adapter compile check only; not part of the core product path.
 MAC_STREAM_ENABLE_MLX=1 swift build
 
-# Signed local app bundle (ad-hoc signing by default)
+# Package a local signed app bundle.
 ./script/package_macos_app.sh
 
-# Signed local app bundle with Developer ID
-MAC_STREAM_CODESIGN_IDENTITY="Developer ID Application: Ideaplexa LLC (53P98M92V7)" \
-MAC_STREAM_VERSION=0.2.2 \
-MAC_STREAM_BUILD_NUMBER=1 \
-./script/package_macos_app.sh
+# Create a local DMG from the packaged app.
+./script/package_macos_dmg.sh
 ```
 
----
+Release artifacts are built by GitHub Actions with the HaishinKit publishing
+path enabled, Developer ID signing, hardened runtime, Apple notarization, and
+stapled tickets.
 
 ## Architecture
 
-```
+```text
 Sources/
-  MacStream/          SwiftUI app shell, 13 views, native preview wrappers, support utilities
-  MacStreamCore/      Library: models, StudioStore (single source of truth), 11 services
+  MacStream/           SwiftUI application and native preview adapters
+  MacStreamCore/       Models, StudioStore, capture, composition, and publishing
 Tests/
-  MacStreamCoreTests/ 14 test suites (Swift Testing), shared fakes in TestSupport.swift
-Resources/            Info.plist template, release entitlements, app icon source
-script/               build, package, and icon generation tooling
+  MacStreamCoreTests/  Swift Testing suites and injected system fakes
+Resources/             Info.plist, entitlements, and application assets
+script/                Build, packaging, release, and reliability tooling
 ```
 
-**Core design rules:**
+Core rules:
 
-- `StudioStore` is the single `@MainActor @Observable` source of truth — all state
-  mutations flow through it
-- `MediaPipeline` owns capture, recording, and publish state — the live hot path
-  stays free of per-frame allocations and main-thread hops
-- `DirectorEngine` consumes typed `SignalSnapshot`s — no model output drives
-  live scene switching
-- Stream keys live in Keychain and are redacted in every surface: UI, logs, events,
-  reports, and exports
-- All service dependencies are injected via protocol abstractions — preview stubs
-  and real system implementations share the same interface
+- `StudioStore` is the single `@MainActor @Observable` source of truth.
+- `MediaPipeline` implementations own capture, recording, and publishing state.
+- Sample-buffer hot paths avoid per-frame allocations and main-thread hops.
+- Stream keys remain in Keychain and are redacted from every exported surface.
+- Model output cannot control live scene switching or enter the capture hot path.
 
-Read the full specs:
+## Development
+
+Run the default and release publishing test configurations from the repository
+root:
+
+```bash
+swift test
+MAC_STREAM_ENABLE_HAISHINKIT=1 swift test
+```
+
+Useful project documents:
 
 - [Architecture](docs/architecture.md)
-- [MVP Scope](docs/mvp-scope.md)
-- [Product Brief](docs/product-brief.md)
-- [Technical Risks](docs/technical-risks.md)
-- [OBS Core Feature Map](docs/obs-core-feature-map.md)
-- [Benchmark Plan](docs/benchmark-plan.md)
 - [Current State](docs/current-state.md)
+- [Reliability Goal](docs/v0.3-reliability-goal.md)
+- [QA Checklist](docs/qa-checklist.md)
+- [Release Process](docs/releasing.md)
+- [Launch Readiness](docs/launch-readiness.md)
 
----
-
-## Status
-
-**v0.2.2 core streaming candidate — layout and performance first.**
-
-What is production-quality today:
-
-- Studio shell: full-bleed preview, explicit scene deck, responsive layout
-- Source UX: real device pickers, per-source controls, live mic level, persistence
-- Layout controls: background, canvas padding, split presets, screen/webcam zoom
-- Preflight: capture permissions, device readiness, destination validation
-- Local recording: Screen and composited Screen+Face with audio
-- Adaptive performance: thermal/memory/pressure-aware capture scaling
-- Clip markers and session reports with secret redaction
-- AI/provider scaffolding is present but optional and outside the core live path
-- 14 test suites, CI on every push, release pipeline with signing and notarization
-
-Before calling this release-grade streaming software, the remaining gates are
-concrete verification items — not architecture unknowns:
-
-- Live RTMP ingest QA: remote Screen+Face PiP, long-session A/V sync, bitrate
-  stability, reconnect
-- Packaged-app permission recovery on a fresh Mac
-- Developer ID signing → notarization → stapling → Gatekeeper end-to-end proof
-
-Track progress on the [Launch Readiness Checklist](docs/launch-readiness.md).
-
----
-
-## Operations
-
-- [Release Process](docs/releasing.md) — versioning, tagging, CI/CD pipeline, signing, notarization
-- [QA Checklist](docs/qa-checklist.md) — full pre-release quality gate
-- [Launch Readiness Checklist](docs/launch-readiness.md) — all gates before public release
-
----
-
-## Requirements
-
-- macOS 26
-- Swift 6.0
-- Camera, Microphone, and Screen Recording permissions for relevant workflows
+Issues and focused pull requests are welcome. Do not include stream keys,
+credentials, signed certificates, or generated build output.

@@ -1,41 +1,52 @@
 # MacStream Product Brief
 
-MacStream is a macOS 26-native streaming studio for solo creators who stream camera and screen together. It is not trying to become OBS feature parity. The first product promise is:
+MacStream is a native macOS streaming studio for solo creators who combine a
+screen or window with a webcam. The primary product promise is:
 
-> Preview, record, and prove the stream before going live.
+> Configure the output, prove it in preview, and keep it reliable while live.
 
-The wedge is a calm Mac-native director: it watches local signals, protects the stream from obvious mistakes, and suggests or performs bounded scene changes. AI supports setup, review, summaries, clip naming, and explanations; it does not own live switching.
+## Audience
 
-## First Audience
+- coding and development streams;
+- product and design demos;
+- workshops and teaching;
+- founder livestreams;
+- screen-share podcasts and presentations.
 
-- coding streams
-- product demos
-- design streams
-- workshops and teaching
-- founder livestreams
-- screen-share podcasts
+## Core Workflow
 
-## First Workflow
+1. Select the camera, microphone, and display or window.
+2. Confirm permissions, source readiness, audio input, and destination preflight.
+3. Configure the canvas background, padding, source split, viewport, and preview cost.
+4. Preview Webcam, Screen + Webcam, Screen, or BRB.
+5. Optionally make a short local proof recording.
+6. Start RTMP/RTMPS publishing, optionally recording the same session locally.
+7. Monitor throughput, dropped frames, A/V drift, queue pressure, and recovery state.
+8. Stop cleanly and review the exported session diagnostics when needed.
 
-1. Pick camera, mic, and screen/window target.
-2. Verify Camera, Microphone, Screen Recording, source levels, and capture target readiness.
-3. Preview the fixed scenes: Face, Screen + Face, Screen, and BRB.
-4. Record a local proof clip, especially `Screen + Face`, before trusting RTMP.
-5. Start a Preview session or an RTMP endpoint check.
-6. The deterministic director watches speech, screen motion, active app, face presence, idle state, muted mic, frozen screen, stream health, and capture pressure.
-7. The app suggests a cue, or switches automatically when the user enables Auto mode and the target scene is available for the active media path.
+## Product Boundaries
 
-## Product Principle
+MacStream is deliberately narrower than OBS:
 
-Minimal means fewer knobs, not a shallow director. The first app should have a small surface area and one deep behavior: it helps a solo creator avoid babysitting production while live.
+- streaming is the primary workflow;
+- recording is a companion capability, not an editing pipeline;
+- multi-destination publishing is planned but not implemented;
+- video editing and post-production are out of scope;
+- automatic camera effects are optional future enhancements;
+- AI features are deferred until long-session reliability and performance gates pass.
 
-## AI Principle
+## Reliability Principle
 
-Provider-first. MacStream should support:
+The live media path must be deterministic, observable, and bounded. Capture,
+composition, recording, publishing, and reconnect behavior cannot depend on a
+model provider or perform unbounded work on sample-buffer callbacks.
 
-1. Foundation Models for native Apple-local setup/review help on supported macOS 26 systems.
-2. OpenAI-compatible local providers such as LM Studio, Ollama, llama.cpp servers, MLX servers, or other user-owned endpoints.
-3. Rule-based fallback when no provider is configured or a provider is offline.
-4. Experimental MLX compile-time adapter only after provider contracts and benchmarking justify it.
+The app should fail explicitly and recover when possible. It must never hide
+stream-key errors, queue saturation, recording failure, or unhealthy A/V timing
+behind a cosmetic "live" state.
 
-AI output must become typed setup/review artifacts before it affects the app. The live director consumes deterministic thresholds, scene availability, source state, and capture health; it never waits on a model token stream.
+## Future AI Principle
+
+Future setup assistance, transcription, summaries, and cue explanations may be
+provider-backed, but they must remain optional and outside the live hot path.
+Model output must not control live scene switching.

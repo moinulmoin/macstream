@@ -28,8 +28,10 @@ Tagged releases are built by `.github/workflows/release.yml` on macOS 26 arm64 r
 5. Signs with hardened runtime and release entitlements.
 6. Submits the app zip to Apple notarization with `xcrun notarytool`.
 7. Staples and validates the notarization ticket.
-8. Creates `MacStream-vX.Y.Z-macos-arm64.zip` plus a `.sha256` file, then verifies the zip contains the HaishinKit RTMP release variant.
-9. Uploads workflow artifacts and publishes or updates the GitHub Release.
+8. Creates `MacStream-vX.Y.Z-macos-arm64.zip` for Sparkle, plus its `.sha256` file, then verifies the zip contains the HaishinKit RTMP release variant.
+9. Creates and Developer-ID signs `MacStream-vX.Y.Z-macos-arm64.dmg` with `MacStream.app` and an `/Applications` link.
+10. Notarizes, staples, and Gatekeeper-validates the DMG, then generates its post-staple `.sha256` file.
+11. Uploads both distribution formats and publishes or updates the GitHub Release.
 
 Required GitHub Actions secrets:
 
@@ -51,7 +53,7 @@ Developer ID Application: Ideaplexa LLC (53P98M92V7)
 
 `MAC_STREAM_MACOS_CERTIFICATE_P12_BASE64` is the base64-encoded `.p12` Developer ID Application certificate. `MAC_STREAM_APP_SPECIFIC_PASSWORD` is an Apple app-specific password for the Apple ID that can submit notarization requests for `MAC_STREAM_APPLE_TEAM_ID`.
 
-MacStream ships Sparkle auto-updates. Releases are delivered from GitHub Releases via an EdDSA-signed appcast (`appcast.xml` at the repo root), in addition to the release zip and SHA256 checksum on GitHub.
+MacStream ships Sparkle auto-updates. The EdDSA-signed ZIP is the Sparkle update payload. The signed, notarized, and stapled DMG is the first-time installer. Both formats and their SHA256 checksums are published on GitHub Releases.
 
 ## Sparkle Auto-Updates
 
@@ -131,19 +133,24 @@ git push origin vX.Y.Z
 
 Manual dry runs are available from the `Release` workflow in GitHub Actions. Manual publishing requires `publish_release=true` and an existing matching tag.
 
-## Artifact
+## Artifacts
 
-The release workflow creates the signed, notarized, stapled zip:
-
-Artifact naming:
+The release workflow creates two signed and notarized distribution formats:
 
 ```text
+MacStream-vX.Y.Z-macos-arm64.dmg
+MacStream-vX.Y.Z-macos-arm64.dmg.sha256
 MacStream-vX.Y.Z-macos-arm64.zip
+MacStream-vX.Y.Z-macos-arm64.zip.sha256
 ```
 
-Record the SHA256 digest from the uploaded `.sha256` file or with:
+Use the DMG for first-time installation. Keep the ZIP as the Sparkle update
+payload because Sparkle signs and references that exact archive in `appcast.xml`.
+
+Verify either artifact with:
 
 ```bash
+shasum -a 256 dist/MacStream-vX.Y.Z-macos-arm64.dmg
 shasum -a 256 dist/MacStream-vX.Y.Z-macos-arm64.zip
 ```
 
@@ -160,6 +167,8 @@ MAC_STREAM_BUILD_ARCH="$(uname -m)" \
 
 /usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" dist/MacStream.app/Contents/Info.plist
 codesign --verify --strict --verbose=2 dist/MacStream.app
+./script/package_macos_dmg.sh
+hdiutil verify dist/MacStream-v0.2.0-macos-"$(uname -m)".dmg
 ```
 
 To locally simulate release signing, provide `MAC_STREAM_CODESIGN_IDENTITY` and require hardened runtime:
@@ -180,8 +189,8 @@ That release simulation intentionally fails while `Resources/Info.plist` still c
 
 ## QA Checklist
 
-1. Download the release zip from GitHub.
-2. Unzip and launch `MacStream.app`.
+1. Download the release DMG from GitHub.
+2. Verify its SHA256, open it, and drag `MacStream.app` to `Applications`.
 3. Confirm bundle identifier `com.ideaplexa.macstream`.
 4. Test Camera, Microphone, and Screen Recording permission flows.
 5. Grant Screen Recording, quit/reopen, and confirm access is detected.
@@ -195,6 +204,7 @@ That release simulation intentionally fails while `Resources/Info.plist` still c
 13. Verify setup/AI assistance is hidden or disabled during active capture and falls back visibly when no provider is configured.
 14. Verify RTMP destination persistence and redaction in events/exports.
 15. Export clip markers and session report twice in quick succession; confirm filenames do not collide.
+16. Confirm the Sparkle ZIP remains downloadable and matches the enclosure URL and signature in `appcast.xml`.
 
 ## Rollback
 

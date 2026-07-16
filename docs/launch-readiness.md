@@ -132,10 +132,14 @@ public release.
 
 ---
 
-## 6. AI Provider Integration
+## 6. Deferred AI Roadmap
 
 > Source: [qa-checklist.md](qa-checklist.md), [architecture.md](architecture.md),
 > [current-state.md](current-state.md)
+
+This section is future work, not a v0.3 release gate. Existing provider
+scaffolding must remain isolated from capture and may not delay core streaming
+reliability work.
 
 - [ ] Rules provider generates valid setup plans (keyword match: "podcast",
   "coding", "demo", "teaching")
@@ -172,6 +176,8 @@ public release.
 - [ ] Notarization submits and completes without manual intervention
 - [ ] Stapling validates after notarization
 - [ ] GitHub Release is created with:
+  - `MacStream-vX.Y.Z-macos-arm64.dmg`
+  - `MacStream-vX.Y.Z-macos-arm64.dmg.sha256`
   - `MacStream-vX.Y.Z-macos-arm64.zip`
   - `MacStream-vX.Y.Z-macos-arm64.zip.sha256`
   - Release notes with version, sha256, and verification commands
@@ -187,8 +193,8 @@ public release.
 - [ ] All tests pass before tag is created
 - [ ] Annotated tag created: `git tag -a vX.Y.Z -m "MacStream vX.Y.Z"`
 - [ ] Tag pushed: `git push origin vX.Y.Z`
-- [ ] Release zip naming follows convention: `MacStream-vX.Y.Z-macos-arm64.zip`
-- [ ] SHA256 file is accurate and downloadable
+- [ ] Release DMG and Sparkle ZIP names follow convention
+- [ ] Both SHA256 files are accurate and downloadable
 - [ ] Release notes include verification commands
 - [ ] No build artifacts in git (`dist/`, `.build/`, `.swiftpm/` are gitignored)
 - [ ] Version in `Info.plist` matches tag
@@ -218,7 +224,7 @@ public release.
 Run the full QA checklist from a release artifact on a Mac that has never run the
 dev build.
 
-- [ ] App launches from release zip (no quarantine block)
+- [ ] App installs from release DMG and launches without a quarantine block
 - [ ] Full QA checklist pass from fresh Mac
 - [ ] Clip markers export: two rapid exports produce distinct filenames
 - [ ] Session reports export: two rapid exports produce distinct filenames,

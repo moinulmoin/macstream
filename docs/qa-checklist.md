@@ -1,6 +1,6 @@
 # MacStream QA Checklist
 
-Use this checklist before release promotion and after any media-pipeline change. Prefer testing the packaged app from `dist/MacStream.app` or a release zip, not a raw executable.
+Use this checklist before release promotion and after any media-pipeline change. Prefer testing the packaged app from `dist/MacStream.app` or the release DMG, not a raw executable.
 
 ## Build And Launch
 
@@ -30,7 +30,7 @@ Use this checklist before release promotion and after any media-pipeline change.
 - Confirm required sources cannot be turned off while active capture depends on them.
 - Confirm source levels are persisted across relaunch.
 - Confirm screen target preference persists across relaunch.
-- Confirm camera mirror, rotation, and auto light settings persist across relaunch.
+- Confirm camera mirror, rotation, and exposure boost settings persist across relaunch.
 
 ## Preview Scenes
 
@@ -84,18 +84,21 @@ Use this checklist before release promotion and after any media-pipeline change.
 - Confirm report includes transport, health, sources, selected capture target, events, and recording path.
 - Confirm report excludes RTMP secrets.
 
-## AI Provider Behavior
+## Optional Provider Scaffolding
 
-- Confirm setup assistance is visible only while capture is idle.
-- Confirm starting preview, streaming, recording, connecting, or stopping disables setup generation.
-- Confirm the default rules provider produces a setup plan without a configured model provider.
-- Confirm provider offline/error states surface as fallback status instead of blocking capture.
+These checks protect existing optional scaffolding. They are not a v0.3 feature
+gate and must not take priority over streaming reliability.
+
+- Confirm optional setup assistance is visible only while capture is idle.
+- Confirm capture never waits for or depends on a model provider.
+- Confirm provider offline/error states cannot block preview, recording, or streaming.
 - Confirm director cues during live capture come from deterministic signals, not model output.
 
-## Release Artifact
+## Release Artifacts
 
-- Download the GitHub release zip.
-- Unzip and launch outside the repo.
-- Verify Gatekeeper accepts the app.
-- Verify notarization/stapling if this is a signed release.
+- Download the GitHub release DMG and its SHA256 file.
+- Verify the checksum, open the DMG, and install the app in `Applications`.
+- Verify Gatekeeper accepts both the DMG and installed app.
+- Verify notarization and stapling on the DMG and app.
+- Confirm the Sparkle ZIP and checksum are also present on the release.
 - Repeat the permission and recording smoke checks from the release artifact.

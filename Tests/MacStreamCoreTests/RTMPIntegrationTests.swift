@@ -20,10 +20,13 @@ func haishinKitPublisherSendsSyntheticVideoToConfiguredRTMPIngest() async throws
     let framesPerSecond = min(max(Int(environment["MAC_STREAM_RTMP_INTEGRATION_FPS"] ?? "") ?? 15, 10), 30)
     let expectedFrameCount = (warmupSeconds + durationSeconds) * framesPerSecond
 
-    let publisher = HaishinKitRTMPPublisher(target: RTMPPublishTarget(
-        connectionURL: connectionURL,
-        streamName: streamName
-    ))
+    let publisher = HaishinKitRTMPPublisher(
+        target: RTMPPublishTarget(
+            connectionURL: connectionURL,
+            streamName: streamName
+        ),
+        isHardwareAcceleratedEnabled: environment["MAC_STREAM_RTMP_INTEGRATION_SOFTWARE_ENCODER"] != "1"
+    )
     let configuration = MediaPipelineConfiguration(
         maxVideoWidth: 640,
         framesPerSecond: framesPerSecond,

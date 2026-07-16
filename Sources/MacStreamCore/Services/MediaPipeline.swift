@@ -4289,6 +4289,7 @@ enum RTMPPublisherShutdown {
 #if MAC_STREAM_HAS_HAISHINKIT
 final class HaishinKitRTMPPublisher: RTMPPublisher, @unchecked Sendable {
     private let target: RTMPPublishTarget
+    private let isHardwareAcceleratedEnabled: Bool
     private let connection = RTMPConnection(
         fourCcList: nil,
         videoFourCcInfoMap: nil,
@@ -4312,8 +4313,9 @@ final class HaishinKitRTMPPublisher: RTMPPublisher, @unchecked Sendable {
         await mixer.append(pending.sampleBuffer, track: pending.track)
     }
 
-    init(target: RTMPPublishTarget) {
+    init(target: RTMPPublishTarget, isHardwareAcceleratedEnabled: Bool = true) {
         self.target = target
+        self.isHardwareAcceleratedEnabled = isHardwareAcceleratedEnabled
         let events = AsyncStream.makeStream(
             of: RTMPPublisherEvent.self,
             bufferingPolicy: .unbounded
@@ -4342,7 +4344,7 @@ final class HaishinKitRTMPPublisher: RTMPPublisher, @unchecked Sendable {
             allowFrameReordering: false,
             dataRateLimits: [Double(videoBitrate) / 8, 1.0],
             isLowLatencyRateControlEnabled: true,
-            isHardwareAcceleratedEnabled: true,
+            isHardwareAcceleratedEnabled: isHardwareAcceleratedEnabled,
             expectedFrameRate: Double(configuration.framesPerSecond)
         ))
         try await stream.setAudioSettings(AudioCodecSettings(

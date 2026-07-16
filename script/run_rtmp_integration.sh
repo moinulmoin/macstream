@@ -9,6 +9,7 @@ STREAM_NAME="${MAC_STREAM_RTMP_INTEGRATION_STREAM_NAME:-macstream-integration}"
 MEDIAMTX_VERSION="1.18.2"
 MEDIAMTX_BIN="${MAC_STREAM_MEDIAMTX_BIN:-}"
 SWIFT_SCRATCH_PATH="${MAC_STREAM_RTMP_INTEGRATION_SWIFT_SCRATCH_PATH:-}"
+SOFTWARE_ENCODER="${MAC_STREAM_RTMP_INTEGRATION_SOFTWARE_ENCODER:-0}"
 
 if [[ ! "$DURATION" =~ ^[1-9][0-9]*$ ]]; then
   echo "MAC_STREAM_RTMP_INTEGRATION_DURATION must be a positive integer." >&2
@@ -24,6 +25,10 @@ if [[ ! "$FPS" =~ ^[1-9][0-9]*$ ]] || (( FPS < 10 || FPS > 30 )); then
 fi
 if [[ ! "$PORT" =~ ^[1-9][0-9]*$ ]] || (( PORT > 65535 )); then
   echo "MAC_STREAM_RTMP_INTEGRATION_PORT must be a valid TCP port." >&2
+  exit 2
+fi
+if [[ "$SOFTWARE_ENCODER" != "0" && "$SOFTWARE_ENCODER" != "1" ]]; then
+  echo "MAC_STREAM_RTMP_INTEGRATION_SOFTWARE_ENCODER must be 0 or 1." >&2
   exit 2
 fi
 
@@ -127,6 +132,7 @@ fi
   MAC_STREAM_RTMP_INTEGRATION_DURATION="$DURATION" \
   MAC_STREAM_RTMP_INTEGRATION_WARMUP_DURATION="$WARMUP_DURATION" \
   MAC_STREAM_RTMP_INTEGRATION_FPS="$FPS" \
+  MAC_STREAM_RTMP_INTEGRATION_SOFTWARE_ENCODER="$SOFTWARE_ENCODER" \
   "${swift_test_command[@]}" --filter haishinKitPublisherSendsSyntheticVideoToConfiguredRTMPIngest
 ) >"$PUBLISH_LOG" 2>&1 &
 PUBLISH_PID=$!

@@ -97,6 +97,8 @@ jobs:
 
       - name: Run real RTMP publisher integration
         shell: bash
+        env:
+          MAC_STREAM_RTMP_INTEGRATION_SOFTWARE_ENCODER: "1"
         run: |
           set -euo pipefail
           if ! brew list --versions ffmpeg@7 >/dev/null 2>&1; then

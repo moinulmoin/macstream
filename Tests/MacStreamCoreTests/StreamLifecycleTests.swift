@@ -15,9 +15,9 @@ private func waitUntilStreamIsLive(_ store: StudioStore) async {
 
 @MainActor
 private func waitUntilStreamIsOffline(_ store: StudioStore) async {
-    for _ in 0..<100 {
+    for _ in 0..<200 {
         guard store.streamState != .offline || store.isStreamStopping else { return }
-        await Task.yield()
+        try? await Task.sleep(for: .milliseconds(5))
     }
 }
 
@@ -621,7 +621,7 @@ func stopStreamIsIdempotentWhilePipelineStops() async {
 
     #expect(pipeline.stopCount == 1)
 
-    try? await Task.sleep(for: .milliseconds(100))
+    await waitUntilStreamIsOffline(store)
 
     #expect(!store.isStreamStopping)
     #expect(store.streamState == .offline)
@@ -655,7 +655,7 @@ func connectingStreamStartSuppressesDuplicateStartsAndDestinationEdits() async {
     #expect(store.destination.name == "Preview Session")
     #expect(pipeline.startCount == 1)
 
-    try? await Task.sleep(for: .milliseconds(100))
+    await waitUntilStreamIsLive(store)
 
     #expect(store.streamState == .live)
     #expect(!store.canStartStream)
@@ -671,7 +671,7 @@ func liveStreamRejectsDestinationMutation() async {
     let store = StudioStore(mediaPipeline: pipeline)
 
     store.startStream()
-    try? await Task.sleep(for: .milliseconds(100))
+    await waitUntilStreamIsLive(store)
 
     #expect(store.streamState == .live)
     #expect(!store.canEditDestination)
@@ -704,7 +704,7 @@ func connectingStreamStartSuppressesRecordingStart() async {
 
     #expect(pipeline.startRecordingCount == 0)
 
-    try? await Task.sleep(for: .milliseconds(100))
+    await waitUntilStreamIsLive(store)
 
     #expect(store.streamState == .live)
     #expect(store.canStartRecording)

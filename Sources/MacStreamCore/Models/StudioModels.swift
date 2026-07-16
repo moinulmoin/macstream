@@ -302,6 +302,8 @@ public struct StreamHealth: Codable, Equatable, Sendable {
     public var audioDeliveryState: AudioDeliveryState
     public var microphoneDeliveryState: AudioDeliveryState
     public var rtmpAudioAppendRejections: Int
+    public var avDriftMilliseconds: Int
+    public var maxAbsoluteAVDriftMilliseconds: Int
 
     public init(
         bitrateKbps: Int = 0,
@@ -313,7 +315,9 @@ public struct StreamHealth: Codable, Equatable, Sendable {
         roundTripMs: Int = 0,
         audioDeliveryState: AudioDeliveryState = .inactive,
         microphoneDeliveryState: AudioDeliveryState = .inactive,
-        rtmpAudioAppendRejections: Int = 0
+        rtmpAudioAppendRejections: Int = 0,
+        avDriftMilliseconds: Int = 0,
+        maxAbsoluteAVDriftMilliseconds: Int = 0
     ) {
         self.bitrateKbps = bitrateKbps
         self.outboundBytesPerSecond = outboundBytesPerSecond
@@ -325,6 +329,8 @@ public struct StreamHealth: Codable, Equatable, Sendable {
         self.audioDeliveryState = audioDeliveryState
         self.microphoneDeliveryState = microphoneDeliveryState
         self.rtmpAudioAppendRejections = rtmpAudioAppendRejections
+        self.avDriftMilliseconds = avDriftMilliseconds
+        self.maxAbsoluteAVDriftMilliseconds = max(0, maxAbsoluteAVDriftMilliseconds)
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -338,6 +344,8 @@ public struct StreamHealth: Codable, Equatable, Sendable {
         case audioDeliveryState
         case microphoneDeliveryState
         case rtmpAudioAppendRejections
+        case avDriftMilliseconds
+        case maxAbsoluteAVDriftMilliseconds
     }
 
     public init(from decoder: any Decoder) throws {
@@ -360,6 +368,14 @@ public struct StreamHealth: Codable, Equatable, Sendable {
         rtmpAudioAppendRejections = try container.decodeIfPresent(
             Int.self,
             forKey: .rtmpAudioAppendRejections
+        ) ?? 0
+        avDriftMilliseconds = try container.decodeIfPresent(
+            Int.self,
+            forKey: .avDriftMilliseconds
+        ) ?? 0
+        maxAbsoluteAVDriftMilliseconds = try container.decodeIfPresent(
+            Int.self,
+            forKey: .maxAbsoluteAVDriftMilliseconds
         ) ?? 0
     }
 }

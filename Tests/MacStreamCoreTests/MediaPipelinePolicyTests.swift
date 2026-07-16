@@ -155,6 +155,8 @@ func streamHealthDecodesLegacyPayloadWithInactiveAudioDelivery() throws {
     #expect(health.audioDeliveryState == .inactive)
     #expect(health.microphoneDeliveryState == .inactive)
     #expect(health.rtmpAudioAppendRejections == 0)
+    #expect(health.avDriftMilliseconds == 0)
+    #expect(health.maxAbsoluteAVDriftMilliseconds == 0)
 }
 
 @Test
@@ -162,7 +164,9 @@ func streamHealthRoundTripsAudioDeliveryFields() throws {
     let health = StreamHealth(
         audioDeliveryState: .stalled,
         microphoneDeliveryState: .active,
-        rtmpAudioAppendRejections: 7
+        rtmpAudioAppendRejections: 7,
+        avDriftMilliseconds: -42,
+        maxAbsoluteAVDriftMilliseconds: 87
     )
 
     let decoded = try JSONDecoder().decode(
@@ -171,6 +175,35 @@ func streamHealthRoundTripsAudioDeliveryFields() throws {
     )
 
     #expect(decoded == health)
+}
+
+@Test
+func avTimingHealthTracksSignedAndMaximumAcceptedSampleDrift() {
+    var tracker = AVTimingHealthTracker()
+
+    tracker.recordVideoPresentationTime(CMTime(seconds: 10, preferredTimescale: 600))
+    tracker.recordAudioPresentationTime(CMTime(seconds: 10.05, preferredTimescale: 600))
+
+    #expect(tracker.driftMilliseconds == 50)
+    #expect(tracker.maxAbsoluteDriftMilliseconds == 50)
+
+    tracker.recordAudioPresentationTime(CMTime(seconds: 9.92, preferredTimescale: 600))
+
+    #expect(tracker.driftMilliseconds == -80)
+    #expect(tracker.maxAbsoluteDriftMilliseconds == 80)
+}
+
+@Test
+func avTimingHealthResetClearsPreviousSessionTiming() {
+    var tracker = AVTimingHealthTracker()
+    tracker.recordVideoPresentationTime(CMTime(seconds: 5, preferredTimescale: 600))
+    tracker.recordAudioPresentationTime(CMTime(seconds: 5.2, preferredTimescale: 600))
+
+    tracker.reset()
+    tracker.recordAudioPresentationTime(CMTime(seconds: 20, preferredTimescale: 600))
+
+    #expect(tracker.driftMilliseconds == 0)
+    #expect(tracker.maxAbsoluteDriftMilliseconds == 0)
 }
 
 @Test

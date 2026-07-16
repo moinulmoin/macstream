@@ -418,6 +418,7 @@ public final class SystemMediaPipeline: NSObject, MediaPipeline, SCStreamOutput,
     private var mediaHealth = StreamHealth()
     private let microphoneLevelMeter = ReusableAudioLevelMeter()
     private var audioDeliveryHealthTracker = AudioDeliveryHealthTracker()
+    private var avTimingHealthTracker = AVTimingHealthTracker()
     private var frameWindowStartedAtNanoseconds = DispatchTime.now().uptimeNanoseconds
     private var frameWindowCount = 0
     private var lastVideoFrameAtNanoseconds: UInt64?
@@ -1898,6 +1899,7 @@ public final class SystemMediaPipeline: NSObject, MediaPipeline, SCStreamOutput,
                     ? publishCompositedVideoSample(sampleBuffer, presentationTime: presentationTime)
                     : publish(sampleBuffer)
                 if didPublish {
+                    recordAcceptedVideoPresentationTime(presentationTime)
                     if !Self.shouldPublishCompositedVideoSample(sceneKind: mediaConfiguration.sceneKind) {
                         mediaPreviewFrameSource?.publish(sampleBuffer)
                     }
@@ -1910,7 +1912,9 @@ public final class SystemMediaPipeline: NSObject, MediaPipeline, SCStreamOutput,
                 recordSystemAudioCallback()
                 guard let track = publishingAudioTrackPlan.systemAudio else { return }
                 if Self.shouldPublishStreamSample(isPublishingStream: isDedicatedPublishingStream, hasPublisher: rtmpPublisher != nil) {
-                    _ = publishAudio(sampleBuffer, track: track)
+                    if publishAudio(sampleBuffer, track: track) {
+                        recordAcceptedAudioPresentationTime(presentationTime)
+                    }
                 }
             case .microphone:
                 break
@@ -1999,21 +2003,29 @@ public final class SystemMediaPipeline: NSObject, MediaPipeline, SCStreamOutput,
                 recordDroppedFrameIfNeeded(outputType)
             }
             if didAcceptFrame {
+                recordAcceptedVideoPresentationTime(presentationTime)
                 mediaPreviewFrameSource?.publish(sampleBuffer)
             }
         case .audio:
             guard Self.shouldProcessSystemAudioSample(configuration: mediaConfiguration) else {
                 return
             }
+            var didAcceptAudio = false
             if let audioInput,
-               audioInput.isReadyForMoreMediaData,
-               !audioInput.append(sampleBuffer) {
-                recordWriterFailureIfNeeded(status: writer.status, errorDescription: writer.error?.localizedDescription)
+               audioInput.isReadyForMoreMediaData {
+                if audioInput.append(sampleBuffer) {
+                    didAcceptAudio = true
+                } else {
+                    recordWriterFailureIfNeeded(status: writer.status, errorDescription: writer.error?.localizedDescription)
+                }
             }
             if isSharedRecordingStream,
                let track = publishingAudioTrackPlan.systemAudio,
                rtmpPublisher != nil {
-                _ = publishAudio(sampleBuffer, track: track)
+                didAcceptAudio = publishAudio(sampleBuffer, track: track) || didAcceptAudio
+            }
+            if didAcceptAudio {
+                recordAcceptedAudioPresentationTime(presentationTime)
             }
         case .microphone:
             break
@@ -2193,6 +2205,18 @@ public final class SystemMediaPipeline: NSObject, MediaPipeline, SCStreamOutput,
         return wasAccepted
     }
 
+    private func recordAcceptedVideoPresentationTime(_ presentationTime: CMTime) {
+        avTimingHealthTracker.recordVideoPresentationTime(presentationTime)
+        mediaHealth.avDriftMilliseconds = avTimingHealthTracker.driftMilliseconds
+        mediaHealth.maxAbsoluteAVDriftMilliseconds = avTimingHealthTracker.maxAbsoluteDriftMilliseconds
+    }
+
+    private func recordAcceptedAudioPresentationTime(_ presentationTime: CMTime) {
+        avTimingHealthTracker.recordAudioPresentationTime(presentationTime)
+        mediaHealth.avDriftMilliseconds = avTimingHealthTracker.driftMilliseconds
+        mediaHealth.maxAbsoluteAVDriftMilliseconds = avTimingHealthTracker.maxAbsoluteDriftMilliseconds
+    }
+
     private func recordSystemAudioCallback() {
         let now = DispatchTime.now().uptimeNanoseconds
         audioDeliveryHealthTracker.recordSystemAudioCallback(at: now)
@@ -2304,6 +2328,7 @@ public final class SystemMediaPipeline: NSObject, MediaPipeline, SCStreamOutput,
         }
 
         if didAppendRecording, !shouldPublish {
+            recordAcceptedVideoPresentationTime(presentationTime)
             mediaPreviewFrameSource?.publishIfDue(at: presentationTime) {
                 self.makeVideoSampleBuffer(
                     pixelBuffer: outputPixelBuffer,
@@ -2342,6 +2367,7 @@ public final class SystemMediaPipeline: NSObject, MediaPipeline, SCStreamOutput,
             markFirstPublishingVideoFrameIfNeeded()
         }
         if didAppendRecording || didPublish {
+            recordAcceptedVideoPresentationTime(presentationTime)
             mediaPreviewFrameSource?.publish(compositedSampleBuffer)
         }
         return SharedScreenRouteResult(
@@ -2478,6 +2504,7 @@ public final class SystemMediaPipeline: NSObject, MediaPipeline, SCStreamOutput,
     private func resetHealth(using configuration: MediaPipelineConfiguration) {
         let now = DispatchTime.now().uptimeNanoseconds
         microphoneLevelMeter.reset()
+        avTimingHealthTracker.reset()
         audioDeliveryHealthTracker.reset(
             expectsSystemAudio: Self.shouldProcessSystemAudioSample(configuration: configuration),
             expectsMicrophone: Self.shouldProcessMicrophoneAudioSample(configuration: configuration),
@@ -3005,23 +3032,30 @@ public final class SystemMediaPipeline: NSObject, MediaPipeline, SCStreamOutput,
         ) else { return }
         recordMicrophoneCallback(sampleBuffer)
 
+        var didAcceptAudio = false
         if Self.shouldPublishMicrophoneOutputSample(
             isPublishingOutput: isPublishingMicrophoneOutput(output)
                 || (publishingCaptureMode == .recordingOwned && output === microphoneOutput),
             hasPublisher: rtmpPublisher != nil
         ), let track = publishingAudioTrackPlan.microphone {
-            _ = publishAudio(sampleBuffer, track: track)
+            didAcceptAudio = publishAudio(sampleBuffer, track: track)
         }
 
-        guard let writer,
-              let microphoneInput,
-              didStartSession,
-              writer.status == .writing,
-              microphoneInput.isReadyForMoreMediaData
-        else { return }
+        if let writer,
+           let microphoneInput,
+           didStartSession,
+           writer.status == .writing,
+           microphoneInput.isReadyForMoreMediaData {
+            if microphoneInput.append(sampleBuffer) {
+                didAcceptAudio = true
+            } else {
+                recordWriterFailureIfNeeded(status: writer.status, errorDescription: writer.error?.localizedDescription)
+            }
+        }
 
-        if !microphoneInput.append(sampleBuffer) {
-            recordWriterFailureIfNeeded(status: writer.status, errorDescription: writer.error?.localizedDescription)
+        if didAcceptAudio,
+           let presentationTime = sampleBuffer.presentationTimeStampIfValid {
+            recordAcceptedAudioPresentationTime(presentationTime)
         }
     }
 
@@ -3115,6 +3149,51 @@ public final class SystemMediaPipeline: NSObject, MediaPipeline, SCStreamOutput,
             || previous.queueDepth != next.queueDepth
             || previous.capturesSystemAudio != next.capturesSystemAudio
             || previous.screenCaptureTarget != next.screenCaptureTarget
+    }
+}
+
+struct AVTimingHealthTracker: Equatable, Sendable {
+    private var latestVideoSeconds: Double?
+    private var latestAudioSeconds: Double?
+    private(set) var driftMilliseconds = 0
+    private(set) var maxAbsoluteDriftMilliseconds = 0
+
+    mutating func reset() {
+        latestVideoSeconds = nil
+        latestAudioSeconds = nil
+        driftMilliseconds = 0
+        maxAbsoluteDriftMilliseconds = 0
+    }
+
+    mutating func recordVideoPresentationTime(_ presentationTime: CMTime) {
+        latestVideoSeconds = Self.seconds(presentationTime)
+        updateDrift()
+    }
+
+    mutating func recordAudioPresentationTime(_ presentationTime: CMTime) {
+        latestAudioSeconds = Self.seconds(presentationTime)
+        updateDrift()
+    }
+
+    private mutating func updateDrift() {
+        guard let latestVideoSeconds,
+              let latestAudioSeconds
+        else {
+            return
+        }
+
+        driftMilliseconds = Int(((latestAudioSeconds - latestVideoSeconds) * 1_000).rounded())
+        maxAbsoluteDriftMilliseconds = max(maxAbsoluteDriftMilliseconds, abs(driftMilliseconds))
+    }
+
+    private static func seconds(_ presentationTime: CMTime) -> Double? {
+        guard presentationTime.isValid,
+              !presentationTime.isIndefinite
+        else {
+            return nil
+        }
+        let seconds = CMTimeGetSeconds(presentationTime)
+        return seconds.isFinite ? seconds : nil
     }
 }
 

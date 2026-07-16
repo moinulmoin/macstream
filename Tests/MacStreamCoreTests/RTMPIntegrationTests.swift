@@ -20,13 +20,10 @@ func haishinKitPublisherSendsSyntheticVideoToConfiguredRTMPIngest() async throws
     let framesPerSecond = min(max(Int(environment["MAC_STREAM_RTMP_INTEGRATION_FPS"] ?? "") ?? 15, 10), 30)
     let expectedFrameCount = (warmupSeconds + durationSeconds) * framesPerSecond
 
-    let publisher = HaishinKitRTMPPublisher(
-        target: RTMPPublishTarget(
-            connectionURL: connectionURL,
-            streamName: streamName
-        ),
-        isHardwareAcceleratedEnabled: environment["MAC_STREAM_RTMP_INTEGRATION_SOFTWARE_ENCODER"] != "1"
-    )
+    let publisher = HaishinKitRTMPPublisher(target: RTMPPublishTarget(
+        connectionURL: connectionURL,
+        streamName: streamName
+    ))
     let configuration = MediaPipelineConfiguration(
         maxVideoWidth: 640,
         framesPerSecond: framesPerSecond,
@@ -41,23 +38,27 @@ func haishinKitPublisherSendsSyntheticVideoToConfiguredRTMPIngest() async throws
         try await publisher.configure(configuration: configuration)
         try await publisher.connect()
 
-        var acceptedFrames = 0
-        for frameIndex in 0..<expectedFrameCount {
-            let sampleBuffer = try makeRTMPIntegrationVideoSample(
-                frameIndex: frameIndex,
+        let acceptedFrames: Int
+        if let fixturePath = environment["MAC_STREAM_RTMP_INTEGRATION_FIXTURE_PATH"],
+           !fixturePath.isEmpty {
+            acceptedFrames = try await publishRTMPIntegrationFixture(
+                at: URL(fileURLWithPath: fixturePath),
+                publisher: publisher,
                 framesPerSecond: framesPerSecond
             )
-            var accepted = publisher.append(sampleBuffer, track: 0)
-            var retryCount = 0
-            while !accepted, retryCount < 20 {
-                try await Task.sleep(for: .milliseconds(5))
-                accepted = publisher.append(sampleBuffer, track: 0)
-                retryCount += 1
+        } else {
+            var rawAcceptedFrames = 0
+            for frameIndex in 0..<expectedFrameCount {
+                let sampleBuffer = try makeRTMPIntegrationVideoSample(
+                    frameIndex: frameIndex,
+                    framesPerSecond: framesPerSecond
+                )
+                if try await appendRTMPIntegrationSample(sampleBuffer, to: publisher) {
+                    rawAcceptedFrames += 1
+                }
+                try await Task.sleep(for: .milliseconds(1_000 / framesPerSecond))
             }
-            if accepted {
-                acceptedFrames += 1
-            }
-            try await Task.sleep(for: .milliseconds(1_000 / framesPerSecond))
+            acceptedFrames = rawAcceptedFrames
         }
 
         var outboundBytes: Int64 = 0
@@ -78,6 +79,54 @@ func haishinKitPublisherSendsSyntheticVideoToConfiguredRTMPIngest() async throws
         await publisher.close()
         throw error
     }
+}
+
+private func publishRTMPIntegrationFixture(
+    at url: URL,
+    publisher: HaishinKitRTMPPublisher,
+    framesPerSecond: Int
+) async throws -> Int {
+    let asset = AVURLAsset(url: url)
+    guard let track = try await asset.loadTracks(withMediaType: .video).first else {
+        throw RTMPIntegrationError.fixtureMissingVideoTrack
+    }
+
+    let reader = try AVAssetReader(asset: asset)
+    let output = AVAssetReaderTrackOutput(track: track, outputSettings: nil)
+    output.alwaysCopiesSampleData = false
+    guard reader.canAdd(output) else {
+        throw RTMPIntegrationError.fixtureReaderSetupFailed
+    }
+    reader.add(output)
+    guard reader.startReading() else {
+        throw RTMPIntegrationError.fixtureReaderSetupFailed
+    }
+
+    var acceptedFrames = 0
+    while let sampleBuffer = output.copyNextSampleBuffer() {
+        if try await appendRTMPIntegrationSample(sampleBuffer, to: publisher) {
+            acceptedFrames += 1
+        }
+        try await Task.sleep(for: .milliseconds(1_000 / framesPerSecond))
+    }
+    guard reader.status == .completed else {
+        throw RTMPIntegrationError.fixtureReaderFailed
+    }
+    return acceptedFrames
+}
+
+private func appendRTMPIntegrationSample(
+    _ sampleBuffer: CMSampleBuffer,
+    to publisher: HaishinKitRTMPPublisher
+) async throws -> Bool {
+    var accepted = publisher.append(sampleBuffer, track: 0)
+    var retryCount = 0
+    while !accepted, retryCount < 20 {
+        try await Task.sleep(for: .milliseconds(5))
+        accepted = publisher.append(sampleBuffer, track: 0)
+        retryCount += 1
+    }
+    return accepted
 }
 
 private func makeRTMPIntegrationVideoSample(
@@ -153,6 +202,9 @@ private func makeRTMPIntegrationVideoSample(
 }
 
 private enum RTMPIntegrationError: Error {
+    case fixtureMissingVideoTrack
+    case fixtureReaderSetupFailed
+    case fixtureReaderFailed
     case pixelBufferCreationFailed(CVReturn)
     case formatDescriptionCreationFailed
     case sampleBufferCreationFailed

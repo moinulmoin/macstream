@@ -9,7 +9,7 @@ STREAM_NAME="${MAC_STREAM_RTMP_INTEGRATION_STREAM_NAME:-macstream-integration}"
 MEDIAMTX_VERSION="1.18.2"
 MEDIAMTX_BIN="${MAC_STREAM_MEDIAMTX_BIN:-}"
 SWIFT_SCRATCH_PATH="${MAC_STREAM_RTMP_INTEGRATION_SWIFT_SCRATCH_PATH:-}"
-SOFTWARE_ENCODER="${MAC_STREAM_RTMP_INTEGRATION_SOFTWARE_ENCODER:-0}"
+PREENCODED_VIDEO="${MAC_STREAM_RTMP_INTEGRATION_PREENCODED_VIDEO:-0}"
 
 if [[ ! "$DURATION" =~ ^[1-9][0-9]*$ ]]; then
   echo "MAC_STREAM_RTMP_INTEGRATION_DURATION must be a positive integer." >&2
@@ -27,8 +27,8 @@ if [[ ! "$PORT" =~ ^[1-9][0-9]*$ ]] || (( PORT > 65535 )); then
   echo "MAC_STREAM_RTMP_INTEGRATION_PORT must be a valid TCP port." >&2
   exit 2
 fi
-if [[ "$SOFTWARE_ENCODER" != "0" && "$SOFTWARE_ENCODER" != "1" ]]; then
-  echo "MAC_STREAM_RTMP_INTEGRATION_SOFTWARE_ENCODER must be 0 or 1." >&2
+if [[ "$PREENCODED_VIDEO" != "0" && "$PREENCODED_VIDEO" != "1" ]]; then
+  echo "MAC_STREAM_RTMP_INTEGRATION_PREENCODED_VIDEO must be 0 or 1." >&2
   exit 2
 fi
 
@@ -47,6 +47,7 @@ INGEST_LOG="$WORK_DIR/ffmpeg-reader.log"
 CAPTURE_PATH="$WORK_DIR/ingest.flv"
 CONNECTION_URL="rtmp://127.0.0.1:$PORT/live"
 PUBLISH_URL="$CONNECTION_URL/$STREAM_NAME"
+FIXTURE_PATH=""
 SERVER_PID=""
 PUBLISH_PID=""
 
@@ -91,6 +92,28 @@ if [[ ! -x "$MEDIAMTX_BIN" ]]; then
   exit 2
 fi
 
+if [[ "$PREENCODED_VIDEO" == "1" ]]; then
+  FIXTURE_PATH="$WORK_DIR/preencoded-input.mp4"
+  ffmpeg \
+    -hide_banner \
+    -loglevel error \
+    -f lavfi \
+    -i "testsrc2=size=640x360:rate=$FPS" \
+    -t "$((DURATION + WARMUP_DURATION))" \
+    -c:v libx264 \
+    -preset ultrafast \
+    -tune zerolatency \
+    -pix_fmt yuv420p \
+    -g "$((FPS * 2))" \
+    -keyint_min "$((FPS * 2))" \
+    -sc_threshold 0 \
+    -bf 0 \
+    -an \
+    -movflags +faststart \
+    -y \
+    "$FIXTURE_PATH"
+fi
+
 MTX_RTSP=no \
 MTX_RTMP=yes \
 MTX_RTMPADDRESS=":$PORT" \
@@ -132,7 +155,7 @@ fi
   MAC_STREAM_RTMP_INTEGRATION_DURATION="$DURATION" \
   MAC_STREAM_RTMP_INTEGRATION_WARMUP_DURATION="$WARMUP_DURATION" \
   MAC_STREAM_RTMP_INTEGRATION_FPS="$FPS" \
-  MAC_STREAM_RTMP_INTEGRATION_SOFTWARE_ENCODER="$SOFTWARE_ENCODER" \
+  MAC_STREAM_RTMP_INTEGRATION_FIXTURE_PATH="$FIXTURE_PATH" \
   "${swift_test_command[@]}" --filter haishinKitPublisherSendsSyntheticVideoToConfiguredRTMPIngest
 ) >"$PUBLISH_LOG" 2>&1 &
 PUBLISH_PID=$!

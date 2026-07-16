@@ -1079,6 +1079,34 @@ func PreflightCoachReportsMissingPermissionFirst() {
     )
 
     #expect(advice.first?.action == .openCaptureSettings(.display))
+    #expect(advice.first?.detail == "Screen Recording permission was denied. Open System Settings to grant access.")
+}
+
+@Test
+func PreflightCoachUsesActionableCopyForUnrequestedPermission() {
+    let report = CapturePreflightReport(
+        devices: [
+            CaptureDeviceInfo(id: "camera-1", kind: .camera, name: "FaceTime Camera", permission: .notDetermined)
+        ],
+        summary: "Camera access needed."
+    )
+    let advice = PreflightCoach.advice(
+        report: report,
+        sources: [
+            StudioSource(kind: .camera),
+            StudioSource(kind: .microphone)
+        ],
+        selectedScene: .face,
+        selectedScreenCaptureTarget: nil,
+        selectedCameraDeviceID: nil,
+        selectedMicrophoneDeviceID: nil,
+        destination: StreamDestination(),
+        hasRunInitialCaptureScan: true,
+        isScanningCapture: false
+    )
+
+    #expect(advice.first?.action == .openCaptureSettings(.camera))
+    #expect(advice.first?.detail == "Camera permission has not been granted yet. Use the permission action or open System Settings.")
 }
 
 @Test

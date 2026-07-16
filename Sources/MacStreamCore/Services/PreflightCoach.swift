@@ -267,7 +267,17 @@ public enum PreflightCoach {
 
     private static func permissionDetail(for kind: CaptureDeviceKind, report: CapturePreflightReport) -> String {
         if let state = report.permissionState(for: kind) {
-            return "\(permissionTitle(for: kind)) permission is \(state.title.lowercased()). Open System Settings to fix it."
+            let title = permissionTitle(for: kind)
+            switch state {
+            case .granted:
+                return "\(title) permission is granted."
+            case .denied:
+                return "\(title) permission was denied. Open System Settings to grant access."
+            case .notDetermined:
+                return "\(title) permission has not been granted yet. Use the permission action or open System Settings."
+            case .unknown:
+                return "\(title) permission status is unavailable. Open System Settings to verify access."
+            }
         }
         return "\(permissionTitle(for: kind)) hardware was not found. Check hardware, then scan again."
     }

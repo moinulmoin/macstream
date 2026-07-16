@@ -1,0 +1,45 @@
+name: Notarization Log
+
+on:
+  workflow_dispatch:
+    inputs:
+      submission_id:
+        description: "Apple notarization submission UUID"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
+jobs:
+  log:
+    name: Fetch Apple notarization log
+    runs-on: macos-26
+    steps:
+      - name: Validate submission ID
+        shell: bash
+        env:
+          SUBMISSION_ID: ${{ inputs.submission_id }}
+        run: |
+          set -euo pipefail
+          if [[ ! "$SUBMISSION_ID" =~ ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$ ]]; then
+            echo "Invalid notarization submission UUID" >&2
+            exit 2
+          fi
+
+      - name: Fetch notarization log
+        shell: bash
+        env:
+          SUBMISSION_ID: ${{ inputs.submission_id }}
+          MAC_STREAM_APPLE_ID: ${{ secrets.MAC_STREAM_APPLE_ID }}
+          MAC_STREAM_APPLE_TEAM_ID: ${{ secrets.MAC_STREAM_APPLE_TEAM_ID }}
+          MAC_STREAM_APP_SPECIFIC_PASSWORD: ${{ secrets.MAC_STREAM_APP_SPECIFIC_PASSWORD }}
+        run: |
+          set -euo pipefail
+          xcrun notarytool log "$SUBMISSION_ID" \
+            --apple-id "$MAC_STREAM_APPLE_ID" \
+            --team-id "$MAC_STREAM_APPLE_TEAM_ID" \
+            --password "$MAC_STREAM_APP_SPECIFIC_PASSWORD"

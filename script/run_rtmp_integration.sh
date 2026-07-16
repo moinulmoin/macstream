@@ -73,22 +73,30 @@ fi
   swift test --filter haishinKitPublisherSendsSyntheticVideoToConfiguredRTMPIngest
 )
 
-if ! wait "$INGEST_PID"; then
-  cat "$INGEST_LOG" >&2
-  echo "Local RTMP ingest exited with a failure." >&2
-  exit 1
-fi
+INGEST_STATUS=0
+wait "$INGEST_PID" || INGEST_STATUS=$?
 INGEST_PID=""
 
-read -r codec_name width height frame_count < <(
+if [[ ! -s "$CAPTURE_PATH" ]]; then
+  cat "$INGEST_LOG" >&2
+  echo "Local RTMP ingest did not produce a capture file." >&2
+  exit 1
+fi
+
+if ! probe_output="$(
   ffprobe \
     -v error \
     -count_frames \
     -select_streams v:0 \
     -show_entries stream=codec_name,width,height,nb_read_frames \
     -of csv=p=0 \
-    "$CAPTURE_PATH" | tr ',' ' '
-)
+    "$CAPTURE_PATH"
+)"; then
+  cat "$INGEST_LOG" >&2
+  echo "Local RTMP ingest capture could not be decoded." >&2
+  exit 1
+fi
+read -r codec_name width height frame_count <<<"$(tr ',' ' ' <<<"$probe_output")"
 
 minimum_frames=$((DURATION * FPS * 9 / 10))
 if [[ "$codec_name" != "h264" || "$width" != "640" || "$height" != "360" ]]; then
@@ -100,4 +108,7 @@ if [[ ! "$frame_count" =~ ^[0-9]+$ ]] || (( frame_count < minimum_frames )); the
   exit 1
 fi
 
+if (( INGEST_STATUS != 0 )); then
+  echo "RTMP listener exited with status $INGEST_STATUS after publisher disconnect; decoded media validation passed." >&2
+fi
 echo "RTMP integration passed: $frame_count H.264 frames at ${width}x${height}."

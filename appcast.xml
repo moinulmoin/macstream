@@ -1,14 +1,10 @@
-<?xml version="1.0" encoding="utf-8"?>
-<rss version="2.0" xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle">
+<?xml version='1.0' encoding='utf-8'?>
+<rss xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle" version="2.0">
   <channel>
     <title>MacStream</title>
     <link>https://github.com/moinulmoin/macstream</link>
     <description>MacStream release appcast for Sparkle auto-updates.</description>
     <language>en</language>
-    <!--
-      Release <item> entries are inserted automatically by
-      .github/workflows/release.yml when a vMAJOR.MINOR.PATCH tag is pushed.
-      Entries are EdDSA-signed; do not hand-edit a signed <item>.
-    -->
-  </channel>
+    
+  <item><title>MacStream v0.2.2</title><link>https://github.com/moinulmoin/macstream/releases/tag/v0.2.2</link><sparkle:version>5</sparkle:version><sparkle:shortVersionString>0.2.2</sparkle:shortVersionString><pubDate>Thu, 16 Jul 2026 12:58:36 +0000</pubDate><enclosure url="https://github.com/moinulmoin/macstream/releases/download/v0.2.2/MacStream-v0.2.2-macos-arm64.zip" sparkle:edSignature="ciHPL8fUl6UloYX/+EocPxXeim9JRP6f0keXwqSWAwqQNDHELq68qUcco0fdY6ANSstuIfTCFvF0kp3U4bzHCA==" length="4940542" type="application/octet-stream" /><sparkle:minimumSystemVersion>26.0</sparkle:minimumSystemVersion></item></channel>
 </rss>

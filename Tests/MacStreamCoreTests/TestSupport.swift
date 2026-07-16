@@ -273,6 +273,8 @@ final class SessionRecoveryMediaPipeline: MediaPipeline, @unchecked Sendable {
     )
     private(set) var startStreamCount = 0
     private(set) var stopStreamCount = 0
+    private(set) var startRecordingCount = 0
+    private(set) var stopRecordingCount = 0
     private var remainingStartFailures = 0
     var streamFailureDetail: String?
 
@@ -296,10 +298,13 @@ final class SessionRecoveryMediaPipeline: MediaPipeline, @unchecked Sendable {
     }
 
     func startRecording() async throws -> URL {
-        URL(fileURLWithPath: "/tmp/macstream-session-recovery.mov")
+        startRecordingCount += 1
+        return URL(fileURLWithPath: "/tmp/macstream-session-recovery.mov")
     }
 
-    func stopRecording() async {}
+    func stopRecording() async {
+        stopRecordingCount += 1
+    }
 }
 
 final class DelayedStartMediaPipeline: MediaPipeline, @unchecked Sendable {

@@ -30,6 +30,14 @@ private func waitUntilRecordingIsActive(_ store: StudioStore) async {
 }
 
 @MainActor
+private func waitUntilRecordingIsStopped(_ store: StudioStore) async {
+    for _ in 0..<200 {
+        guard store.recordingState != .stopped else { return }
+        try? await Task.sleep(for: .milliseconds(5))
+    }
+}
+
+@MainActor
 private func waitUntilCaptureScanCompletes(_ store: StudioStore) async {
     for _ in 0..<100 {
         guard !store.hasRunInitialCaptureScan else { return }
@@ -376,6 +384,76 @@ func liveRTMPDisconnectStopsOldPublisherAndRecoversWithBoundedRetry() async {
 
     store.stopStream()
     await waitUntilStreamIsOffline(store)
+}
+
+@Test
+@MainActor
+func liveRTMPRecoveryPreservesStreamOwnedRecordingUntilStreamStops() async {
+    let pipeline = SessionRecoveryMediaPipeline()
+    let store = StudioStore(
+        mediaPipeline: pipeline,
+        preferences: StudioPreferences(recordWhileStreaming: true),
+        streamStartRetryPolicy: StreamStartRetryPolicy(maxAttempts: 3, backoffMilliseconds: [1, 1])
+    )
+    store.destination = StreamDestination(
+        name: "Twitch",
+        rtmpURL: "rtmps://live.example.com/app/sk_live_secret"
+    )
+
+    store.startStream()
+    await waitUntilStreamIsLive(store)
+    await waitUntilRecordingIsActive(store)
+
+    pipeline.failSession("RTMP connection closed by the server.", recoveryStartFailures: 1)
+    store.advanceDirector()
+
+    for _ in 0..<1_000 {
+        if store.streamState.isLive && pipeline.startStreamCount == 3 { break }
+        await Task.yield()
+    }
+
+    #expect(store.streamState == .live)
+    #expect(store.recordingState == .recording)
+    #expect(pipeline.startRecordingCount == 1)
+    #expect(pipeline.stopRecordingCount == 0)
+
+    store.stopStream()
+    await waitUntilStreamIsOffline(store)
+    await waitUntilRecordingIsStopped(store)
+
+    #expect(pipeline.stopRecordingCount == 1)
+}
+
+@Test
+@MainActor
+func liveRTMPRecoveryFailureStopsStreamOwnedRecording() async {
+    let pipeline = SessionRecoveryMediaPipeline()
+    let store = StudioStore(
+        mediaPipeline: pipeline,
+        preferences: StudioPreferences(recordWhileStreaming: true),
+        streamStartRetryPolicy: StreamStartRetryPolicy(maxAttempts: 2, backoffMilliseconds: [1])
+    )
+    store.destination = StreamDestination(
+        name: "Twitch",
+        rtmpURL: "rtmps://live.example.com/app/sk_live_secret"
+    )
+
+    store.startStream()
+    await waitUntilStreamIsLive(store)
+    await waitUntilRecordingIsActive(store)
+
+    pipeline.failSession("RTMP connection failed.", recoveryStartFailures: 3)
+    store.advanceDirector()
+
+    for _ in 0..<1_000 {
+        if case .failed = store.streamState, store.recordingState == .stopped { break }
+        await Task.yield()
+    }
+
+    #expect(store.streamState == .failed("Transient recovery failure 3"))
+    #expect(store.recordingState == .stopped)
+    #expect(pipeline.startRecordingCount == 1)
+    #expect(pipeline.stopRecordingCount == 1)
 }
 
 @Test

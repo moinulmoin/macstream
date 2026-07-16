@@ -570,6 +570,7 @@ func releaseAutomationDefinesSignedNotarizedMacPipeline() throws {
     #expect(release.contains("MAC_STREAM_REQUIRE_DEVELOPER_ID: \"1\""))
     #expect(release.contains("MAC_STREAM_REQUIRE_HARDENED_RUNTIME: \"1\""))
     #expect(release.contains("xcrun notarytool submit"))
+    #expect(release.contains("xcrun notarytool log"))
     #expect(release.contains("xcrun stapler staple"))
     #expect(release.contains("spctl -a -vv --type execute"))
     #expect(release.contains("shasum -a 256"))

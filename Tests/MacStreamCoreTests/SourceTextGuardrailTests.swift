@@ -585,7 +585,7 @@ func releaseAutomationDefinesSignedNotarizedMacPipeline() throws {
     #expect(entitlements.contains("com.apple.security.device.camera"))
     #expect(entitlements.contains("com.apple.security.device.audio-input"))
     #expect(release.contains("SPARKLE_PRIVATE_KEY"))
-    #expect(release.contains("sign_update"))
+    #expect(release.contains("\"$RUNNER_TEMP/bin/sign_update\""))
     #expect(docs.contains("Sparkle"))
 }
 

@@ -292,7 +292,7 @@ jobs:
           set -euo pipefail
           curl -fsSL -o "$RUNNER_TEMP/Sparkle.tar.xz" https://github.com/sparkle-project/Sparkle/releases/download/2.9.3/Sparkle-2.9.3.tar.xz
           tar -xf "$RUNNER_TEMP/Sparkle.tar.xz" -C "$RUNNER_TEMP"
-          SIG_ATTRS="$(printf '%s' "$SPARKLE_PRIVATE_KEY" | "$RUNNER_TEMP/Sparkle/bin/sign_update" --ed-key-file - "$ZIP_PATH")"
+          SIG_ATTRS="$(printf '%s' "$SPARKLE_PRIVATE_KEY" | "$RUNNER_TEMP/bin/sign_update" --ed-key-file - "$ZIP_PATH")"
           ed_signature="$(printf '%s' "$SIG_ATTRS" | sed -n 's/.*sparkle:edSignature="\([^"]*\)".*/\1/p')"
           ed_length="$(printf '%s' "$SIG_ATTRS" | sed -n 's/.*length="\([^"]*\)".*/\1/p')"
           if [[ -z "$ed_signature" || -z "$ed_length" ]]; then

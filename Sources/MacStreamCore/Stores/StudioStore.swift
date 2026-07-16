@@ -99,6 +99,7 @@ public final class StudioStore {
     @ObservationIgnored private var isCaptureUnderPressure = false
     @ObservationIgnored private var activeHealthDegradationReason: String?
     @ObservationIgnored private var lastObservedDroppedFrames = 0
+    @ObservationIgnored private var lastObservedRTMPAudioAppendRejections = 0
     @ObservationIgnored private var captureHealthRecoverySampleCount = 0
     @ObservationIgnored private var zeroCaptureFPSObservedAt: ContinuousClock.Instant?
     @ObservationIgnored private var hasOpenCaptureSession = false
@@ -2738,12 +2739,18 @@ public final class StudioStore {
     private func applyCaptureHealthPressure() {
         guard hasActiveMediaCapture else {
             lastObservedDroppedFrames = health.droppedFrames
+            lastObservedRTMPAudioAppendRejections = health.rtmpAudioAppendRejections
             zeroCaptureFPSObservedAt = nil
             return
         }
 
         let droppedFramesSinceLastSample = max(0, health.droppedFrames - lastObservedDroppedFrames)
         lastObservedDroppedFrames = health.droppedFrames
+        let audioAppendRejectionsSinceLastSample = max(
+            0,
+            health.rtmpAudioAppendRejections - lastObservedRTMPAudioAppendRejections
+        )
+        lastObservedRTMPAudioAppendRejections = health.rtmpAudioAppendRejections
 
         let targetFPS = captureHealthTargetFPS
         let droppedFrameLimit = max(3, targetFPS / 10)
@@ -2765,12 +2772,17 @@ public final class StudioStore {
         }
 
         let droppedFramePressure = droppedFramesSinceLastSample >= droppedFrameLimit
+        let audioAppendPressure = audioAppendRejectionsSinceLastSample > 0
+        let appendQueuePressure = health.rtmpAppendCapacity > 0
+            && health.rtmpPendingAppends >= health.rtmpAppendCapacity
         let lowFPSPressure = Self.captureFPSIndicatesPressure(
             health.captureFPS,
             lowFPSLimit: lowFPSLimit,
             zeroFPSAge: zeroFPSAge
         )
         let recoveredSample = droppedFramesSinceLastSample == 0
+            && audioAppendRejectionsSinceLastSample == 0
+            && !appendQueuePressure
             && health.captureFPS >= recoveredFPSLimit
 
         let nextCaptureUnderPressure: Bool
@@ -2783,7 +2795,10 @@ public final class StudioStore {
             nextCaptureUnderPressure = captureHealthRecoverySampleCount < Self.requiredCaptureHealthRecoverySamples
         } else {
             captureHealthRecoverySampleCount = 0
-            nextCaptureUnderPressure = droppedFramePressure || lowFPSPressure
+            nextCaptureUnderPressure = droppedFramePressure
+                || audioAppendPressure
+                || appendQueuePressure
+                || lowFPSPressure
         }
 
         if nextCaptureUnderPressure != isCaptureUnderPressure {
@@ -2804,6 +2819,10 @@ public final class StudioStore {
             let reason: String
             if droppedFramePressure {
                 reason = "Dropped frames detected; reducing capture cost."
+            } else if audioAppendPressure {
+                reason = "RTMP audio backpressure detected; reducing capture cost."
+            } else if appendQueuePressure {
+                reason = "RTMP append queue saturated; reducing capture cost."
             } else if lowFPSPressure {
                 reason = "Capture FPS below target; reducing capture cost."
             } else {
@@ -3013,6 +3032,7 @@ public final class StudioStore {
         isCaptureUnderPressure = false
         activeHealthDegradationReason = nil
         lastObservedDroppedFrames = 0
+        lastObservedRTMPAudioAppendRejections = 0
         captureHealthRecoverySampleCount = 0
         zeroCaptureFPSObservedAt = nil
         updateEffectivePerformanceMode()

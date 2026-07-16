@@ -44,6 +44,7 @@ struct StreamHealthView: View {
                 metric("Mic", microphoneDeliveryTitle, "")
                 metric("A/V drift", "\(store.health.avDriftMilliseconds)", "ms")
                 metric("Max drift", "\(store.health.maxAbsoluteAVDriftMilliseconds)", "ms")
+                metric("RTMP queue", "\(store.health.rtmpPendingAppends)/\(store.health.rtmpAppendCapacity)", "pending")
                 metric("Audio queue", "\(store.health.rtmpAudioAppendRejections)", "rejected")
                 metric("Thermal", store.systemPressure.thermalPressure.title, "")
                 metric("Memory", "\(store.systemPressure.memoryUsedMB)", "MB")

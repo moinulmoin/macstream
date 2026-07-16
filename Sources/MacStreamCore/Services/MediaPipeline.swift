@@ -687,6 +687,8 @@ public final class SystemMediaPipeline: NSObject, MediaPipeline, SCStreamOutput,
                 self.mediaHealth.audioDeliveryState = self.audioDeliveryHealthTracker.state(at: now)
                 self.mediaHealth.microphoneDeliveryState = self.audioDeliveryHealthTracker.microphoneState(at: now)
                 self.mediaHealth.rtmpAudioAppendRejections = 0
+                self.mediaHealth.rtmpPendingAppends = 0
+                self.mediaHealth.rtmpAppendCapacity = 0
             }
             return PublishingCaptureState(
                 stream: stream,
@@ -2064,6 +2066,9 @@ public final class SystemMediaPipeline: NSObject, MediaPipeline, SCStreamOutput,
             )
             self.mediaHealth.outboundBytesPerSecond = 0
             self.mediaHealth.bitrateKbps = 0
+            let appendQueueSnapshot = publisher.appendQueueSnapshot()
+            self.mediaHealth.rtmpPendingAppends = appendQueueSnapshot.pendingCount
+            self.mediaHealth.rtmpAppendCapacity = appendQueueSnapshot.capacity
         }
     }
 
@@ -2079,6 +2084,8 @@ public final class SystemMediaPipeline: NSObject, MediaPipeline, SCStreamOutput,
             self.mediaHealth.publishState = .disconnected
             self.mediaHealth.outboundBytesPerSecond = 0
             self.mediaHealth.bitrateKbps = 0
+            self.mediaHealth.rtmpPendingAppends = 0
+            self.mediaHealth.rtmpAppendCapacity = 0
         }
     }
 
@@ -2102,6 +2109,7 @@ public final class SystemMediaPipeline: NSObject, MediaPipeline, SCStreamOutput,
 
     private func sampleRTMPThroughput(from publisher: any RTMPPublisher) async {
         let byteCount = await publisher.currentByteCount()
+        let appendQueueSnapshot = publisher.appendQueueSnapshot()
         let sampledAt = Date()
         queue.sync {
             guard self.rtmpPublisher === publisher else { return }
@@ -2117,6 +2125,8 @@ public final class SystemMediaPipeline: NSObject, MediaPipeline, SCStreamOutput,
 
             self.lastRTMPByteCount = byteCount
             self.lastRTMPByteSampledAt = sampledAt
+            self.mediaHealth.rtmpPendingAppends = appendQueueSnapshot.pendingCount
+            self.mediaHealth.rtmpAppendCapacity = appendQueueSnapshot.capacity
         }
     }
 
@@ -3540,6 +3550,13 @@ enum RTMPPublisherEvent: Equatable, Sendable {
     }
 }
 
+struct RTMPAppendQueueSnapshot: Equatable, Sendable {
+    var pendingCount: Int
+    var capacity: Int
+
+    static let empty = RTMPAppendQueueSnapshot(pendingCount: 0, capacity: 0)
+}
+
 protocol RTMPPublisher: AnyObject, Sendable {
     var events: AsyncStream<RTMPPublisherEvent> { get }
 
@@ -3547,6 +3564,7 @@ protocol RTMPPublisher: AnyObject, Sendable {
     func connect() async throws
     func append(_ sampleBuffer: CMSampleBuffer, track: UInt8) -> Bool
     func currentByteCount() async -> Int64
+    func appendQueueSnapshot() -> RTMPAppendQueueSnapshot
     func close() async
 }
 
@@ -3564,6 +3582,7 @@ extension RTMPPublisher {
     }
 
     func currentByteCount() async -> Int64 { 0 }
+    func appendQueueSnapshot() -> RTMPAppendQueueSnapshot { .empty }
 }
 
 final class RTMPAppendBackpressureGate: @unchecked Sendable {
@@ -3588,6 +3607,15 @@ final class RTMPAppendBackpressureGate: @unchecked Sendable {
         lock.lock()
         pendingAppends = max(0, pendingAppends - 1)
         lock.unlock()
+    }
+
+    func snapshot() -> RTMPAppendQueueSnapshot {
+        lock.lock()
+        defer { lock.unlock() }
+        return RTMPAppendQueueSnapshot(
+            pendingCount: pendingAppends,
+            capacity: maxPendingAppends
+        )
     }
 }
 
@@ -3757,6 +3785,10 @@ final class OrderedMediaAppendQueue<Element: Sendable>: @unchecked Sendable {
         state.hasStartedClose
     }
 
+    var snapshot: RTMPAppendQueueSnapshot {
+        state.gate.snapshot()
+    }
+
     func closeAndWait(timeout: Duration = .seconds(5)) async -> Bool {
         if state.startClose() {
             continuation.finish()
@@ -3895,6 +3927,10 @@ private final class HaishinKitRTMPPublisher: RTMPPublisher, @unchecked Sendable 
     }
     func currentByteCount() async -> Int64 {
         await Int64(stream.info.byteCount)
+    }
+
+    func appendQueueSnapshot() -> RTMPAppendQueueSnapshot {
+        appendQueue.snapshot
     }
 
     private func startStatusTasks(

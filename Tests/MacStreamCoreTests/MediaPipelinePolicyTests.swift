@@ -155,6 +155,8 @@ func streamHealthDecodesLegacyPayloadWithInactiveAudioDelivery() throws {
     #expect(health.audioDeliveryState == .inactive)
     #expect(health.microphoneDeliveryState == .inactive)
     #expect(health.rtmpAudioAppendRejections == 0)
+    #expect(health.rtmpPendingAppends == 0)
+    #expect(health.rtmpAppendCapacity == 0)
     #expect(health.avDriftMilliseconds == 0)
     #expect(health.maxAbsoluteAVDriftMilliseconds == 0)
 }
@@ -165,6 +167,8 @@ func streamHealthRoundTripsAudioDeliveryFields() throws {
         audioDeliveryState: .stalled,
         microphoneDeliveryState: .active,
         rtmpAudioAppendRejections: 7,
+        rtmpPendingAppends: 2,
+        rtmpAppendCapacity: 3,
         avDriftMilliseconds: -42,
         maxAbsoluteAVDriftMilliseconds: 87
     )
@@ -1089,13 +1093,16 @@ func systemMediaPipelineIgnoresStaleRecordingStreamSamples() {
 func rtmpAppendBackpressureGateRejectsWorkWhenPublishQueueIsFull() {
     let gate = RTMPAppendBackpressureGate(maxPendingAppends: 2)
 
+    #expect(gate.snapshot() == RTMPAppendQueueSnapshot(pendingCount: 0, capacity: 2))
     #expect(gate.tryBeginAppend())
     #expect(gate.tryBeginAppend())
     #expect(!gate.tryBeginAppend())
+    #expect(gate.snapshot() == RTMPAppendQueueSnapshot(pendingCount: 2, capacity: 2))
 
     gate.finishAppend()
 
     #expect(gate.tryBeginAppend())
+    #expect(gate.snapshot() == RTMPAppendQueueSnapshot(pendingCount: 2, capacity: 2))
 }
 
 @Test
@@ -1127,10 +1134,12 @@ func orderedMediaAppendQueueRejectsWhenPendingCapacityIsFull() async {
     await blocker.waitForStartedCount(1)
 
     #expect(!queue.enqueue(3))
+    #expect(queue.snapshot == RTMPAppendQueueSnapshot(pendingCount: 3, capacity: 3))
 
     await blocker.releaseAll()
     #expect(await queue.closeAndWait())
     #expect(await blocker.startedCount == 3)
+    #expect(queue.snapshot == RTMPAppendQueueSnapshot(pendingCount: 0, capacity: 3))
 }
 
 @Test

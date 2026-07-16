@@ -332,6 +332,65 @@ func adaptivePerformanceModeUsesEfficiencyWhenCaptureHealthDrops() async {
 
 @Test
 @MainActor
+func adaptivePerformanceModeUsesEfficiencyWhenRTMPAppendQueueSaturates() async {
+    let pipeline = ConfigurableMediaPipeline(streamTransport: .rtmpPublish)
+    pipeline.currentHealth = StreamHealth(
+        bitrateKbps: 4_000,
+        publishState: .publishing,
+        captureFPS: 30,
+        rtmpPendingAppends: 3,
+        rtmpAppendCapacity: 3
+    )
+    let store = StudioStore(
+        mediaPipeline: pipeline,
+        preferences: StudioPreferences(performanceMode: .adaptive)
+    )
+    store.directorMode = .paused
+    store.destination = StreamDestination(
+        name: "Twitch",
+        rtmpURL: "rtmps://live.example.com/app/sk_live_secret"
+    )
+
+    store.startStream()
+    try? await Task.sleep(for: .milliseconds(50))
+    store.advanceDirector()
+
+    #expect(store.effectivePerformanceMode == .efficiency)
+    #expect(store.streamState == .degraded("RTMP append queue saturated; reducing capture cost."))
+}
+
+@Test
+@MainActor
+func adaptivePerformanceModeUsesEfficiencyWhenRTMPAudioAppendIsRejected() async {
+    let pipeline = ConfigurableMediaPipeline(streamTransport: .rtmpPublish)
+    pipeline.currentHealth = StreamHealth(
+        bitrateKbps: 4_000,
+        publishState: .publishing,
+        captureFPS: 30,
+        rtmpAudioAppendRejections: 1,
+        rtmpPendingAppends: 1,
+        rtmpAppendCapacity: 3
+    )
+    let store = StudioStore(
+        mediaPipeline: pipeline,
+        preferences: StudioPreferences(performanceMode: .adaptive)
+    )
+    store.directorMode = .paused
+    store.destination = StreamDestination(
+        name: "Twitch",
+        rtmpURL: "rtmps://live.example.com/app/sk_live_secret"
+    )
+
+    store.startStream()
+    try? await Task.sleep(for: .milliseconds(50))
+    store.advanceDirector()
+
+    #expect(store.effectivePerformanceMode == .efficiency)
+    #expect(store.streamState == .degraded("RTMP audio backpressure detected; reducing capture cost."))
+}
+
+@Test
+@MainActor
 func zeroCaptureFPSRequiresStaleIntervalBeforePressure() {
     #expect(!StudioStore.captureFPSIndicatesPressure(0, lowFPSLimit: 20, zeroFPSAge: nil))
     #expect(!StudioStore.captureFPSIndicatesPressure(0, lowFPSLimit: 20, zeroFPSAge: .milliseconds(1_999)))

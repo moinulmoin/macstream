@@ -302,6 +302,8 @@ public struct StreamHealth: Codable, Equatable, Sendable {
     public var audioDeliveryState: AudioDeliveryState
     public var microphoneDeliveryState: AudioDeliveryState
     public var rtmpAudioAppendRejections: Int
+    public var rtmpPendingAppends: Int
+    public var rtmpAppendCapacity: Int
     public var avDriftMilliseconds: Int
     public var maxAbsoluteAVDriftMilliseconds: Int
 
@@ -316,6 +318,8 @@ public struct StreamHealth: Codable, Equatable, Sendable {
         audioDeliveryState: AudioDeliveryState = .inactive,
         microphoneDeliveryState: AudioDeliveryState = .inactive,
         rtmpAudioAppendRejections: Int = 0,
+        rtmpPendingAppends: Int = 0,
+        rtmpAppendCapacity: Int = 0,
         avDriftMilliseconds: Int = 0,
         maxAbsoluteAVDriftMilliseconds: Int = 0
     ) {
@@ -329,6 +333,8 @@ public struct StreamHealth: Codable, Equatable, Sendable {
         self.audioDeliveryState = audioDeliveryState
         self.microphoneDeliveryState = microphoneDeliveryState
         self.rtmpAudioAppendRejections = rtmpAudioAppendRejections
+        self.rtmpPendingAppends = max(0, rtmpPendingAppends)
+        self.rtmpAppendCapacity = max(0, rtmpAppendCapacity)
         self.avDriftMilliseconds = avDriftMilliseconds
         self.maxAbsoluteAVDriftMilliseconds = max(0, maxAbsoluteAVDriftMilliseconds)
     }
@@ -344,6 +350,8 @@ public struct StreamHealth: Codable, Equatable, Sendable {
         case audioDeliveryState
         case microphoneDeliveryState
         case rtmpAudioAppendRejections
+        case rtmpPendingAppends
+        case rtmpAppendCapacity
         case avDriftMilliseconds
         case maxAbsoluteAVDriftMilliseconds
     }
@@ -368,6 +376,14 @@ public struct StreamHealth: Codable, Equatable, Sendable {
         rtmpAudioAppendRejections = try container.decodeIfPresent(
             Int.self,
             forKey: .rtmpAudioAppendRejections
+        ) ?? 0
+        rtmpPendingAppends = try container.decodeIfPresent(
+            Int.self,
+            forKey: .rtmpPendingAppends
+        ) ?? 0
+        rtmpAppendCapacity = try container.decodeIfPresent(
+            Int.self,
+            forKey: .rtmpAppendCapacity
         ) ?? 0
         avDriftMilliseconds = try container.decodeIfPresent(
             Int.self,

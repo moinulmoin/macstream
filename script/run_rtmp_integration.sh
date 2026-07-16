@@ -62,6 +62,7 @@ if ! kill -0 "$INGEST_PID" 2>/dev/null; then
   exit 1
 fi
 
+PUBLISH_STATUS=0
 (
   cd "$ROOT_DIR"
   MAC_STREAM_ENABLE_HAISHINKIT=1 \
@@ -71,7 +72,13 @@ fi
   MAC_STREAM_RTMP_INTEGRATION_DURATION="$DURATION" \
   MAC_STREAM_RTMP_INTEGRATION_FPS="$FPS" \
   swift test --filter haishinKitPublisherSendsSyntheticVideoToConfiguredRTMPIngest
-)
+) || PUBLISH_STATUS=$?
+
+if (( PUBLISH_STATUS != 0 )); then
+  cat "$INGEST_LOG" >&2
+  echo "RTMP publisher integration test failed." >&2
+  exit "$PUBLISH_STATUS"
+fi
 
 INGEST_STATUS=0
 wait "$INGEST_PID" || INGEST_STATUS=$?

@@ -369,9 +369,9 @@ func liveRTMPDisconnectStopsOldPublisherAndRecoversWithBoundedRetry() async {
     store.advanceDirector()
     #expect(store.isStreamConnecting)
 
-    for _ in 0..<1_000 {
-        guard !store.streamState.isLive || pipeline.startStreamCount < 4 else { break }
-        await Task.yield()
+    for _ in 0..<400 {
+        guard store.streamState != .live || pipeline.startStreamCount < 4 else { break }
+        try? await Task.sleep(for: .milliseconds(5))
     }
 
     #expect(store.streamState == .live)

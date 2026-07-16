@@ -44,6 +44,7 @@ public struct SessionReportPayload: Codable, Equatable, Sendable {
     public var preferences: StudioPreferences
     public var effectivePerformanceMode: StudioPerformanceMode
     public var health: StreamHealth
+    public var streamRecovery: StreamRecoveryMetrics?
     public var systemPressure: SystemPressureSnapshot
     public var latestSignals: SignalSnapshot
     public var clipMarkers: [ClipMarker]
@@ -59,6 +60,7 @@ public struct SessionReportPayload: Codable, Equatable, Sendable {
         preferences: StudioPreferences,
         effectivePerformanceMode: StudioPerformanceMode,
         health: StreamHealth,
+        streamRecovery: StreamRecoveryMetrics? = nil,
         systemPressure: SystemPressureSnapshot = SystemPressureSnapshot(),
         latestSignals: SignalSnapshot,
         clipMarkers: [ClipMarker],
@@ -73,6 +75,7 @@ public struct SessionReportPayload: Codable, Equatable, Sendable {
         self.preferences = preferences
         self.effectivePerformanceMode = effectivePerformanceMode
         self.health = health
+        self.streamRecovery = streamRecovery
         self.systemPressure = systemPressure
         self.latestSignals = latestSignals
         self.clipMarkers = clipMarkers

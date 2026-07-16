@@ -20,6 +20,7 @@ public final class StudioStore {
     public private(set) var recordingState: RecordingState = .stopped
     public private(set) var lastRecordingURL: URL?
     public private(set) var health = StreamHealth()
+    public private(set) var streamRecoveryMetrics = StreamRecoveryMetrics()
     public private(set) var systemPressure = SystemPressureSnapshot()
     public private(set) var latestSignals = SignalSnapshot()
     public private(set) var recommendation: DirectorRecommendation?
@@ -80,6 +81,7 @@ public final class StudioStore {
     @ObservationIgnored private var sourceMonitoringTask: Task<Void, Never>?
     @ObservationIgnored private var streamStartTask: Task<Void, Never>?
     @ObservationIgnored private var streamStartID: UUID?
+    @ObservationIgnored private var streamRecoveryStartedAt: ContinuousClock.Instant?
     @ObservationIgnored private var streamStopTask: Task<Void, Never>?
     @ObservationIgnored private var setupGenerationTask: Task<Void, Never>?
     @ObservationIgnored private var setupGenerationID: UUID?
@@ -923,6 +925,7 @@ public final class StudioStore {
 
     public func stopStream() {
         guard canStopStream else { return }
+        finishStreamRecovery(outcome: .cancelled)
         let shouldStopOwnedRecording = recordingOwnedByStream
         let pendingStartTask = streamStartTask
         pendingStartTask?.cancel()
@@ -1425,6 +1428,7 @@ public final class StudioStore {
             preferences: preferences,
             effectivePerformanceMode: effectivePerformanceMode,
             health: health,
+            streamRecovery: streamRecoveryMetrics,
             systemPressure: systemPressure,
             latestSignals: latestSignals,
             clipMarkers: clipMarkers,
@@ -1853,6 +1857,8 @@ public final class StudioStore {
         let recoveryID = UUID()
         let recoveryDestination = destination
         let retryPolicy = streamStartRetryPolicy
+        streamRecoveryMetrics.interruptionCount += 1
+        streamRecoveryStartedAt = ContinuousClock().now
         streamStartTask?.cancel()
         streamStartID = recoveryID
         streamStartAttempt = 1
@@ -1880,6 +1886,7 @@ public final class StudioStore {
                 streamStartTask = nil
                 streamStartID = nil
                 streamState = .live
+                finishStreamRecovery(outcome: .succeeded)
                 applyPerformanceConfiguration()
                 health = mediaPipeline.currentHealth ?? StreamHealth(
                     bitrateKbps: 0,
@@ -1895,6 +1902,7 @@ public final class StudioStore {
                 streamStartTask = nil
                 streamStartID = nil
                 streamState = .failed(error.localizedDescription)
+                finishStreamRecovery(outcome: .failed)
                 applyPerformanceConfiguration()
                 health = StreamHealth()
                 resetCaptureHealthPressure()
@@ -1931,6 +1939,8 @@ public final class StudioStore {
         guard !hasOpenCaptureSession, !canMarkClip else { return }
 
         clearRecommendation()
+        streamRecoveryMetrics = StreamRecoveryMetrics()
+        streamRecoveryStartedAt = nil
         clipMarkers.removeAll()
         latestClipExportURL = nil
         latestSessionReportURL = nil
@@ -1961,6 +1971,34 @@ public final class StudioStore {
         }
 
         hasOpenCaptureSession = false
+    }
+
+    private enum StreamRecoveryOutcome {
+        case succeeded
+        case failed
+        case cancelled
+    }
+
+    private func finishStreamRecovery(outcome: StreamRecoveryOutcome) {
+        guard let streamRecoveryStartedAt else { return }
+
+        let duration = ContinuousClock().now - streamRecoveryStartedAt
+        let components = duration.components
+        let totalMilliseconds = components.seconds * 1_000
+            + components.attoseconds / 1_000_000_000_000_000
+        let milliseconds = max(0, Int(clamping: totalMilliseconds))
+        streamRecoveryMetrics.lastDowntimeMilliseconds = milliseconds
+        streamRecoveryMetrics.totalDowntimeMilliseconds += milliseconds
+        self.streamRecoveryStartedAt = nil
+
+        switch outcome {
+        case .succeeded:
+            streamRecoveryMetrics.successfulRecoveryCount += 1
+        case .failed:
+            streamRecoveryMetrics.failedRecoveryCount += 1
+        case .cancelled:
+            streamRecoveryMetrics.cancelledRecoveryCount += 1
+        }
     }
 
     private var hasStartingOrActiveMediaCapture: Bool {

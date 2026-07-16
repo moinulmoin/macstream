@@ -77,6 +77,11 @@ struct StreamHealthView: View {
                 "\(resources.streamPublishState.title) • \(resources.streamDroppedFrames) drops • \(resources.streamBitrateKbps) kbps (\(resources.streamOutboundBytesPerSecond) B/s) • queue \(resources.streamQueueDepth)"
             )
             resourceRow(
+                "Recovery",
+                "\(store.streamRecoveryMetrics.interruptionCount) interruptions",
+                "\(store.streamRecoveryMetrics.successfulRecoveryCount) recovered • \(store.streamRecoveryMetrics.failedRecoveryCount) failed • \(store.streamRecoveryMetrics.cancelledRecoveryCount) cancelled • last \(store.streamRecoveryMetrics.lastDowntimeMilliseconds) ms"
+            )
+            resourceRow(
                 "Preview",
                 "\(resources.previewTargetFPS) fps",
                 "\(resources.previewMaxDisplayWidth) px max • queue \(resources.previewQueueDepth)"

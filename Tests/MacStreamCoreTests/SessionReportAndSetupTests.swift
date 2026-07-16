@@ -22,6 +22,13 @@ func sessionReportExporterWritesJSONPayload() throws {
         preferences: StudioPreferences(performanceMode: .efficiency),
         effectivePerformanceMode: .efficiency,
         health: StreamHealth(bitrateKbps: 4_000, captureFPS: 24),
+        streamRecovery: StreamRecoveryMetrics(
+            interruptionCount: 2,
+            successfulRecoveryCount: 1,
+            failedRecoveryCount: 1,
+            lastDowntimeMilliseconds: 850,
+            totalDowntimeMilliseconds: 2_400
+        ),
         systemPressure: SystemPressureSnapshot(
             timestamp: Date(timeIntervalSince1970: 50),
             thermalPressure: .fair,

@@ -266,6 +266,31 @@ public enum AudioDeliveryState: String, Codable, Equatable, Sendable {
     case stalled
 }
 
+public struct StreamRecoveryMetrics: Codable, Equatable, Sendable {
+    public var interruptionCount: Int
+    public var successfulRecoveryCount: Int
+    public var failedRecoveryCount: Int
+    public var cancelledRecoveryCount: Int
+    public var lastDowntimeMilliseconds: Int
+    public var totalDowntimeMilliseconds: Int
+
+    public init(
+        interruptionCount: Int = 0,
+        successfulRecoveryCount: Int = 0,
+        failedRecoveryCount: Int = 0,
+        cancelledRecoveryCount: Int = 0,
+        lastDowntimeMilliseconds: Int = 0,
+        totalDowntimeMilliseconds: Int = 0
+    ) {
+        self.interruptionCount = max(0, interruptionCount)
+        self.successfulRecoveryCount = max(0, successfulRecoveryCount)
+        self.failedRecoveryCount = max(0, failedRecoveryCount)
+        self.cancelledRecoveryCount = max(0, cancelledRecoveryCount)
+        self.lastDowntimeMilliseconds = max(0, lastDowntimeMilliseconds)
+        self.totalDowntimeMilliseconds = max(0, totalDowntimeMilliseconds)
+    }
+}
+
 public struct StreamHealth: Codable, Equatable, Sendable {
     public var bitrateKbps: Int
     public var outboundBytesPerSecond: Int64

@@ -416,6 +416,10 @@ func liveRTMPRecoveryPreservesStreamOwnedRecordingUntilStreamStops() async {
     #expect(store.recordingState == .recording)
     #expect(pipeline.startRecordingCount == 1)
     #expect(pipeline.stopRecordingCount == 0)
+    #expect(store.streamRecoveryMetrics.interruptionCount == 1)
+    #expect(store.streamRecoveryMetrics.successfulRecoveryCount == 1)
+    #expect(store.streamRecoveryMetrics.failedRecoveryCount == 0)
+    #expect(store.streamRecoveryMetrics.cancelledRecoveryCount == 0)
 
     store.stopStream()
     await waitUntilStreamIsOffline(store)
@@ -454,6 +458,48 @@ func liveRTMPRecoveryFailureStopsStreamOwnedRecording() async {
     #expect(store.recordingState == .stopped)
     #expect(pipeline.startRecordingCount == 1)
     #expect(pipeline.stopRecordingCount == 1)
+    #expect(store.streamRecoveryMetrics.interruptionCount == 1)
+    #expect(store.streamRecoveryMetrics.successfulRecoveryCount == 0)
+    #expect(store.streamRecoveryMetrics.failedRecoveryCount == 1)
+    #expect(store.streamRecoveryMetrics.cancelledRecoveryCount == 0)
+}
+
+@Test
+@MainActor
+func liveRTMPRecoveryCancellationRecordsCancellationAndNextSessionResetsMetrics() async {
+    let pipeline = SessionRecoveryMediaPipeline()
+    let store = StudioStore(
+        mediaPipeline: pipeline,
+        streamStartRetryPolicy: StreamStartRetryPolicy(maxAttempts: 3, backoffMilliseconds: [100, 100])
+    )
+    store.destination = StreamDestination(
+        name: "Twitch",
+        rtmpURL: "rtmps://live.example.com/app/sk_live_secret"
+    )
+
+    store.startStream()
+    await waitUntilStreamIsLive(store)
+
+    pipeline.failSession("RTMP connection closed by the server.", recoveryStartFailures: 3)
+    store.advanceDirector()
+    #expect(store.isStreamConnecting)
+
+    store.stopStream()
+    await waitUntilStreamIsOffline(store)
+
+    #expect(store.streamRecoveryMetrics.interruptionCount == 1)
+    #expect(store.streamRecoveryMetrics.successfulRecoveryCount == 0)
+    #expect(store.streamRecoveryMetrics.failedRecoveryCount == 0)
+    #expect(store.streamRecoveryMetrics.cancelledRecoveryCount == 1)
+
+    pipeline.failSession("", recoveryStartFailures: 0)
+    store.startStream()
+    await waitUntilStreamIsLive(store)
+
+    #expect(store.streamRecoveryMetrics == StreamRecoveryMetrics())
+
+    store.stopStream()
+    await waitUntilStreamIsOffline(store)
 }
 
 @Test

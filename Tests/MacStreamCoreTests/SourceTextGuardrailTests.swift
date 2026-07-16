@@ -589,6 +589,8 @@ func releaseAutomationDefinesSignedNotarizedMacPipeline() throws {
     #expect(dmgScript.contains("ln -s /Applications"))
     #expect(dmgScript.contains("/usr/bin/codesign"))
     #expect(dmgScript.contains("MAC_STREAM_REQUIRE_DEVELOPER_ID"))
+    #expect(dmgScript.contains("CN=Developer ID Application:"))
+    #expect(dmgScript.contains("--extract-certificates"))
     #expect(infoPlist.contains("CFBundleIconFile"))
     #expect(infoPlist.contains("LSApplicationCategoryType"))
     #expect(entitlements.contains("com.apple.security.device.camera"))

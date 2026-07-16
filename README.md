@@ -37,9 +37,10 @@ until capture, publishing, performance, and long-session reliability are proven.
 
 ## Install
 
-Download the latest signed and notarized DMG from
+Starting with v0.3, download the signed and notarized DMG from
 [GitHub Releases](https://github.com/moinulmoin/macstream/releases), open it,
-and drag `MacStream.app` to `Applications`.
+and drag `MacStream.app` to `Applications`. Legacy v0.2.x releases are ZIP-only;
+unzip the archive and move `MacStream.app` to `Applications`.
 
 The ZIP asset on each release is used by Sparkle for in-app updates. First-time
 installations should use the DMG.

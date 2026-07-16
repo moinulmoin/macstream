@@ -107,7 +107,12 @@ while true; do
   if (( now >= deadline )); then
     break
   fi
-  sleep "$interval"
+  remaining_seconds=$((deadline - now))
+  sleep_seconds="$interval"
+  if (( remaining_seconds < interval )); then
+    sleep_seconds="$remaining_seconds"
+  fi
+  sleep "$sleep_seconds"
 done
 
 echo "Reliability metrics written to $output"

@@ -40,3 +40,16 @@ Use `docs/v0.3-reliability-goal.md` as the v0.3 pass bar.
 
 Current release-gate evidence and remaining work are tracked in
 [`v0.3-validation.md`](v0.3-validation.md).
+
+## Local RTMP integration
+
+Run the actual HaishinKit publisher against an FFmpeg localhost listener:
+
+```sh
+./script/run_rtmp_integration.sh
+```
+
+The wrapper sends paced synthetic video through MacStream, records the incoming
+RTMP stream, and verifies the H.264 dimensions and decoded frame count. Increase
+`MAC_STREAM_RTMP_INTEGRATION_DURATION` for longer publisher-only runs. This does
+not replace packaged ScreenCaptureKit, microphone, compositor, or remote-ingest QA.

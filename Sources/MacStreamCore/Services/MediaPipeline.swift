@@ -3829,7 +3829,7 @@ enum RTMPPublisherShutdown {
 }
 
 #if MAC_STREAM_HAS_HAISHINKIT
-private final class HaishinKitRTMPPublisher: RTMPPublisher, @unchecked Sendable {
+final class HaishinKitRTMPPublisher: RTMPPublisher, @unchecked Sendable {
     private let target: RTMPPublishTarget
     private let connection = RTMPConnection(
         fourCcList: nil,

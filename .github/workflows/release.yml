@@ -36,6 +36,8 @@ jobs:
       release_version: ${{ steps.version.outputs.release_version }}
       artifact_name: ${{ steps.artifact.outputs.artifact_name }}
       sha256: ${{ steps.artifact.outputs.sha256 }}
+      dmg_name: ${{ steps.dmg.outputs.dmg_name }}
+      dmg_sha256: ${{ steps.dmg_checksum.outputs.dmg_sha256 }}
       bundle_version: ${{ github.run_number }}
       ed_signature: ${{ steps.sparkle_sign.outputs.ed_signature }}
       ed_length: ${{ steps.sparkle_sign.outputs.ed_length }}
@@ -282,6 +284,87 @@ jobs:
             exit 2
           fi
 
+      - name: Create signed DMG
+        id: dmg
+        shell: bash
+        env:
+          MAC_STREAM_APP_PATH: ${{ steps.package.outputs.app_path }}
+          MAC_STREAM_VERSION: ${{ steps.version.outputs.bundle_version }}
+          MAC_STREAM_BUILD_ARCH: arm64
+          MAC_STREAM_CODESIGN_IDENTITY: ${{ secrets.MAC_STREAM_CODESIGN_IDENTITY }}
+          MAC_STREAM_REQUIRE_DEVELOPER_ID: "1"
+        run: ./script/package_macos_dmg.sh
+
+      - name: Notarize and staple DMG
+        shell: bash
+        env:
+          MAC_STREAM_APPLE_ID: ${{ secrets.MAC_STREAM_APPLE_ID }}
+          MAC_STREAM_APPLE_TEAM_ID: ${{ secrets.MAC_STREAM_APPLE_TEAM_ID }}
+          MAC_STREAM_APP_SPECIFIC_PASSWORD: ${{ secrets.MAC_STREAM_APP_SPECIFIC_PASSWORD }}
+          DMG_PATH: ${{ steps.dmg.outputs.dmg_path }}
+        run: |
+          set -euo pipefail
+          notary_result="$RUNNER_TEMP/dmg-notary-result.json"
+          notary_log="$RUNNER_TEMP/dmg-notary-log.json"
+
+          submit_status=0
+          xcrun notarytool submit "$DMG_PATH" \
+            --apple-id "$MAC_STREAM_APPLE_ID" \
+            --team-id "$MAC_STREAM_APPLE_TEAM_ID" \
+            --password "$MAC_STREAM_APP_SPECIFIC_PASSWORD" \
+            --wait \
+            --output-format json >"$notary_result" || submit_status=$?
+          cat "$notary_result"
+
+          read -r submission_id notary_status < <(python3 - "$notary_result" <<'PY'
+          import json
+          import sys
+
+          with open(sys.argv[1], encoding="utf-8") as handle:
+              result = json.load(handle)
+
+          print(result.get("id", ""), result.get("status", ""))
+          PY
+          )
+
+          if [[ "$submit_status" != "0" || "$notary_status" != "Accepted" ]]; then
+            if [[ -n "$submission_id" ]]; then
+              xcrun notarytool log "$submission_id" "$notary_log" \
+                --apple-id "$MAC_STREAM_APPLE_ID" \
+                --team-id "$MAC_STREAM_APPLE_TEAM_ID" \
+                --password "$MAC_STREAM_APP_SPECIFIC_PASSWORD" || true
+              if [[ -f "$notary_log" ]]; then
+                cat "$notary_log"
+              fi
+            fi
+            if [[ "$submit_status" == "0" ]]; then
+              submit_status=1
+            fi
+            exit "$submit_status"
+          fi
+
+          xcrun stapler staple "$DMG_PATH"
+          xcrun stapler validate "$DMG_PATH"
+          codesign --verify --strict --verbose=2 "$DMG_PATH"
+          hdiutil verify "$DMG_PATH"
+          spctl -a -vv --type open --context context:primary-signature "$DMG_PATH"
+
+      - name: Create DMG checksum
+        id: dmg_checksum
+        shell: bash
+        env:
+          DMG_PATH: ${{ steps.dmg.outputs.dmg_path }}
+          DMG_NAME: ${{ steps.dmg.outputs.dmg_name }}
+        run: |
+          set -euo pipefail
+          dmg_sha256="$(shasum -a 256 "$DMG_PATH" | awk '{print $1}')"
+          dmg_sha256_path="$DMG_PATH.sha256"
+          echo "$dmg_sha256  $DMG_NAME" >"$dmg_sha256_path"
+          {
+            echo "dmg_sha256=$dmg_sha256"
+            echo "dmg_sha256_path=$dmg_sha256_path"
+          } >>"$GITHUB_OUTPUT"
+
       - name: Sign update for Sparkle appcast
         id: sparkle_sign
         shell: bash
@@ -311,6 +394,8 @@ jobs:
           path: |
             ${{ steps.artifact.outputs.zip_path }}
             ${{ steps.artifact.outputs.sha256_path }}
+            ${{ steps.dmg.outputs.dmg_path }}
+            ${{ steps.dmg_checksum.outputs.dmg_sha256_path }}
           if-no-files-found: error
 
   publish:
@@ -345,16 +430,20 @@ jobs:
           RELEASE_VERSION: ${{ needs.macos.outputs.release_version }}
           ARTIFACT_NAME: ${{ needs.macos.outputs.artifact_name }}
           SHA256: ${{ needs.macos.outputs.sha256 }}
+          DMG_NAME: ${{ needs.macos.outputs.dmg_name }}
+          DMG_SHA256: ${{ needs.macos.outputs.dmg_sha256 }}
         run: |
           set -euo pipefail
           notes_path="$RUNNER_TEMP/macstream-release-notes.md"
           {
             echo "## MacStream $RELEASE_VERSION"
             echo
-            echo "Signed and notarized macOS artifact:"
+            echo "Signed, notarized, and stapled macOS artifacts:"
             echo
-            echo "- Artifact: \`$ARTIFACT_NAME\`"
-            echo "- SHA256: \`$SHA256\`"
+            echo "- Installer: \`$DMG_NAME\`"
+            echo "- Installer SHA256: \`$DMG_SHA256\`"
+            echo "- Sparkle update: \`$ARTIFACT_NAME\`"
+            echo "- Sparkle update SHA256: \`$SHA256\`"
             echo "- Bundle ID: \`$BUNDLE_ID\`"
             echo "- Hardened runtime: enabled"
             echo "- Notarization: submitted with \`xcrun notarytool\` and stapled"
@@ -362,7 +451,9 @@ jobs:
             echo "Verification:"
             echo
             echo "\`\`\`bash"
+            echo "shasum -a 256 \"$DMG_NAME\""
             echo "shasum -a 256 \"$ARTIFACT_NAME\""
+            echo "spctl -a -vv --type open --context context:primary-signature \"$DMG_NAME\""
             echo "codesign --verify --strict \"MacStream.app\""
             echo "spctl -a -vv --type execute \"MacStream.app\""
             echo "xcrun stapler validate \"MacStream.app\""
@@ -378,6 +469,8 @@ jobs:
           ARTIFACT_NAME: ${{ needs.macos.outputs.artifact_name }}
           ZIP_PATH: ${{ runner.temp }}/release-artifacts/${{ needs.macos.outputs.artifact_name }}
           SHA256_PATH: ${{ runner.temp }}/release-artifacts/${{ needs.macos.outputs.artifact_name }}.sha256
+          DMG_PATH: ${{ runner.temp }}/release-artifacts/${{ needs.macos.outputs.dmg_name }}
+          DMG_SHA256_PATH: ${{ runner.temp }}/release-artifacts/${{ needs.macos.outputs.dmg_name }}.sha256
           NOTES_PATH: ${{ steps.notes.outputs.notes_path }}
         run: |
           set -euo pipefail
@@ -387,12 +480,12 @@ jobs:
           fi
 
           if gh release view "$RELEASE_VERSION" >/dev/null 2>&1; then
-            gh release upload "$RELEASE_VERSION" "$ZIP_PATH" "$SHA256_PATH" --clobber
+            gh release upload "$RELEASE_VERSION" "$DMG_PATH" "$DMG_SHA256_PATH" "$ZIP_PATH" "$SHA256_PATH" --clobber
             gh release edit "$RELEASE_VERSION" \
               --title "MacStream $RELEASE_VERSION" \
               --notes-file "$NOTES_PATH"
           else
-            gh release create "$RELEASE_VERSION" "$ZIP_PATH" "$SHA256_PATH" \
+            gh release create "$RELEASE_VERSION" "$DMG_PATH" "$DMG_SHA256_PATH" "$ZIP_PATH" "$SHA256_PATH" \
               --verify-tag \
               --title "MacStream $RELEASE_VERSION" \
               --notes-file "$NOTES_PATH"

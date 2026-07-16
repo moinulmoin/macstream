@@ -43,6 +43,7 @@ struct CameraPreviewView: NSViewRepresentable {
     final class Coordinator: @unchecked Sendable {
         let session = AVCaptureSession()
         private let queue = DispatchQueue(label: "com.macstream.camera-preview.session")
+        private let handoffOwnerID = UUID()
         private var isConfigured = false
         private var wantsRunning = false
         private var requestedPreset: AVCaptureSession.Preset
@@ -67,6 +68,7 @@ struct CameraPreviewView: NSViewRepresentable {
         }
 
         func start() {
+            CameraCaptureHandoff.shared.claimIdlePreview(ownerID: handoffOwnerID)
             queue.async { [weak self] in
                 self?.wantsRunning = true
             }
@@ -133,13 +135,17 @@ struct CameraPreviewView: NSViewRepresentable {
         }
 
         func stop() {
-            queue.async { [weak self] in
-                guard let self else { return }
+            queue.async { [self] in
                 self.wantsRunning = false
                 if self.session.isRunning {
                     self.session.stopRunning()
                 }
+                CameraCaptureHandoff.shared.releaseIdlePreview(ownerID: self.handoffOwnerID)
             }
+        }
+
+        deinit {
+            CameraCaptureHandoff.shared.releaseIdlePreview(ownerID: handoffOwnerID)
         }
 
         private func configureAndStart() {

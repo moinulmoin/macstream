@@ -7,6 +7,178 @@ import Testing
 @testable import MacStreamCore
 
 @Test
+func cameraCaptureHandoffWaitsForIdlePreviewTeardown() async throws {
+    let handoff = CameraCaptureHandoff()
+    let ownerID = UUID()
+    handoff.claimIdlePreview(ownerID: ownerID)
+    let clock = ContinuousClock()
+    let startedAt = clock.now
+
+    let waitTask = Task {
+        try await handoff.waitForIdlePreviewRelease(
+            timeout: .seconds(1),
+            pollInterval: .milliseconds(5),
+            settleDelay: .milliseconds(40)
+        )
+    }
+
+    try await Task.sleep(for: .milliseconds(30))
+    handoff.releaseIdlePreview(ownerID: ownerID)
+
+    #expect(try await waitTask.value)
+    #expect(startedAt.duration(to: clock.now) >= .milliseconds(60))
+}
+
+@Test
+func cameraCaptureHandoffTimesOutWhenIdlePreviewDoesNotRelease() async throws {
+    let handoff = CameraCaptureHandoff()
+    let ownerID = UUID()
+    handoff.claimIdlePreview(ownerID: ownerID)
+    defer {
+        handoff.releaseIdlePreview(ownerID: ownerID)
+    }
+
+    let released = try await handoff.waitForIdlePreviewRelease(
+        timeout: .milliseconds(30),
+        pollInterval: .milliseconds(5),
+        settleDelay: .zero
+    )
+
+    #expect(!released)
+}
+
+@Test
+func cameraCapturePrefersNativeBiPlanarPixelFormats() {
+    #expect(SystemMediaPipeline.preferredCameraPixelFormat(available: [
+        kCVPixelFormatType_32BGRA,
+        kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange,
+        kCVPixelFormatType_420YpCbCr8BiPlanarFullRange
+    ]) == kCVPixelFormatType_420YpCbCr8BiPlanarFullRange)
+    #expect(SystemMediaPipeline.preferredCameraPixelFormat(available: [
+        kCVPixelFormatType_32BGRA,
+        kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange
+    ]) == kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange)
+    #expect(SystemMediaPipeline.preferredCameraPixelFormat(available: [
+        kCVPixelFormatType_32BGRA
+    ]) == kCVPixelFormatType_32BGRA)
+}
+
+@Test
+func microphoneWriterSettingsSanitizeDeviceRecommendationAndUseStereoFallback() {
+    let recommended: [String: Any] = [
+        AVFormatIDKey: kAudioFormatLinearPCM,
+        AVSampleRateKey: 44_100,
+        AVNumberOfChannelsKey: 2,
+        AVEncoderBitRateKey: 192_000,
+        "unsupported-device-setting": true
+    ]
+    let resolved = SystemMediaPipeline.microphoneWriterSettings(recommended: recommended)
+
+    #expect(resolved[AVFormatIDKey] as? AudioFormatID == kAudioFormatMPEG4AAC)
+    #expect(resolved[AVSampleRateKey] as? Int == 44_100)
+    #expect(resolved[AVNumberOfChannelsKey] as? Int == 2)
+    #expect(resolved[AVEncoderBitRateKey] as? Int == 192_000)
+    #expect(resolved["unsupported-device-setting"] == nil)
+
+    let fallback = SystemMediaPipeline.microphoneWriterSettings(
+        recommended: nil,
+        fallbackSampleRate: 50_000,
+        fallbackChannels: 1
+    )
+    #expect(fallback[AVSampleRateKey] as? Int == 48_000)
+    #expect(fallback[AVNumberOfChannelsKey] as? Int == 1)
+    #expect(fallback[AVEncoderBitRateKey] as? Int == 128_000)
+}
+
+@Test
+func cameraDrivenCompositionHonorsOutputCadence() {
+    let start = CMTime(seconds: 10, preferredTimescale: 600)
+    let oneFrameLater = CMTimeAdd(start, CMTime(value: 1, timescale: 60))
+    let halfFrameLater = CMTimeAdd(start, CMTime(value: 1, timescale: 120))
+
+    #expect(SystemMediaPipeline.shouldEmitCameraDrivenComposedFrame(
+        start,
+        after: nil,
+        framesPerSecond: 60
+    ))
+    #expect(SystemMediaPipeline.shouldEmitCameraDrivenComposedFrame(
+        oneFrameLater,
+        after: start,
+        framesPerSecond: 60
+    ))
+    #expect(!SystemMediaPipeline.shouldEmitCameraDrivenComposedFrame(
+        halfFrameLater,
+        after: start,
+        framesPerSecond: 60
+    ))
+    #expect(!SystemMediaPipeline.shouldEmitCameraDrivenComposedFrame(
+        start,
+        after: oneFrameLater,
+        framesPerSecond: 60
+    ))
+    #expect(SystemMediaPipeline.isNewerComposedPresentationTime(
+        oneFrameLater,
+        after: start
+    ))
+    #expect(!SystemMediaPipeline.isNewerComposedPresentationTime(
+        start,
+        after: oneFrameLater
+    ))
+}
+
+@Test
+func recordingAudioDropsPrerollAndNonMonotonicSamples() {
+    let sessionStart = CMTime(seconds: 10, preferredTimescale: 48_000)
+    let preroll = CMTime(seconds: 9.99, preferredTimescale: 48_000)
+    let firstAccepted = CMTime(seconds: 10.01, preferredTimescale: 48_000)
+    let nextAccepted = CMTime(seconds: 10.02, preferredTimescale: 48_000)
+
+    #expect(!SystemMediaPipeline.shouldAppendRecordingAudioSample(
+        preroll,
+        sessionStartTime: sessionStart,
+        previousPresentationTime: nil
+    ))
+    #expect(SystemMediaPipeline.shouldAppendRecordingAudioSample(
+        firstAccepted,
+        sessionStartTime: sessionStart,
+        previousPresentationTime: nil
+    ))
+    #expect(!SystemMediaPipeline.shouldAppendRecordingAudioSample(
+        firstAccepted,
+        sessionStartTime: sessionStart,
+        previousPresentationTime: firstAccepted
+    ))
+    #expect(SystemMediaPipeline.shouldAppendRecordingAudioSample(
+        nextAccepted,
+        sessionStartTime: sessionStart,
+        previousPresentationTime: firstAccepted
+    ))
+}
+
+@Test
+func microphoneCaptureNormalizesDeviceAudioToInterleavedPCM() {
+    let settings = SystemMediaPipeline.microphoneCaptureSettings(
+        sampleRate: 48_000,
+        channels: 4
+    )
+
+    #expect(settings[AVFormatIDKey] as? AudioFormatID == kAudioFormatLinearPCM)
+    #expect(settings[AVSampleRateKey] as? Double == 48_000)
+    #expect(settings[AVNumberOfChannelsKey] as? Int == 2)
+    #expect(settings[AVLinearPCMBitDepthKey] as? Int == 16)
+    #expect(settings[AVLinearPCMIsFloatKey] as? Bool == false)
+    #expect(settings[AVLinearPCMIsBigEndianKey] as? Bool == false)
+    #expect(settings[AVLinearPCMIsNonInterleaved] as? Bool == false)
+
+    let fallback = SystemMediaPipeline.microphoneCaptureSettings(
+        sampleRate: .nan,
+        channels: 0
+    )
+    #expect(fallback[AVSampleRateKey] as? Double == 48_000)
+    #expect(fallback[AVNumberOfChannelsKey] as? Int == 1)
+}
+
+@Test
 func mediaPipelinesReportStreamTransport() {
     #expect(PreviewMediaPipeline().streamTransport == .preview)
     #if MAC_STREAM_HAS_HAISHINKIT

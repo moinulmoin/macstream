@@ -378,9 +378,18 @@ public struct PreviewMediaPipeline: MediaPipeline {
     }
 }
 
-public final class SystemMediaPipeline: NSObject, MediaPipeline, SCStreamOutput, SCStreamDelegate, AVCaptureAudioDataOutputSampleBufferDelegate, AVCaptureVideoDataOutputSampleBufferDelegate, @unchecked Sendable {
+public final class SystemMediaPipeline: NSObject, MediaPipeline, SCStreamOutput, SCStreamDelegate, AVCaptureAudioDataOutputSampleBufferDelegate, @unchecked Sendable {
     public let mediaPreviewFrameSource: MediaPreviewFrameSource? = MediaPreviewFrameSource()
     private let queue = DispatchQueue(label: "com.macstream.media.recording", qos: .userInitiated)
+    private let cameraOutputQueue = DispatchQueue(label: "com.macstream.media.camera-output", qos: .userInitiated)
+    private lazy var cameraCompositionSignal: DispatchSourceUserDataAdd = {
+        let source = DispatchSource.makeUserDataAddSource(queue: queue)
+        source.setEventHandler { [weak self] in
+            self?.processCameraDrivenComposedFrame()
+        }
+        source.activate()
+        return source
+    }()
     private let rtmpPublisherFactory: @Sendable (RTMPPublishTarget) -> any RTMPPublisher
     private var mediaConfiguration = MediaPipelineConfiguration()
     private var stream: SCStream?
@@ -394,6 +403,10 @@ public final class SystemMediaPipeline: NSObject, MediaPipeline, SCStreamOutput,
     private var microphoneOutput: AVCaptureAudioDataOutput?
     private var recordingCameraOutput: AVCaptureVideoDataOutput?
     private var publishingCameraOutput: AVCaptureVideoDataOutput?
+    private var recordingCameraFrameSlot: CameraFrameSlot?
+    private var publishingCameraFrameSlot: CameraFrameSlot?
+    private var recordingCameraReceiver: CameraFrameReceiver?
+    private var publishingCameraReceiver: CameraFrameReceiver?
     private var publishingMicrophoneOutput: AVCaptureAudioDataOutput?
     private var writer: AVAssetWriter?
     private var videoInput: AVAssetWriterInput?
@@ -408,9 +421,14 @@ public final class SystemMediaPipeline: NSObject, MediaPipeline, SCStreamOutput,
     private var publishingVideoCompositor: VideoCanvasCompositor?
     private var publishingPixelBufferPool: CVPixelBufferPool?
     private var publishingVideoFormatDescriptionCache: VideoFormatDescriptionCache?
-    private var latestCameraPixelBuffer: CVPixelBuffer?
-    private var latestPublishingCameraPixelBuffer: CVPixelBuffer?
+    private var latestRecordingScreenSampleBuffer: CMSampleBuffer?
+    private var latestPublishingScreenSampleBuffer: CMSampleBuffer?
+    private var lastRecordingComposedPresentationTime: CMTime?
+    private var lastPublishingComposedPresentationTime: CMTime?
     private var didStartSession = false
+    private var recordingSessionStartTime: CMTime?
+    private var lastSystemAudioPresentationTime: CMTime?
+    private var lastMicrophonePresentationTime: CMTime?
     private var currentURL: URL?
     private var publishingCaptureMode: PublishingCaptureMode = .none
     private var publishingOwnsMicrophoneSession = false
@@ -511,6 +529,8 @@ public final class SystemMediaPipeline: NSObject, MediaPipeline, SCStreamOutput,
     }
 
     private static let rtmpLogger = Logger(subsystem: "com.ideaplexa.macstream", category: "rtmp")
+    private static let captureLogger = Logger(subsystem: "com.ideaplexa.macstream", category: "capture")
+    private static let recordingLogger = Logger(subsystem: "com.ideaplexa.macstream", category: "recording")
     private static let firstPublishingVideoFrameTimeout: Duration = .seconds(8)
     private static let cameraFirstFrameRetryDelay: DispatchTimeInterval = .seconds(1)
     private static let cameraFirstFrameFailureDelay: DispatchTimeInterval = .seconds(2)
@@ -553,7 +573,6 @@ public final class SystemMediaPipeline: NSObject, MediaPipeline, SCStreamOutput,
                 self.publishingVideoCompositor = nil
                 self.publishingPixelBufferPool = nil
                 self.publishingVideoFormatDescriptionCache = nil
-                self.latestPublishingCameraPixelBuffer = nil
             }
             let shouldStartPublishingCamera = self.publishingStream != nil
                 && Self.requiresCameraCapture(sceneKind: configuration.sceneKind)
@@ -657,14 +676,18 @@ public final class SystemMediaPipeline: NSObject, MediaPipeline, SCStreamOutput,
             publishingStream = nil
             publishingCaptureGeometry = nil
             invalidateCameraFirstFrameRecovery(for: publishingCameraSession)
+            publishingCameraFrameSlot?.reset()
             publishingCameraSession = nil
             publishingCameraOutput = nil
+            publishingCameraFrameSlot = nil
+            publishingCameraReceiver = nil
+            latestPublishingScreenSampleBuffer = nil
+            lastPublishingComposedPresentationTime = nil
             publishingMicrophoneSession = nil
             publishingMicrophoneOutput = nil
             publishingVideoCompositor = nil
             publishingPixelBufferPool = nil
             publishingVideoFormatDescriptionCache = nil
-            latestPublishingCameraPixelBuffer = nil
             publishingCaptureMode = .none
             publishingOwnsMicrophoneSession = false
             finishFirstPublishingVideoFrameWaitOnQueue(throwing: CancellationError())
@@ -827,22 +850,28 @@ public final class SystemMediaPipeline: NSObject, MediaPipeline, SCStreamOutput,
         let microphoneCapture = usesPublishingMicrophoneSession
             ? nil
             : (mediaConfiguration.capturesMicrophone ? await makeMicrophoneCaptureIfAvailable(deviceID: mediaConfiguration.microphoneDeviceID) : nil)
+        let recordingMicrophoneCapture = publishingMicrophoneCapture ?? microphoneCapture
         if mediaConfiguration.capturesMicrophone,
            !usesPublishingMicrophoneSession,
            microphoneCapture == nil {
             setupWarnings.append("Microphone capture could not be attached; this recording will not include microphone audio.")
         }
-        let hasMicrophoneCapture = usesPublishingMicrophoneSession || microphoneCapture != nil
         let microphoneInput: AVAssetWriterInput?
-        if hasMicrophoneCapture {
+        if let recordingMicrophoneCapture {
+            let recommendedSettings = recordingMicrophoneCapture.output
+                .recommendedAudioSettingsForAssetWriter(writingTo: .mov)
+            let captureSettings = recordingMicrophoneCapture.output.audioSettings ?? [:]
+            let writerSettings = Self.microphoneWriterSettings(
+                recommended: recommendedSettings,
+                fallbackSampleRate: (captureSettings[AVSampleRateKey] as? NSNumber)?.doubleValue ?? 48_000,
+                fallbackChannels: (captureSettings[AVNumberOfChannelsKey] as? NSNumber)?.intValue ?? 1
+            )
+            Self.recordingLogger.info(
+                "Microphone writer settings channels=\(writerSettings[AVNumberOfChannelsKey] as? Int ?? 0, privacy: .public) sampleRate=\(writerSettings[AVSampleRateKey] as? Int ?? 0, privacy: .public)"
+            )
             let input = AVAssetWriterInput(
                 mediaType: .audio,
-                outputSettings: [
-                    AVFormatIDKey: kAudioFormatMPEG4AAC,
-                    AVSampleRateKey: 48_000,
-                    AVNumberOfChannelsKey: 1,
-                    AVEncoderBitRateKey: 96_000
-                ]
+                outputSettings: writerSettings
             )
             input.expectsMediaDataInRealTime = true
             if writer.canAdd(input) {
@@ -857,7 +886,7 @@ public final class SystemMediaPipeline: NSObject, MediaPipeline, SCStreamOutput,
         }
 
         let cameraCapture = dedicatedPublishingSnapshot == nil && Self.requiresCameraCapture(sceneKind: mediaConfiguration.sceneKind)
-            ? await makeCameraCaptureIfAvailable(configuration: mediaConfiguration)
+            ? try await makeCameraCaptureIfAvailable(configuration: mediaConfiguration)
             : nil
         if dedicatedPublishingSnapshot == nil,
            Self.requiresCameraCapture(sceneKind: mediaConfiguration.sceneKind),
@@ -932,10 +961,19 @@ public final class SystemMediaPipeline: NSObject, MediaPipeline, SCStreamOutput,
                 : microphoneCapture?.output
             self.recordingCameraSession = dedicatedPublishingSnapshot?.cameraSession ?? cameraCapture?.session
             self.recordingCameraOutput = dedicatedPublishingSnapshot?.cameraOutput ?? cameraCapture?.output
+            self.recordingCameraFrameSlot = dedicatedPublishingSnapshot?.cameraFrameSlot ?? cameraCapture?.frameSlot
+            self.recordingCameraReceiver = dedicatedPublishingSnapshot?.cameraReceiver ?? cameraCapture?.receiver
             self.recordingUsesPublishingMicrophoneSession = false
             self.videoCompositor = videoCompositor
-            self.latestCameraPixelBuffer = dedicatedPublishingSnapshot == nil ? nil : self.latestPublishingCameraPixelBuffer
+            self.recordingCameraFrameSlot?.reset()
+            self.latestRecordingScreenSampleBuffer = dedicatedPublishingSnapshot == nil
+                ? nil
+                : self.latestPublishingScreenSampleBuffer
+            self.lastRecordingComposedPresentationTime = nil
             self.didStartSession = false
+            self.recordingSessionStartTime = nil
+            self.lastSystemAudioPresentationTime = nil
+            self.lastMicrophonePresentationTime = nil
             self.currentURL = outputURL
             self.setupWarnings = setupWarnings
             if dedicatedPublishingSnapshot != nil {
@@ -944,6 +982,10 @@ public final class SystemMediaPipeline: NSObject, MediaPipeline, SCStreamOutput,
                 self.publishingCaptureGeometry = recordingGeometry
                 self.publishingCameraSession = nil
                 self.publishingCameraOutput = nil
+                self.publishingCameraFrameSlot = nil
+                self.publishingCameraReceiver = nil
+                self.latestPublishingScreenSampleBuffer = nil
+                self.lastPublishingComposedPresentationTime = nil
                 self.publishingMicrophoneSession = nil
                 self.publishingMicrophoneOutput = nil
                 self.publishingVideoCompositor = nil
@@ -1007,8 +1049,16 @@ public final class SystemMediaPipeline: NSObject, MediaPipeline, SCStreamOutput,
             self.microphoneSession = nil
             self.microphoneOutput = nil
             self.invalidateCameraFirstFrameRecovery(for: self.recordingCameraSession)
+            self.recordingCameraFrameSlot?.reset()
             self.recordingCameraSession = nil
             self.recordingCameraOutput = nil
+            self.recordingCameraFrameSlot = nil
+            self.recordingCameraReceiver = nil
+            self.latestRecordingScreenSampleBuffer = nil
+            self.lastRecordingComposedPresentationTime = nil
+            self.recordingSessionStartTime = nil
+            self.lastSystemAudioPresentationTime = nil
+            self.lastMicrophonePresentationTime = nil
             self.writer = nil
             self.videoInput = nil
             self.videoPixelBufferAdaptor = nil
@@ -1016,7 +1066,6 @@ public final class SystemMediaPipeline: NSObject, MediaPipeline, SCStreamOutput,
             self.microphoneInput = nil
             recordingUsesPublishingMicrophoneSession = false
             videoCompositor = nil
-            latestCameraPixelBuffer = nil
             if publishingCaptureMode == .recordingOwned {
                 publishingCaptureMode = .none
             }
@@ -1113,11 +1162,19 @@ public final class SystemMediaPipeline: NSObject, MediaPipeline, SCStreamOutput,
         return "Recording failed because the local media writer failed."
     }
 
-    private func recordWriterFailureIfNeeded(status: AVAssetWriter.Status, errorDescription: String?) {
+    private func recordWriterFailureIfNeeded(_ writer: AVAssetWriter, context: String) {
+        let error = writer.error as NSError?
         guard recordingFailureReason == nil,
-              let detail = Self.writerFailureDetail(status: status, errorDescription: errorDescription)
+              let detail = Self.writerFailureDetail(
+                  status: writer.status,
+                  errorDescription: error?.localizedDescription
+              )
         else { return }
 
+        let underlyingError = error?.userInfo[NSUnderlyingErrorKey] as? NSError
+        Self.recordingLogger.error(
+            "Writer failed context=\(context, privacy: .public) domain=\(error?.domain ?? "none", privacy: .public) code=\(error?.code ?? 0, privacy: .public) reason=\(error?.localizedFailureReason ?? "none", privacy: .public) underlyingDomain=\(underlyingError?.domain ?? "none", privacy: .public) underlyingCode=\(underlyingError?.code ?? 0, privacy: .public)"
+        )
         recordingFailureReason = detail
     }
 
@@ -1173,6 +1230,8 @@ public final class SystemMediaPipeline: NSObject, MediaPipeline, SCStreamOutput,
             geometry: publishingCaptureGeometry,
             cameraSession: publishingCameraSession,
             cameraOutput: publishingCameraOutput,
+            cameraFrameSlot: publishingCameraFrameSlot,
+            cameraReceiver: publishingCameraReceiver,
             microphoneSession: publishingMicrophoneSession,
             microphoneOutput: publishingMicrophoneOutput
         )
@@ -1223,6 +1282,13 @@ public final class SystemMediaPipeline: NSObject, MediaPipeline, SCStreamOutput,
 
         let session = AVCaptureSession()
         let output = AVCaptureAudioDataOutput()
+        let sourceDescription = CMAudioFormatDescriptionGetStreamBasicDescription(
+            device.activeFormat.formatDescription
+        )?.pointee
+        output.audioSettings = Self.microphoneCaptureSettings(
+            sampleRate: sourceDescription?.mSampleRate ?? 48_000,
+            channels: Int(sourceDescription?.mChannelsPerFrame ?? 1)
+        )
         output.setSampleBufferDelegate(self, queue: queue)
 
         session.beginConfiguration()
@@ -1239,7 +1305,7 @@ public final class SystemMediaPipeline: NSObject, MediaPipeline, SCStreamOutput,
             : MicrophoneCapture(session: session, output: output)
     }
 
-    private func makeCameraCaptureIfAvailable(configuration: MediaPipelineConfiguration) async -> CameraCapture? {
+    private func makeCameraCaptureIfAvailable(configuration: MediaPipelineConfiguration) async throws -> CameraCapture? {
         let status = AVCaptureDevice.authorizationStatus(for: .video)
         let isAllowed: Bool
 
@@ -1254,7 +1320,15 @@ public final class SystemMediaPipeline: NSObject, MediaPipeline, SCStreamOutput,
             isAllowed = false
         }
 
-        guard isAllowed,
+        guard isAllowed else {
+            return nil
+        }
+
+        guard try await CameraCaptureHandoff.shared.waitForIdlePreviewRelease() else {
+            throw MediaPipelineError.unavailable("The idle webcam preview did not release the camera in time.")
+        }
+
+        guard
               let device = Self.videoCaptureDevice(matching: configuration.cameraDeviceID),
               let input = try? AVCaptureDeviceInput(device: device)
         else {
@@ -1263,11 +1337,23 @@ public final class SystemMediaPipeline: NSObject, MediaPipeline, SCStreamOutput,
 
         let session = AVCaptureSession()
         let output = AVCaptureVideoDataOutput()
-        output.videoSettings = [
-            kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA
-        ]
+        let frameSlot = CameraFrameSlot()
+        let compositionSignal = cameraCompositionSignal
+        let receiver = CameraFrameReceiver(
+            frameSlot: frameSlot,
+            onFrame: {
+                compositionSignal.add(data: 1)
+            }
+        )
+        if let pixelFormat = Self.preferredCameraPixelFormat(
+            available: output.availableVideoPixelFormatTypes
+        ) {
+            output.videoSettings = [
+                kCVPixelBufferPixelFormatTypeKey as String: pixelFormat
+            ]
+        }
         output.alwaysDiscardsLateVideoFrames = true
-        output.setSampleBufferDelegate(self, queue: queue)
+        output.setSampleBufferDelegate(receiver, queue: cameraOutputQueue)
 
         session.beginConfiguration()
         let preset = Self.cameraSessionPreset(for: configuration)
@@ -1286,7 +1372,12 @@ public final class SystemMediaPipeline: NSObject, MediaPipeline, SCStreamOutput,
 
         return session.inputs.isEmpty || session.outputs.isEmpty
             ? nil
-            : CameraCapture(session: session, output: output)
+            : CameraCapture(
+                session: session,
+                output: output,
+                frameSlot: frameSlot,
+                receiver: receiver
+            )
     }
 
     private static func videoCaptureDevice(matching id: String?) -> AVCaptureDevice? {
@@ -1346,7 +1437,6 @@ public final class SystemMediaPipeline: NSObject, MediaPipeline, SCStreamOutput,
             self.publishingCaptureGeometry = self.recordingCaptureGeometry
             self.publishingAudioTrackPlan = audioTrackPlan
             self.publishingVideoFormatDescriptionCache = nil
-            self.latestPublishingCameraPixelBuffer = self.latestCameraPixelBuffer
             self.didPublishFirstVideoFrame = false
             self.resetHealth(using: mediaConfiguration)
         }
@@ -1360,7 +1450,6 @@ public final class SystemMediaPipeline: NSObject, MediaPipeline, SCStreamOutput,
                     self.publishingCaptureGeometry = nil
                     self.publishingAudioTrackPlan = (nil, nil, 0)
                     self.publishingVideoFormatDescriptionCache = nil
-                    self.latestPublishingCameraPixelBuffer = nil
                     self.finishFirstPublishingVideoFrameWaitOnQueue(throwing: CancellationError())
                     self.didPublishFirstVideoFrame = false
                 }
@@ -1427,7 +1516,7 @@ public final class SystemMediaPipeline: NSObject, MediaPipeline, SCStreamOutput,
             throw MediaPipelineError.unavailable("Cannot allocate composed RTMP video buffers.")
         }
         let cameraCapture = Self.requiresCameraCapture(sceneKind: mediaConfiguration.sceneKind)
-            ? await makeCameraCaptureIfAvailable(configuration: mediaConfiguration)
+            ? try await makeCameraCaptureIfAvailable(configuration: mediaConfiguration)
             : nil
         if Self.requiresCameraCapture(sceneKind: mediaConfiguration.sceneKind), cameraCapture == nil {
             throw MediaPipelineError.unavailable("Webcam capture is required for Screen + Webcam RTMP publishing.")
@@ -1472,13 +1561,17 @@ public final class SystemMediaPipeline: NSObject, MediaPipeline, SCStreamOutput,
             self.publishingCaptureGeometry = selection.geometry
             self.publishingCameraSession = cameraCapture?.session
             self.publishingCameraOutput = cameraCapture?.output
+            self.publishingCameraFrameSlot = cameraCapture?.frameSlot
+            self.publishingCameraReceiver = cameraCapture?.receiver
             self.publishingMicrophoneSession = microphoneSession
             self.publishingMicrophoneOutput = microphoneOutput
             self.publishingAudioTrackPlan = audioTrackPlan
             self.publishingVideoCompositor = publishingVideoCompositor
             self.publishingPixelBufferPool = publishingPixelBufferPool
             self.publishingVideoFormatDescriptionCache = nil
-            self.latestPublishingCameraPixelBuffer = nil
+            self.publishingCameraFrameSlot?.reset()
+            self.latestPublishingScreenSampleBuffer = nil
+            self.lastPublishingComposedPresentationTime = nil
             self.publishingOwnsMicrophoneSession = ownsMicrophoneSession
             self.didPublishFirstVideoFrame = false
             self.resetHealth(using: mediaConfiguration)
@@ -1510,6 +1603,7 @@ public final class SystemMediaPipeline: NSObject, MediaPipeline, SCStreamOutput,
             queue.sync {
                 if self.publishingStream === stream {
                     self.invalidateCameraFirstFrameRecovery(for: self.publishingCameraSession)
+                    self.publishingCameraFrameSlot?.reset()
                     self.publishingStream = nil
                     self.publishingCaptureMode = restoreModeOnFailure
                     self.publishingCaptureGeometry = restoreModeOnFailure == .recordingOwned
@@ -1517,12 +1611,13 @@ public final class SystemMediaPipeline: NSObject, MediaPipeline, SCStreamOutput,
                         : nil
                     self.publishingCameraSession = nil
                     self.publishingCameraOutput = nil
+                    self.publishingCameraFrameSlot = nil
+                    self.publishingCameraReceiver = nil
+                    self.latestPublishingScreenSampleBuffer = nil
+                    self.lastPublishingComposedPresentationTime = nil
                     self.publishingVideoCompositor = nil
                     self.publishingPixelBufferPool = nil
                     self.publishingVideoFormatDescriptionCache = nil
-                    self.latestPublishingCameraPixelBuffer = restoreModeOnFailure == .recordingOwned
-                        ? self.latestCameraPixelBuffer
-                        : nil
                     self.publishingAudioTrackPlan = restoreModeOnFailure == .recordingOwned
                         ? Self.publishingAudioTrackPlan(configuration: self.mediaConfiguration)
                         : (nil, nil, 0)
@@ -1557,6 +1652,13 @@ public final class SystemMediaPipeline: NSObject, MediaPipeline, SCStreamOutput,
     private func startCameraSession(_ session: AVCaptureSession?) {
         queue.async {
             self.startCameraSessionIfNeeded(session)
+            if let session {
+                let output = session.outputs.first { $0 is AVCaptureVideoDataOutput }
+                let connection = output?.connection(with: .video)
+                Self.captureLogger.info(
+                    "Camera session started running=\(session.isRunning, privacy: .public) connectionActive=\(connection?.isActive ?? false, privacy: .public) connectionEnabled=\(connection?.isEnabled ?? false, privacy: .public)"
+                )
+            }
             self.scheduleCameraFirstFrameRecovery(for: session)
         }
     }
@@ -1577,8 +1679,14 @@ public final class SystemMediaPipeline: NSObject, MediaPipeline, SCStreamOutput,
 
         queue.asyncAfter(deadline: .now() + Self.cameraFirstFrameRetryDelay) { [weak self, weak session] in
             guard let self, let session,
-                  self.shouldContinueCameraFirstFrameRecovery(for: session, generation: generation)
+                  self.cameraRecoveryGenerations[ObjectIdentifier(session)] == generation,
+                  Self.requiresCameraCapture(sceneKind: self.mediaConfiguration.sceneKind),
+                  self.recordingCameraSession === session || self.publishingCameraSession === session
             else {
+                return
+            }
+            guard self.shouldRecoverCameraSession(session) else {
+                self.invalidateCameraFirstFrameRecovery(for: session)
                 return
             }
 
@@ -1588,26 +1696,20 @@ public final class SystemMediaPipeline: NSObject, MediaPipeline, SCStreamOutput,
             self.startCameraSessionIfNeeded(session)
             self.queue.asyncAfter(deadline: .now() + Self.cameraFirstFrameFailureDelay) { [weak self, weak session] in
                 guard let self, let session,
-                      self.shouldContinueCameraFirstFrameRecovery(for: session, generation: generation)
+                      self.cameraRecoveryGenerations[ObjectIdentifier(session)] == generation,
+                      Self.requiresCameraCapture(sceneKind: self.mediaConfiguration.sceneKind),
+                      self.recordingCameraSession === session || self.publishingCameraSession === session
                 else {
+                    return
+                }
+                guard self.shouldRecoverCameraSession(session) else {
+                    self.invalidateCameraFirstFrameRecovery(for: session)
                     return
                 }
                 self.invalidateCameraFirstFrameRecovery(for: session)
                 self.recordCameraDeliveryFailure(for: session)
             }
         }
-    }
-
-    private func shouldContinueCameraFirstFrameRecovery(
-        for session: AVCaptureSession,
-        generation: UInt64
-    ) -> Bool {
-        Self.shouldContinueCameraFirstFrameRecovery(
-            requiresCameraCapture: Self.requiresCameraCapture(sceneKind: mediaConfiguration.sceneKind),
-            hasCurrentSession: recordingCameraSession === session || publishingCameraSession === session,
-            hasDeliveredFrame: !shouldRecoverCameraSession(session),
-            generationMatches: cameraRecoveryGenerations[ObjectIdentifier(session)] == generation
-        )
     }
 
     static func shouldContinueCameraFirstFrameRecovery(
@@ -1626,10 +1728,10 @@ public final class SystemMediaPipeline: NSObject, MediaPipeline, SCStreamOutput,
 
     private func shouldRecoverCameraSession(_ session: AVCaptureSession) -> Bool {
         if recordingCameraSession === session {
-            return latestCameraPixelBuffer == nil
+            return recordingCameraFrameSlot?.pixelBuffer == nil
         }
         if publishingCameraSession === session {
-            return latestPublishingCameraPixelBuffer == nil
+            return publishingCameraFrameSlot?.pixelBuffer == nil
         }
         return false
     }
@@ -1722,12 +1824,145 @@ public final class SystemMediaPipeline: NSObject, MediaPipeline, SCStreamOutput,
         publishingMicrophoneOutput === output
     }
 
-    private func isRecordingCameraOutput(_ output: AVCaptureOutput) -> Bool {
-        recordingCameraOutput === output
+    private func recordingCameraPixelBuffer() -> CVPixelBuffer? {
+        let lookup = recordingCameraFrameSlot?.lookup()
+            ?? CameraFrameLookup(
+                pixelBuffer: nil,
+                presentationTime: nil,
+                didResolveFirstFrame: false
+            )
+        if lookup.didResolveFirstFrame, let pixelBuffer = lookup.pixelBuffer {
+            Self.captureLogger.info(
+                "Compositor resolved first recording camera frame pixelFormat=\(CVPixelBufferGetPixelFormatType(pixelBuffer), privacy: .public) sampledLuma=\(Self.sampledCameraLuma(pixelBuffer), privacy: .public)"
+            )
+        }
+        return lookup.pixelBuffer
     }
 
-    private func isPublishingCameraOutput(_ output: AVCaptureOutput) -> Bool {
-        publishingCameraOutput === output
+    private func publishingCameraPixelBuffer() -> CVPixelBuffer? {
+        let frameSlot = publishingCaptureMode == .recordingOwned
+            ? recordingCameraFrameSlot
+            : publishingCameraFrameSlot
+        let lookup = frameSlot?.lookup()
+            ?? CameraFrameLookup(
+                pixelBuffer: nil,
+                presentationTime: nil,
+                didResolveFirstFrame: false
+            )
+        if lookup.didResolveFirstFrame, let pixelBuffer = lookup.pixelBuffer {
+            Self.captureLogger.info(
+                "Compositor resolved first publishing camera frame pixelFormat=\(CVPixelBufferGetPixelFormatType(pixelBuffer), privacy: .public) sampledLuma=\(Self.sampledCameraLuma(pixelBuffer), privacy: .public)"
+            )
+        }
+        return lookup.pixelBuffer
+    }
+
+    private func processCameraDrivenComposedFrame() {
+        guard Self.shouldPublishCompositedVideoSample(sceneKind: mediaConfiguration.sceneKind) else {
+            return
+        }
+
+        if publishingCaptureMode == .dedicated,
+           let sampleBuffer = latestPublishingScreenSampleBuffer,
+           let presentationTime = publishingCameraFrameSlot?.lookup().presentationTime,
+           Self.shouldEmitCameraDrivenComposedFrame(
+               presentationTime,
+               after: lastPublishingComposedPresentationTime,
+               framesPerSecond: mediaConfiguration.framesPerSecond
+           ) {
+            if publishCompositedVideoSample(sampleBuffer, presentationTime: presentationTime) {
+                recordAcceptedVideoPresentationTime(presentationTime)
+                markFirstPublishingVideoFrameIfNeeded()
+            } else {
+                recordDroppedFrameIfNeeded(.screen)
+            }
+        }
+
+        guard let writer,
+              let videoInput,
+              videoInput.isReadyForMoreMediaData,
+              didStartSession,
+              writer.status == .writing,
+              let sampleBuffer = latestRecordingScreenSampleBuffer,
+              let presentationTime = recordingCameraFrameSlot?.lookup().presentationTime,
+              Self.shouldEmitCameraDrivenComposedFrame(
+                  presentationTime,
+                  after: lastRecordingComposedPresentationTime,
+                  framesPerSecond: mediaConfiguration.framesPerSecond
+              )
+        else {
+            return
+        }
+
+        let shouldPublish = publishingCaptureMode == .recordingOwned && rtmpPublisher != nil
+        let result = appendAndPublishSharedCompositedVideoSampleIfNeeded(
+            sampleBuffer,
+            presentationTime: presentationTime,
+            shouldAppendRecording: true,
+            shouldPublish: shouldPublish
+        )
+        handleSharedScreenRouteResult(result, outputType: .screen, writer: writer)
+        if result.didPublish {
+            markFirstPublishingVideoFrameIfNeeded()
+        }
+    }
+
+    static func shouldEmitCameraDrivenComposedFrame(
+        _ presentationTime: CMTime,
+        after previousPresentationTime: CMTime?,
+        framesPerSecond: Int
+    ) -> Bool {
+        guard isNewerComposedPresentationTime(
+            presentationTime,
+            after: previousPresentationTime
+        ) else {
+            return false
+        }
+        guard let previousPresentationTime else { return true }
+        let minimumInterval = CMTime(
+            value: 1,
+            timescale: CMTimeScale(max(1, framesPerSecond))
+        )
+        return CMTimeCompare(
+            CMTimeSubtract(presentationTime, previousPresentationTime),
+            minimumInterval
+        ) >= 0
+    }
+
+    static func isNewerComposedPresentationTime(
+        _ presentationTime: CMTime,
+        after previousPresentationTime: CMTime?
+    ) -> Bool {
+        guard presentationTime.isValid, !presentationTime.isIndefinite else {
+            return false
+        }
+        guard let previousPresentationTime else { return true }
+        return CMTimeCompare(presentationTime, previousPresentationTime) > 0
+    }
+
+    private static func sampledCameraLuma(_ pixelBuffer: CVPixelBuffer) -> Int {
+        CVPixelBufferLockBaseAddress(pixelBuffer, .readOnly)
+        defer { CVPixelBufferUnlockBaseAddress(pixelBuffer, .readOnly) }
+        let plane = CVPixelBufferGetPlaneCount(pixelBuffer) > 0 ? 0 : -1
+        let width = plane >= 0
+            ? CVPixelBufferGetWidthOfPlane(pixelBuffer, plane)
+            : CVPixelBufferGetWidth(pixelBuffer)
+        let height = plane >= 0
+            ? CVPixelBufferGetHeightOfPlane(pixelBuffer, plane)
+            : CVPixelBufferGetHeight(pixelBuffer)
+        let bytesPerRow = plane >= 0
+            ? CVPixelBufferGetBytesPerRowOfPlane(pixelBuffer, plane)
+            : CVPixelBufferGetBytesPerRow(pixelBuffer)
+        let baseAddress = plane >= 0
+            ? CVPixelBufferGetBaseAddressOfPlane(pixelBuffer, plane)
+            : CVPixelBufferGetBaseAddress(pixelBuffer)
+        guard width > 0, height > 0, let baseAddress else { return -1 }
+        return Int(
+            baseAddress
+                .advanced(by: (height / 2) * bytesPerRow + (width / 2))
+                .assumingMemoryBound(to: UInt8.self)
+                .pointee
+        )
     }
 
     private func startMicrophoneSessionIfNeeded(_ session: AVCaptureSession?) {
@@ -1759,7 +1994,7 @@ public final class SystemMediaPipeline: NSObject, MediaPipeline, SCStreamOutput,
             scheduleCameraFirstFrameRecovery(for: recordingCameraSession)
         } else {
             invalidateCameraFirstFrameRecovery(for: recordingCameraSession)
-            latestCameraPixelBuffer = nil
+            recordingCameraFrameSlot?.reset()
             if recordingCameraSession.isRunning {
                 recordingCameraSession.stopRunning()
             }
@@ -1773,9 +2008,21 @@ public final class SystemMediaPipeline: NSObject, MediaPipeline, SCStreamOutput,
                 && recordingCameraSession == nil
                 && Self.requiresCameraCapture(sceneKind: mediaConfiguration.sceneKind)
         }
-        guard shouldCreateCapture,
-              let cameraCapture = await makeCameraCaptureIfAvailable(configuration: configuration)
-        else {
+        guard shouldCreateCapture else {
+            return
+        }
+        let cameraCapture: CameraCapture
+        do {
+            guard let capture = try await makeCameraCaptureIfAvailable(configuration: configuration) else {
+                return
+            }
+            cameraCapture = capture
+        } catch {
+            queue.async {
+                if self.recordingFailureReason == nil {
+                    self.recordingFailureReason = error.localizedDescription
+                }
+            }
             return
         }
 
@@ -1789,7 +2036,9 @@ public final class SystemMediaPipeline: NSObject, MediaPipeline, SCStreamOutput,
 
             recordingCameraSession = cameraCapture.session
             recordingCameraOutput = cameraCapture.output
-            latestCameraPixelBuffer = nil
+            recordingCameraFrameSlot = cameraCapture.frameSlot
+            recordingCameraReceiver = cameraCapture.receiver
+            recordingCameraFrameSlot?.reset()
             configureRecordingVideoComposition(using: mediaConfiguration)
             return true
         }
@@ -1805,7 +2054,7 @@ public final class SystemMediaPipeline: NSObject, MediaPipeline, SCStreamOutput,
             scheduleCameraFirstFrameRecovery(for: publishingCameraSession)
         } else {
             invalidateCameraFirstFrameRecovery(for: publishingCameraSession)
-            latestPublishingCameraPixelBuffer = nil
+            publishingCameraFrameSlot?.reset()
             if publishingCameraSession.isRunning {
                 publishingCameraSession.stopRunning()
             }
@@ -1819,9 +2068,21 @@ public final class SystemMediaPipeline: NSObject, MediaPipeline, SCStreamOutput,
                 && publishingCameraSession == nil
                 && Self.requiresCameraCapture(sceneKind: mediaConfiguration.sceneKind)
         }
-        guard shouldCreateCapture,
-              let cameraCapture = await makeCameraCaptureIfAvailable(configuration: configuration)
-        else {
+        guard shouldCreateCapture else {
+            return
+        }
+        let cameraCapture: CameraCapture
+        do {
+            guard let capture = try await makeCameraCaptureIfAvailable(configuration: configuration) else {
+                return
+            }
+            cameraCapture = capture
+        } catch {
+            queue.async {
+                if self.streamFailureReason == nil {
+                    self.streamFailureReason = error.localizedDescription
+                }
+            }
             return
         }
 
@@ -1835,7 +2096,9 @@ public final class SystemMediaPipeline: NSObject, MediaPipeline, SCStreamOutput,
 
             publishingCameraSession = cameraCapture.session
             publishingCameraOutput = cameraCapture.output
-            latestPublishingCameraPixelBuffer = nil
+            publishingCameraFrameSlot = cameraCapture.frameSlot
+            publishingCameraReceiver = cameraCapture.receiver
+            publishingCameraFrameSlot?.reset()
             configurePublishingVideoComposition(using: mediaConfiguration)
             return true
         }
@@ -1889,6 +2152,7 @@ public final class SystemMediaPipeline: NSObject, MediaPipeline, SCStreamOutput,
         if isDedicatedPublishingStream {
             switch outputType {
             case .screen:
+                latestPublishingScreenSampleBuffer = sampleBuffer
                 recordVideoSampleIfNeeded(outputType, isPublishingStream: true)
                 guard Self.shouldPublishScreenStreamSample(
                     isPublishingStream: isDedicatedPublishingStream,
@@ -1898,7 +2162,16 @@ public final class SystemMediaPipeline: NSObject, MediaPipeline, SCStreamOutput,
                     return
                 }
                 let didPublish = Self.shouldPublishCompositedVideoSample(sceneKind: mediaConfiguration.sceneKind)
-                    ? publishCompositedVideoSample(sampleBuffer, presentationTime: presentationTime)
+                    ? (
+                        Self.isNewerComposedPresentationTime(
+                            presentationTime,
+                            after: lastPublishingComposedPresentationTime
+                        )
+                            && publishCompositedVideoSample(
+                                sampleBuffer,
+                                presentationTime: presentationTime
+                            )
+                    )
                     : publish(sampleBuffer)
                 if didPublish {
                     recordAcceptedVideoPresentationTime(presentationTime)
@@ -1928,6 +2201,9 @@ public final class SystemMediaPipeline: NSObject, MediaPipeline, SCStreamOutput,
 
         let isRecordingStream = self.stream === stream
         let hasWriter = writer != nil
+        if outputType == .screen, isRecordingStream {
+            latestRecordingScreenSampleBuffer = sampleBuffer
+        }
         if outputType == .audio,
            Self.shouldRecordSystemAudioCallback(
                isRecordingStream: isRecordingStream,
@@ -1949,12 +2225,13 @@ public final class SystemMediaPipeline: NSObject, MediaPipeline, SCStreamOutput,
 
         if outputType == .screen, !didStartSession {
             if writer.status == .unknown, !writer.startWriting() {
-                recordWriterFailureIfNeeded(status: writer.status, errorDescription: writer.error?.localizedDescription)
+                recordWriterFailureIfNeeded(writer, context: "start-writing")
                 return
             }
             guard writer.status == .writing else { return }
             writer.startSession(atSourceTime: presentationTime)
             didStartSession = true
+            recordingSessionStartTime = presentationTime
         }
 
         guard didStartSession, writer.status == .writing else {
@@ -1971,6 +2248,13 @@ public final class SystemMediaPipeline: NSObject, MediaPipeline, SCStreamOutput,
                 return
             }
             if Self.shouldPublishCompositedVideoSample(sceneKind: mediaConfiguration.sceneKind) {
+                guard Self.isNewerComposedPresentationTime(
+                    presentationTime,
+                    after: lastRecordingComposedPresentationTime
+                ) else {
+                    recordDroppedFrameIfNeeded(outputType)
+                    return
+                }
                 let result = appendAndPublishSharedCompositedVideoSampleIfNeeded(
                     sampleBuffer,
                     presentationTime: presentationTime,
@@ -1988,7 +2272,7 @@ public final class SystemMediaPipeline: NSObject, MediaPipeline, SCStreamOutput,
                     didAcceptFrame = true
                 } else {
                     droppedFrame = true
-                    recordWriterFailureIfNeeded(status: writer.status, errorDescription: writer.error?.localizedDescription)
+                    recordWriterFailureIfNeeded(writer, context: "screen-append")
                 }
             } else {
                 droppedFrame = true
@@ -2014,11 +2298,17 @@ public final class SystemMediaPipeline: NSObject, MediaPipeline, SCStreamOutput,
             }
             var didAcceptAudio = false
             if let audioInput,
-               audioInput.isReadyForMoreMediaData {
+               audioInput.isReadyForMoreMediaData,
+               Self.shouldAppendRecordingAudioSample(
+                   presentationTime,
+                   sessionStartTime: recordingSessionStartTime,
+                   previousPresentationTime: lastSystemAudioPresentationTime
+               ) {
                 if audioInput.append(sampleBuffer) {
                     didAcceptAudio = true
+                    lastSystemAudioPresentationTime = presentationTime
                 } else {
-                    recordWriterFailureIfNeeded(status: writer.status, errorDescription: writer.error?.localizedDescription)
+                    recordWriterFailureIfNeeded(writer, context: "system-audio-append")
                 }
             }
             if isSharedRecordingStream,
@@ -2252,7 +2542,7 @@ public final class SystemMediaPipeline: NSObject, MediaPipeline, SCStreamOutput,
             sampleBuffer,
             pixelBufferPool: publishingPixelBufferPool,
             videoCompositor: publishingVideoCompositor,
-            cameraPixelBuffer: latestPublishingCameraPixelBuffer
+            cameraPixelBuffer: publishingCameraPixelBuffer()
         ) else {
             return false
         }
@@ -2293,6 +2583,7 @@ public final class SystemMediaPipeline: NSObject, MediaPipeline, SCStreamOutput,
 
         let didPublish = publish(compositedSampleBuffer)
         if didPublish {
+            lastPublishingComposedPresentationTime = presentationTime
             mediaPreviewFrameSource?.publish(compositedSampleBuffer)
         }
         return didPublish
@@ -2318,7 +2609,7 @@ public final class SystemMediaPipeline: NSObject, MediaPipeline, SCStreamOutput,
             sampleBuffer,
             pixelBufferPool: videoPixelBufferAdaptor?.pixelBufferPool,
             videoCompositor: videoCompositor,
-            cameraPixelBuffer: latestCameraPixelBuffer
+            cameraPixelBuffer: recordingCameraPixelBuffer()
         ) else {
             return SharedScreenRouteResult(
                 didAppendRecording: false,
@@ -2338,6 +2629,7 @@ public final class SystemMediaPipeline: NSObject, MediaPipeline, SCStreamOutput,
         }
 
         if didAppendRecording, !shouldPublish {
+            lastRecordingComposedPresentationTime = presentationTime
             recordAcceptedVideoPresentationTime(presentationTime)
             mediaPreviewFrameSource?.publishIfDue(at: presentationTime) {
                 self.makeVideoSampleBuffer(
@@ -2377,6 +2669,7 @@ public final class SystemMediaPipeline: NSObject, MediaPipeline, SCStreamOutput,
             markFirstPublishingVideoFrameIfNeeded()
         }
         if didAppendRecording || didPublish {
+            lastRecordingComposedPresentationTime = presentationTime
             recordAcceptedVideoPresentationTime(presentationTime)
             mediaPreviewFrameSource?.publish(compositedSampleBuffer)
         }
@@ -2401,7 +2694,7 @@ public final class SystemMediaPipeline: NSObject, MediaPipeline, SCStreamOutput,
 
         recordDroppedFrameIfNeeded(outputType)
         if result.didTryAppendRecording, !result.didAppendRecording {
-            recordWriterFailureIfNeeded(status: writer.status, errorDescription: writer.error?.localizedDescription)
+            recordWriterFailureIfNeeded(writer, context: "composited-video-append")
         }
     }
 
@@ -2469,7 +2762,7 @@ public final class SystemMediaPipeline: NSObject, MediaPipeline, SCStreamOutput,
                 sampleBuffer,
                 pixelBufferPool: videoPixelBufferAdaptor.pixelBufferPool,
                 videoCompositor: videoCompositor,
-                cameraPixelBuffer: latestCameraPixelBuffer
+                cameraPixelBuffer: recordingCameraPixelBuffer()
               )
         else {
             return false
@@ -2979,6 +3272,51 @@ public final class SystemMediaPipeline: NSObject, MediaPipeline, SCStreamOutput,
         return .high
     }
 
+    static func preferredCameraPixelFormat(available: [OSType]) -> OSType? {
+        [
+            kCVPixelFormatType_420YpCbCr8BiPlanarFullRange,
+            kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange,
+            kCVPixelFormatType_32BGRA
+        ].first(where: available.contains)
+            ?? available.first
+    }
+
+    static func microphoneWriterSettings(
+        recommended: [String: Any]?,
+        fallbackSampleRate: Double = 48_000,
+        fallbackChannels: Int = 2
+    ) -> [String: Any] {
+        let sampleRate = (recommended?[AVSampleRateKey] as? NSNumber)?.doubleValue
+            ?? fallbackSampleRate
+        let channels = (recommended?[AVNumberOfChannelsKey] as? NSNumber)?.intValue
+            ?? fallbackChannels
+        let bitRate = (recommended?[AVEncoderBitRateKey] as? NSNumber)?.intValue ?? 128_000
+        return [
+            AVFormatIDKey: kAudioFormatMPEG4AAC,
+            AVSampleRateKey: normalizedAACSampleRate(sampleRate),
+            AVNumberOfChannelsKey: min(max(1, channels), 2),
+            AVEncoderBitRateKey: min(max(64_000, bitRate), 320_000)
+        ]
+    }
+
+    private static func normalizedAACSampleRate(_ sampleRate: Double) -> Int {
+        let supportedSampleRates = [
+            8_000,
+            11_025,
+            12_000,
+            16_000,
+            22_050,
+            24_000,
+            32_000,
+            44_100,
+            48_000
+        ]
+        guard sampleRate.isFinite, sampleRate > 0 else { return 48_000 }
+        return supportedSampleRates.min {
+            abs(Double($0) - sampleRate) < abs(Double($1) - sampleRate)
+        } ?? 48_000
+    }
+
     private func applyCameraTuning(to device: AVCaptureDevice, configuration: MediaPipelineConfiguration) {
         guard configuration.cameraEnhancements.usesAutoLight else { return }
 
@@ -3022,19 +3360,6 @@ public final class SystemMediaPipeline: NSObject, MediaPipeline, SCStreamOutput,
         from connection: AVCaptureConnection
     ) {
         guard sampleBuffer.isValid else { return }
-        if isRecordingCameraOutput(output) {
-            invalidateCameraFirstFrameRecovery(for: recordingCameraSession)
-            latestCameraPixelBuffer = sampleBuffer.imageBuffer
-            if publishingCaptureMode == .recordingOwned {
-                latestPublishingCameraPixelBuffer = sampleBuffer.imageBuffer
-            }
-            return
-        }
-        if isPublishingCameraOutput(output) {
-            invalidateCameraFirstFrameRecovery(for: publishingCameraSession)
-            latestPublishingCameraPixelBuffer = sampleBuffer.imageBuffer
-            return
-        }
 
         guard Self.shouldProcessMicrophoneOutputSample(
             isActiveOutput: isActiveMicrophoneOutput(output),
@@ -3055,11 +3380,18 @@ public final class SystemMediaPipeline: NSObject, MediaPipeline, SCStreamOutput,
            let microphoneInput,
            didStartSession,
            writer.status == .writing,
-           microphoneInput.isReadyForMoreMediaData {
+           microphoneInput.isReadyForMoreMediaData,
+           let presentationTime = sampleBuffer.presentationTimeStampIfValid,
+           Self.shouldAppendRecordingAudioSample(
+               presentationTime,
+               sessionStartTime: recordingSessionStartTime,
+               previousPresentationTime: lastMicrophonePresentationTime
+           ) {
             if microphoneInput.append(sampleBuffer) {
                 didAcceptAudio = true
+                lastMicrophonePresentationTime = presentationTime
             } else {
-                recordWriterFailureIfNeeded(status: writer.status, errorDescription: writer.error?.localizedDescription)
+                recordWriterFailureIfNeeded(writer, context: "microphone-append")
             }
         }
 
@@ -3067,6 +3399,40 @@ public final class SystemMediaPipeline: NSObject, MediaPipeline, SCStreamOutput,
            let presentationTime = sampleBuffer.presentationTimeStampIfValid {
             recordAcceptedAudioPresentationTime(presentationTime)
         }
+    }
+
+    static func shouldAppendRecordingAudioSample(
+        _ presentationTime: CMTime,
+        sessionStartTime: CMTime?,
+        previousPresentationTime: CMTime?
+    ) -> Bool {
+        guard presentationTime.isValid,
+              !presentationTime.isIndefinite,
+              let sessionStartTime,
+              CMTimeCompare(presentationTime, sessionStartTime) >= 0
+        else {
+            return false
+        }
+        guard let previousPresentationTime else { return true }
+        return CMTimeCompare(presentationTime, previousPresentationTime) > 0
+    }
+
+    static func microphoneCaptureSettings(
+        sampleRate: Double,
+        channels: Int
+    ) -> [String: Any] {
+        let normalizedSampleRate = sampleRate.isFinite && sampleRate >= 8_000
+            ? min(sampleRate, 192_000)
+            : 48_000
+        return [
+            AVFormatIDKey: kAudioFormatLinearPCM,
+            AVSampleRateKey: normalizedSampleRate,
+            AVNumberOfChannelsKey: min(max(1, channels), 2),
+            AVLinearPCMBitDepthKey: 16,
+            AVLinearPCMIsFloatKey: false,
+            AVLinearPCMIsBigEndianKey: false,
+            AVLinearPCMIsNonInterleaved: false
+        ]
     }
 
     static func shouldProcessSystemAudioSample(configuration: MediaPipelineConfiguration) -> Bool {
@@ -3372,6 +3738,8 @@ private struct DedicatedPublishingCaptureSnapshot {
     var geometry: MediaCaptureGeometry
     var cameraSession: AVCaptureSession?
     var cameraOutput: AVCaptureVideoDataOutput?
+    var cameraFrameSlot: CameraFrameSlot?
+    var cameraReceiver: CameraFrameReceiver?
     var microphoneSession: AVCaptureSession?
     var microphoneOutput: AVCaptureAudioDataOutput?
 
@@ -3450,6 +3818,96 @@ private struct MicrophoneCapture {
 private struct CameraCapture {
     var session: AVCaptureSession
     var output: AVCaptureVideoDataOutput
+    var frameSlot: CameraFrameSlot
+    var receiver: CameraFrameReceiver
+}
+
+private final class CameraFrameSlot: @unchecked Sendable {
+    private let lock = NSLock()
+    private var latestPixelBuffer: CVPixelBuffer?
+    private var latestPresentationTime: CMTime?
+    private var didObserveCallback = false
+    private var didResolveFrame = false
+
+    func store(_ pixelBuffer: CVPixelBuffer?, presentationTime: CMTime?) -> Bool {
+        lock.lock()
+        let isFirstCallback = !didObserveCallback
+        didObserveCallback = true
+        if let pixelBuffer {
+            latestPixelBuffer = pixelBuffer
+            latestPresentationTime = presentationTime
+        }
+        lock.unlock()
+        return isFirstCallback
+    }
+
+    var pixelBuffer: CVPixelBuffer? {
+        lock.lock()
+        let pixelBuffer = latestPixelBuffer
+        lock.unlock()
+        return pixelBuffer
+    }
+
+    func lookup() -> CameraFrameLookup {
+        lock.lock()
+        let pixelBuffer = latestPixelBuffer
+        let presentationTime = latestPresentationTime
+        let didResolveFirstFrame = pixelBuffer != nil && !didResolveFrame
+        if didResolveFirstFrame {
+            didResolveFrame = true
+        }
+        lock.unlock()
+        return CameraFrameLookup(
+            pixelBuffer: pixelBuffer,
+            presentationTime: presentationTime,
+            didResolveFirstFrame: didResolveFirstFrame
+        )
+    }
+
+    func reset() {
+        lock.lock()
+        latestPixelBuffer = nil
+        latestPresentationTime = nil
+        didObserveCallback = false
+        didResolveFrame = false
+        lock.unlock()
+    }
+}
+
+private final class CameraFrameReceiver: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate, @unchecked Sendable {
+    private static let logger = Logger(subsystem: "com.ideaplexa.macstream", category: "capture")
+    private let frameSlot: CameraFrameSlot
+    private let onFrame: @Sendable () -> Void
+
+    init(frameSlot: CameraFrameSlot, onFrame: @escaping @Sendable () -> Void) {
+        self.frameSlot = frameSlot
+        self.onFrame = onFrame
+    }
+
+    nonisolated func captureOutput(
+        _ output: AVCaptureOutput,
+        didOutput sampleBuffer: CMSampleBuffer,
+        from connection: AVCaptureConnection
+    ) {
+        let imageBuffer = sampleBuffer.isValid ? sampleBuffer.imageBuffer : nil
+        if frameSlot.store(
+            imageBuffer,
+            presentationTime: sampleBuffer.presentationTimeStampIfValid
+        ) {
+            Self.logger.info(
+                "First camera callback valid=\(sampleBuffer.isValid, privacy: .public) hasImage=\(imageBuffer != nil, privacy: .public) width=\(imageBuffer.map(CVPixelBufferGetWidth) ?? 0, privacy: .public) height=\(imageBuffer.map(CVPixelBufferGetHeight) ?? 0, privacy: .public) pixelFormat=\(imageBuffer.map(CVPixelBufferGetPixelFormatType) ?? 0, privacy: .public)"
+            )
+        }
+        if imageBuffer != nil {
+            onFrame()
+        }
+    }
+}
+
+private struct CameraFrameLookup {
+    var pixelBuffer: CVPixelBuffer?
+    var presentationTime: CMTime?
+    var didResolveFirstFrame: Bool
 }
 
 private struct VideoFormatDescriptionCache {

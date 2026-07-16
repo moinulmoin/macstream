@@ -35,7 +35,7 @@ public release.
 
 - [ ] First launch on `BRB` scene shows the preflight checklist with permission
   guidance
-- [ ] Camera prompt appears → grant → camera preview renders in Face scene
+- [ ] Camera prompt appears → grant → camera preview renders in Webcam scene
 - [ ] Microphone prompt appears → grant → mic level meter shows signal
 - [ ] Screen Recording prompt appears → grant → relaunch required
 - [ ] After relaunch, Screen Recording is detected and display/window capture works
@@ -69,13 +69,13 @@ public release.
   no A/V drift)
 - [ ] Stream stop → state returns to offline, health metrics finalize
 
-### Screen + Face composited publish
+### Screen + Webcam composited publish
 
-- [ ] 30-minute Screen+Face publish — camera PiP is visible on remote output
+- [ ] 30-minute Screen + Webcam publish — camera is visible on remote output
 - [ ] PiP position and size match local preview
 - [ ] A/V sync across camera, screen, microphone, and system audio
 - [ ] Bitrate stable with composited frames
-- [ ] Scene switch during stream (Face → Screen+Face → Screen → BRB → Screen+Face)
+- [ ] Scene switch during stream (Webcam → Screen + Webcam → Screen → BRB → Screen + Webcam)
   — no glitch, no black frames, no audio pop
 - [ ] BRB splash reaches remote output during BRB scene
 - [ ] Reconnect after network loss restores composited output
@@ -107,9 +107,9 @@ public release.
 - [ ] 30-minute Screen `.mov` — no black frames, no frozen frames
 - [ ] 30-minute Screen `.mov` — microphone audio present and in sync
 - [ ] 30-minute Screen `.mov` — system audio present (when enabled) and in sync
-- [ ] 30-minute Screen+Face `.mov` — camera PiP baked into video frame, correct
+- [ ] 30-minute Screen + Webcam `.mov` — camera composition baked into video frame, correct
   position and size
-- [ ] 30-minute Screen+Face `.mov` — A/V sync across all sources
+- [ ] 30-minute Screen + Webcam `.mov` — A/V sync across all sources
 - [ ] 60-minute long-session recording — no drift, no corruption, file is playable
 - [ ] Recording file size is reasonable for the duration
 - [ ] Two consecutive recordings produce distinct filenames (no overwrite)
@@ -129,7 +129,7 @@ public release.
 - [x] Synthetic H.264 video reaches local ingest with at least 90% of expected
   frames
 - [ ] Screen media arrives at ingest endpoint
-- [ ] Screen+Face composited media arrives at ingest endpoint
+- [ ] Screen + Webcam composited media arrives at ingest endpoint
 - [ ] HaishinKit variant built in CI on every push
 
 ---
@@ -254,7 +254,7 @@ dev build.
 
 | Gate | Why it's high risk |
 |------|--------------------|
-| Screen+Face RTMP live ingest with remote PiP | First time composited RTMP has been proven against a real endpoint |
+| Screen + Webcam RTMP live ingest with remote camera | First time composited RTMP has been proven against a real endpoint |
 | Long-session A/V sync (30+ min) | Drift over time is the most common streaming bug class |
 | Fresh-Mac TCC flow with packaged app | Permission UX on a clean Mac hasn't been tested with the final bundle |
 | Developer ID → notarization → Gatekeeper | End-to-end release ceremony hasn't been exercised with real credentials |

@@ -42,7 +42,7 @@ Store results under `benchmarks/` when this harness exists:
    - Record 30 minutes of screen + mic + system audio.
    - Measure A/V drift, dropped frames, file validity, file size, CPU/memory/thermal pressure.
 
-5. Screen + Face local compositor.
+5. Screen + Webcam local compositor.
    - Record 10, 30, and 60 minute sessions.
    - Verify camera PiP is present in output, not only preview.
    - Measure sync between camera, screen, mic, and system audio.
@@ -101,8 +101,8 @@ Relevant OBS docs and issues:
 MacStream should not claim a Mac-native reliability advantage until it can show on macOS 26:
 
 - 60 minute screen recording with mic and optional system audio without black/frozen output.
-- 30 minute composited `Screen + Face` recording with stable sync.
-- 30 minute HaishinKit `Screen + Face` RTMP publish where the remote ingest includes camera PiP and stable audio sync.
+- 30 minute composited `Screen + Webcam` recording with stable sync.
+- 30 minute HaishinKit `Screen + Webcam` RTMP publish where the remote ingest includes the camera composition and stable audio sync.
 - Clear recovery or explicit failure state after sleep/wake or device loss.
 - Lower or comparable CPU/memory/thermal pressure than OBS on the same workflow.
 - No repeated permission loops after a grant and relaunch.

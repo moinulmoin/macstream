@@ -11,7 +11,7 @@
 - Live camera preview through AVFoundation.
 - Live display preview through ScreenCaptureKit.
 - First launch opens on the non-capturing BRB scene so camera/display capture starts only after selecting a source scene.
-- Four fixed scenes: Face, Screen + Face, Screen, BRB.
+- Four fixed scenes: Webcam, Screen + Webcam, Screen, BRB.
 - Manual scene switching.
 - RTMP destination model and stream state.
 - Local recording boundary.
@@ -57,7 +57,7 @@
 - Live controls include performance modes, including Adaptive mode that tunes director cadence, screen-motion sampling, display and camera preview capture, and active ScreenCaptureKit preview, motion, recording, and publishing stream configuration from system pressure and runtime capture health.
 - Adaptive runtime health monitoring continues while the director is paused during a live stream and while local recording is running without a live stream.
 - The MVP uses a single main studio window so duplicate windows do not create duplicate preview and capture stacks.
-- Local recording supports Screen and composited Screen + Face output. The HaishinKit RTMP publish path now uses the same compositor for Screen + Face, while the default dependency-light build stays honest as endpoint validation only.
+- Local recording supports Screen and composited Screen + Webcam output. The HaishinKit RTMP publish path now uses the same compositor for Screen + Webcam, while the default dependency-light build stays honest as endpoint validation only.
 - Runtime capture pressure from dropped frames or low capture FPS degrades the running stream, lowers Adaptive mode to Efficiency, and recovers when capture health stabilizes. System pressure from thermal state, Low Power Mode, or high MacStream memory use also lowers Adaptive mode to Efficiency with the matching reason shown in the inspector.
 
 ## Out
@@ -79,7 +79,7 @@ MacStream should be able to prove the core product loop before advanced AI or th
 - guide Camera, Microphone, and Screen Recording permission recovery,
 - select one display/window target shared by preview, motion sampling, recording, and publishing,
 - preview the four fixed scenes,
-- record `Screen` and composited `Screen + Face` `.mov` files that play back correctly,
+- record `Screen` and composited `Screen + Webcam` `.mov` files that play back correctly,
 - start a Preview session and, in default builds, label RTMP attempts as endpoint checks rather than real publishing,
 - sample director signals,
 - receive a cue with a reason,

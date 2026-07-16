@@ -6,7 +6,7 @@ MacStream should learn from OBS without becoming an OBS clone. The V1 goal is a 
 
 | OBS primitive | Why users rely on it | MacStream V1 stance |
 | --- | --- | --- |
-| Scenes | Fast switching between stream layouts. | Keep four fixed scenes: `Face`, `Screen + Face`, `Screen`, `BRB`. |
+| Scenes | Fast switching between stream layouts. | Keep four fixed scenes: `Webcam`, `Screen + Webcam`, `Screen`, `BRB`. |
 | Sources | Cameras, displays, windows, apps, media, browser overlays, text, audio. | Keep camera, screen/window, mic, system audio. Skip arbitrary source graph for V1. |
 | Source ordering and transforms | Camera PiP, overlays, crop, fit, resize. | Implement only opinionated compositor layouts first. Skip manual canvas editing. |
 | Audio mixer | See levels, mute sources, avoid clipping, monitor output. | Keep source levels and mute/toggle controls; add real loudness/metering later. |
@@ -44,6 +44,6 @@ MacStream should learn from OBS without becoming an OBS clone. The V1 goal is a 
 
 ## Current MacStream Gap Against This Map
 
-The store, source controls, setup flow, preview, recording boundary, release automation, and first RTMP composition path are in place. Local recording composes the creator's intended `Screen + Face` scene, and the HaishinKit RTMP path now uses the same compositor for Screen + Face publishing.
+The store, source controls, setup flow, preview, recording boundary, release automation, and first RTMP composition path are in place. Local recording composes the creator's intended `Screen + Webcam` scene, and the HaishinKit RTMP path now uses the same compositor for Screen + Webcam publishing.
 
 The next foundation feature is live-ingest proof: remote PiP verification, A/V sync, reconnect behavior, and long-session stream health.

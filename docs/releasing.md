@@ -100,7 +100,7 @@ Confirm:
 - the app icon appears in Finder,
 - the expected signing identity is present,
 - packaged Camera, Microphone, and Screen Recording permission recovery works,
-- local `Screen` and composited `Screen + Face` recordings play back correctly,
+- local `Screen` and composited `Screen + Webcam` recordings play back correctly,
 - default RTMP mode is honestly labeled as endpoint validation,
 - optional HaishinKit real publish has a current smoke result,
 - experimental MLX still compiles but is not treated as a release-critical AI path.
@@ -195,14 +195,14 @@ That release simulation intentionally fails while `Resources/Info.plist` still c
 3. Confirm bundle identifier `com.ideaplexa.macstream`.
 4. Test Camera, Microphone, and Screen Recording permission flows.
 5. Grant Screen Recording, quit/reopen, and confirm access is detected.
-6. Test `Face`, `Screen`, `Screen + Face`, and `BRB` preview scenes.
+6. Test `Webcam`, `Screen`, `Screen + Webcam`, and `BRB` preview scenes.
 7. Start and stop Preview mode.
 8. In the default build, verify RTMP wording says endpoint check, not Go Live.
 9. Start and stop local Screen recording, then verify the `.mov`.
-10. Start and stop local Screen + Face recording, then verify the camera PiP is baked into the `.mov`.
-11. In a HaishinKit build, start full RTMP publishing from Screen + Face and verify the remote output includes the camera PiP.
+10. Start and stop local Screen + Webcam recording, then verify the camera composition is baked into the `.mov`.
+11. In a HaishinKit build, start full RTMP publishing from Screen + Webcam and verify the remote output includes the camera composition.
 12. Verify adaptive mode lowers capture cost under capture pressure.
-13. Verify setup/AI assistance is hidden or disabled during active capture and falls back visibly when no provider is configured.
+13. Verify no optional provider or Keychain prompt appears on first launch and capture never depends on provider state.
 14. Verify RTMP destination persistence and redaction in events/exports.
 15. Export clip markers and session report twice in quick succession; confirm filenames do not collide.
 16. Confirm the Sparkle ZIP remains downloadable and matches the enclosure URL and signature in `appcast.xml`.

@@ -447,6 +447,19 @@ jobs:
           {
             echo "## MacStream $RELEASE_VERSION"
             echo
+            echo "### Highlights"
+            echo
+            echo "- Hardened single-destination RTMP/RTMPS publishing with runtime reconnect health."
+            echo "- Reliable Screen + Webcam composition for preview, streaming, and local recording."
+            echo "- Optional record-while-streaming with explicit recording ownership."
+            echo "- A/V drift, dropped-frame, RTMP queue, throughput, and recovery observability."
+            echo "- Independent encoded-output and preview-quality controls for Apple Silicon Macs."
+            echo "- Signed, notarized, and stapled DMG for first-time installation."
+            echo
+            echo "MacStream remains a personal-use prototype. Validate important broadcasts with a private or test destination first."
+            echo
+            echo "### Downloads"
+            echo
             echo "Signed, notarized, and stapled macOS artifacts:"
             echo
             echo "- Installer: \`$DMG_NAME\`"

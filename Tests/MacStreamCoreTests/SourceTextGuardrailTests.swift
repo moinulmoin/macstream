@@ -577,6 +577,7 @@ func releaseAutomationDefinesSignedNotarizedMacPipeline() throws {
     #expect(release.contains("gh release create"))
     #expect(packageScript.contains("--options runtime --entitlements \"$app_entitlements\""))
     #expect(packageScript.contains("MacStream.AdHoc.entitlements"))
+    #expect(packageScript.contains("-name \"Autoupdate\""))
     #expect(packageScript.contains("CN=Developer ID Application:"))
     #expect(packageScript.contains("--extract-certificates"))
     #expect(infoPlist.contains("CFBundleIconFile"))

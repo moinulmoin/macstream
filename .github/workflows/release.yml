@@ -502,18 +502,35 @@ jobs:
           NOTES_PATH: ${{ steps.notes.outputs.notes_path }}
         run: |
           set -euo pipefail
-          if ! gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/$RELEASE_VERSION" >/dev/null; then
+
+          retry_gh() {
+            local attempt=1
+            local max_attempts=8
+            until "$@"; do
+              if (( attempt >= max_attempts )); then
+                return 1
+              fi
+              sleep $((attempt * 5))
+              attempt=$((attempt + 1))
+            done
+          }
+
+          tag_refs="$RUNNER_TEMP/release-tag-refs.txt"
+          retry_gh gh api \
+            "repos/${GITHUB_REPOSITORY}/git/matching-refs/tags/$RELEASE_VERSION" \
+            --jq '.[].ref' >"$tag_refs"
+          if ! grep -Fxq "refs/tags/$RELEASE_VERSION" "$tag_refs"; then
             echo "Missing release tag: $RELEASE_VERSION" >&2
             exit 2
           fi
 
           if gh release view "$RELEASE_VERSION" >/dev/null 2>&1; then
-            gh release upload "$RELEASE_VERSION" "$DMG_PATH" "$DMG_SHA256_PATH" "$ZIP_PATH" "$SHA256_PATH" --clobber
-            gh release edit "$RELEASE_VERSION" \
+            retry_gh gh release upload "$RELEASE_VERSION" "$DMG_PATH" "$DMG_SHA256_PATH" "$ZIP_PATH" "$SHA256_PATH" --clobber
+            retry_gh gh release edit "$RELEASE_VERSION" \
               --title "MacStream $RELEASE_VERSION" \
               --notes-file "$NOTES_PATH"
           else
-            gh release create "$RELEASE_VERSION" "$DMG_PATH" "$DMG_SHA256_PATH" "$ZIP_PATH" "$SHA256_PATH" \
+            retry_gh gh release create "$RELEASE_VERSION" "$DMG_PATH" "$DMG_SHA256_PATH" "$ZIP_PATH" "$SHA256_PATH" \
               --verify-tag \
               --title "MacStream $RELEASE_VERSION" \
               --notes-file "$NOTES_PATH"

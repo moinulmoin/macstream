@@ -37,3 +37,6 @@ Create a Markdown file next to each CSV with:
 - Comparison with the matching OBS run when available.
 
 Use `docs/v0.3-reliability-goal.md` as the v0.3 pass bar.
+
+Current release-gate evidence and remaining work are tracked in
+[`v0.3-validation.md`](v0.3-validation.md).

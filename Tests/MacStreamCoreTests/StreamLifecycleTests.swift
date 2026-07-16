@@ -7,9 +7,9 @@ import Testing
 
 @MainActor
 private func waitUntilStreamIsLive(_ store: StudioStore) async {
-    for _ in 0..<100 {
+    for _ in 0..<200 {
         guard !store.streamState.isLive else { return }
-        await Task.yield()
+        try? await Task.sleep(for: .milliseconds(5))
     }
 }
 
@@ -331,7 +331,7 @@ func rtmpStreamStartRetriesTransientFailures() async {
     )
 
     store.startStream()
-    try? await Task.sleep(for: .milliseconds(80))
+    await waitUntilStreamIsLive(store)
 
     #expect(store.streamState == .live)
     #expect(store.streamStartAttempt == 3)

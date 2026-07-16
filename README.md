@@ -14,7 +14,7 @@ with recording and AI as secondary, optional layers.
 ![SwiftUI](https://img.shields.io/badge/UI-SwiftUI-0A84FF)
 ![ScreenCaptureKit](https://img.shields.io/badge/capture-ScreenCaptureKit-5E6AD2)
 ![Tests](https://img.shields.io/badge/tests-14%20suites-30A46C)
-![Version](https://img.shields.io/badge/version-v0.2.1-6366F1)
+![Version](https://img.shields.io/badge/version-v0.2.2-6366F1)
 
 <img src=".github/assets/macstream-studio.png" width="860" alt="MacStream Studio showing preview, control room, and preflight" />
 
@@ -211,7 +211,7 @@ MAC_STREAM_ENABLE_MLX=1 swift build
 
 # Signed local app bundle with Developer ID
 MAC_STREAM_CODESIGN_IDENTITY="Developer ID Application: Ideaplexa LLC (53P98M92V7)" \
-MAC_STREAM_VERSION=0.2.1 \
+MAC_STREAM_VERSION=0.2.2 \
 MAC_STREAM_BUILD_NUMBER=1 \
 ./script/package_macos_app.sh
 ```
@@ -257,7 +257,7 @@ Read the full specs:
 
 ## Status
 
-**v0.2.1 core streaming candidate — layout and performance first.**
+**v0.2.2 core streaming candidate — layout and performance first.**
 
 What is production-quality today:
 

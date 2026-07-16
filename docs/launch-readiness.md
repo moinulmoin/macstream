@@ -122,10 +122,12 @@ public release.
 
 > Source: [qa-checklist.md](qa-checklist.md), `Package.swift`
 
-- [ ] `MAC_STREAM_ENABLE_HAISHINKIT=1 swift build` succeeds
+- [x] `MAC_STREAM_ENABLE_HAISHINKIT=1 swift build` succeeds
 - [ ] `Package.resolved` does not change unexpectedly after resolve
 - [ ] App launches with HaishinKit linked (no dyld errors)
-- [ ] RTMP publisher connects to a test ingest server
+- [x] Actual RTMP publisher connects to a local FFmpeg ingest server
+- [x] Synthetic H.264 video reaches local ingest with at least 90% of expected
+  frames
 - [ ] Screen media arrives at ingest endpoint
 - [ ] Screen+Face composited media arrives at ingest endpoint
 - [ ] HaishinKit variant built in CI on every push
@@ -208,7 +210,7 @@ reliability work.
 - [ ] README.md is complete and reflects all implemented features
 - [ ] Architecture doc matches current implementation (class names, file structure)
 - [ ] Product brief aligns with README feature claims
-- [ ] MVP scope doc accurately separates in/out for v0.2.0
+- [ ] Reliability goal accurately separates in/out for v0.3.0
 - [ ] QA checklist covers all current features
 - [ ] Release process doc matches CI workflow reality
 - [ ] Launch readiness checklist (this document) is linked from README
@@ -259,7 +261,7 @@ dev build.
 
 ### Once everything is checked
 
-Tag `v0.2.0` (or the first version that clears all gates), push the tag,
+Tag `v0.3.0` only after all v0.3 reliability gates pass, push the tag,
 and the release workflow ships a signed, notarized, Gatekeeper-accepted
 `MacStream.app`.
 
@@ -268,4 +270,4 @@ you're live.
 
 ---
 
-_Last updated: 2026-06-12_
+_Last updated: 2026-07-16_

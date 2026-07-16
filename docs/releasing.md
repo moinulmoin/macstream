@@ -22,16 +22,17 @@ Pull requests and pushes to `main` run `.github/workflows/ci.yml` on macOS 26 ar
 Tagged releases are built by `.github/workflows/release.yml` on macOS 26 arm64 runners. The workflow:
 
 1. Runs the Swift test suite.
-2. Builds the default, HaishinKit, MLX, and combined compile configurations.
-3. Imports the Developer ID certificate into a temporary keychain.
-4. Packages `MacStream.app` with `MAC_STREAM_ENABLE_HAISHINKIT=1`, versioned `Info.plist` values from the tag, and release-only guards for the Sparkle public key and HaishinKit variant.
-5. Signs with hardened runtime and release entitlements.
-6. Submits the app zip to Apple notarization with `xcrun notarytool`.
-7. Staples and validates the notarization ticket.
-8. Creates `MacStream-vX.Y.Z-macos-arm64.zip` for Sparkle, plus its `.sha256` file, then verifies the zip contains the HaishinKit RTMP release variant.
-9. Creates and Developer-ID signs `MacStream-vX.Y.Z-macos-arm64.dmg` with `MacStream.app` and an `/Applications` link.
-10. Notarizes, staples, and Gatekeeper-validates the DMG, then generates its post-staple `.sha256` file.
-11. Uploads both distribution formats and publishes or updates the GitHub Release.
+2. Runs the real HaishinKit publisher against a localhost FFmpeg RTMP ingest and verifies the decoded H.264 stream.
+3. Builds the default, HaishinKit, MLX, and combined compile configurations.
+4. Imports the Developer ID certificate into a temporary keychain.
+5. Packages `MacStream.app` with `MAC_STREAM_ENABLE_HAISHINKIT=1`, versioned `Info.plist` values from the tag, and release-only guards for the Sparkle public key and HaishinKit variant.
+6. Signs with hardened runtime and release entitlements.
+7. Submits the app zip to Apple notarization with `xcrun notarytool`.
+8. Staples and validates the notarization ticket.
+9. Creates `MacStream-vX.Y.Z-macos-arm64.zip` for Sparkle, plus its `.sha256` file, then verifies the zip contains the HaishinKit RTMP release variant.
+10. Creates and Developer-ID signs `MacStream-vX.Y.Z-macos-arm64.dmg` with `MacStream.app` and an `/Applications` link.
+11. Notarizes, staples, and Gatekeeper-validates the DMG, then generates its post-staple `.sha256` file.
+12. Uploads both distribution formats and publishes or updates the GitHub Release.
 
 Required GitHub Actions secrets:
 
@@ -159,7 +160,7 @@ shasum -a 256 dist/MacStream-vX.Y.Z-macos-arm64.zip
 The CI packaging helper can be smoke-tested locally with ad-hoc signing. This does not notarize and does not replace the GitHub Actions release path:
 
 ```bash
-MAC_STREAM_VERSION=0.2.0 \
+MAC_STREAM_VERSION=0.3.0 \
 MAC_STREAM_BUILD_NUMBER=1 \
 MAC_STREAM_BUILD_CONFIGURATION=release \
 MAC_STREAM_BUILD_ARCH="$(uname -m)" \
@@ -168,7 +169,7 @@ MAC_STREAM_BUILD_ARCH="$(uname -m)" \
 /usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" dist/MacStream.app/Contents/Info.plist
 codesign --verify --strict --verbose=2 dist/MacStream.app
 ./script/package_macos_dmg.sh
-hdiutil verify dist/MacStream-v0.2.0-macos-"$(uname -m)".dmg
+hdiutil verify dist/MacStream-v0.3.0-macos-"$(uname -m)".dmg
 ```
 
 To locally simulate release signing, provide `MAC_STREAM_CODESIGN_IDENTITY` and require hardened runtime:
@@ -180,7 +181,7 @@ MAC_STREAM_REQUIRE_DEVELOPER_ID=1 \
 MAC_STREAM_REQUIRE_HARDENED_RUNTIME=1 \
 MAC_STREAM_REQUIRE_HAISHINKIT=1 \
 MAC_STREAM_REQUIRE_RELEASE_SPARKLE_PUBLIC_KEY=1 \
-MAC_STREAM_VERSION=0.2.0 \
+MAC_STREAM_VERSION=0.3.0 \
 MAC_STREAM_BUILD_NUMBER=1 \
 ./script/package_macos_app.sh
 ```

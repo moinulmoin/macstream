@@ -1029,7 +1029,10 @@ func recordingStartCanBeCancelledAndSuppressesDuplicateStarts() async {
     #expect(pipeline.startRecordingCount == 1)
 
     store.stopRecording()
-    try? await Task.sleep(for: .milliseconds(120))
+    for _ in 0..<200 {
+        guard store.recordingState != .stopped || pipeline.stopRecordingCount < 1 else { break }
+        try? await Task.sleep(for: .milliseconds(5))
+    }
 
     #expect(store.recordingState == .stopped)
     #expect(store.canStartRecording)

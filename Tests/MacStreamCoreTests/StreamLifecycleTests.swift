@@ -186,22 +186,26 @@ func invalidRTMPDestinationCanBeEditedBackToPreview() {
 @MainActor
 func studioStoreReportsTransportAwareStreamStatusDetails() async {
     let pipeline = ConfigurableMediaPipeline(streamTransport: .rtmpPublish)
+    pipeline.currentHealth = StreamHealth(publishState: .publishing)
     let store = StudioStore(mediaPipeline: pipeline)
 
     store.startStream()
     #expect(store.streamStatusDetail == "Starting local preview session")
-    try? await Task.sleep(for: .milliseconds(50))
+    await waitUntilStreamIsLive(store)
     #expect(store.streamStatusDetail == "Local preview running")
 
     store.stopStream()
-    try? await Task.sleep(for: .milliseconds(50))
+    await waitUntilStreamIsOffline(store)
     store.destination = StreamDestination(
         name: "Twitch",
         rtmpURL: "rtmps://live.example.com/app/sk_live_secret"
     )
     store.startStream()
     #expect(store.streamStatusDetail == "Connecting RTMP publisher (attempt 1/3)")
-    try? await Task.sleep(for: .milliseconds(50))
+    for _ in 0..<200 {
+        guard store.streamStatusDetail != "Publishing media" else { break }
+        try? await Task.sleep(for: .milliseconds(5))
+    }
     #expect(store.streamStatusDetail == "Publishing media")
 }
 

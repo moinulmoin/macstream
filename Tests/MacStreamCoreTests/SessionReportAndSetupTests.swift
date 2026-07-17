@@ -1054,7 +1054,10 @@ func stopRecordingIsIdempotentWhilePipelineStops() async {
     let store = StudioStore(mediaPipeline: pipeline)
 
     store.startRecording()
-    try? await Task.sleep(for: .milliseconds(20))
+    for _ in 0..<200 {
+        guard store.recordingState != .recording else { break }
+        try? await Task.sleep(for: .milliseconds(5))
+    }
 
     #expect(store.recordingState == .recording)
 
@@ -1068,7 +1071,10 @@ func stopRecordingIsIdempotentWhilePipelineStops() async {
     #expect(store.setupGenerationStatusDetail == "Finish recording stop before generating setup rules.")
 
     store.stopRecording()
-    try? await Task.sleep(for: .milliseconds(20))
+    for _ in 0..<200 {
+        guard pipeline.stopRecordingCount == 0 else { break }
+        try? await Task.sleep(for: .milliseconds(5))
+    }
 
     #expect(pipeline.stopRecordingCount == 1)
 

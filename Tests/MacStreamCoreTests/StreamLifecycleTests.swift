@@ -618,7 +618,7 @@ func stopStreamIsIdempotentWhilePipelineStops() async {
     let store = StudioStore(mediaPipeline: pipeline)
 
     store.startStream()
-    try? await Task.sleep(for: .milliseconds(20))
+    await waitUntilStreamIsLive(store)
 
     #expect(store.streamState == .live)
 
@@ -630,7 +630,10 @@ func stopStreamIsIdempotentWhilePipelineStops() async {
     #expect(store.streamStatusDetail == "Stopping stream")
 
     store.stopStream()
-    try? await Task.sleep(for: .milliseconds(20))
+    for _ in 0..<200 {
+        guard pipeline.stopCount == 0 else { break }
+        try? await Task.sleep(for: .milliseconds(5))
+    }
 
     #expect(pipeline.stopCount == 1)
 
@@ -730,9 +733,15 @@ func cancelWhileConnectingIgnoresLateStreamStartCompletion() async {
     let store = StudioStore(mediaPipeline: pipeline)
 
     store.startStream()
-    try? await Task.sleep(for: .milliseconds(10))
+    for _ in 0..<200 {
+        guard pipeline.startCount == 0 else { break }
+        try? await Task.sleep(for: .milliseconds(5))
+    }
     store.stopStream()
-    try? await Task.sleep(for: .milliseconds(10))
+    for _ in 0..<200 {
+        guard pipeline.stopCount == 0 else { break }
+        try? await Task.sleep(for: .milliseconds(5))
+    }
 
     #expect(pipeline.stopCount == 1)
 

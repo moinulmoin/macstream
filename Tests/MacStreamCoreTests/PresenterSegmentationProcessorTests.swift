@@ -23,6 +23,7 @@ func presenterSegmentationSubmitDoesNotSynchronouslyRunClient() throws {
 
     clock.advance(byNanoseconds: 1)
     release.signal()
+    processor.waitUntilIdle()
 
     #expect(client.waitForCompletedCallCount(1))
     #expect(processor.latestMatte()?.presentationTime.seconds == 1)
@@ -58,6 +59,7 @@ func presenterSegmentationCoalescesPendingFramesBehindInFlightRequest() throws {
     )
 
     release.signal()
+    processor.waitUntilIdle()
 
     #expect(client.waitForCompletedCallCount(2))
     #expect(client.presentationSeconds == [0, 0.2])
@@ -80,6 +82,7 @@ func presenterSegmentationDropsFramesAboveRateCap() throws {
         try makePixelBuffer(width: 2, height: 2),
         presentationTime: CMTime(seconds: 0.01, preferredTimescale: 600)
     )
+    processor.waitUntilIdle()
 
     #expect(client.waitForCompletedCallCount(1))
     #expect(!client.waitForStartedCallCount(2, timeout: .now() + .milliseconds(50)))
@@ -97,6 +100,7 @@ func presenterSegmentationRejectsStaleLatestMatte() throws {
         try makePixelBuffer(width: 2, height: 2),
         presentationTime: CMTime(seconds: 2, preferredTimescale: 600)
     )
+    processor.waitUntilIdle()
 
     #expect(client.waitForCompletedCallCount(1))
     #expect(processor.latestMatte(maximumAge: .milliseconds(250)) != nil)
@@ -117,6 +121,7 @@ func presenterSegmentationRejectsFreshMatteForDistantCameraFrame() throws {
         try makePixelBuffer(width: 2, height: 2),
         presentationTime: CMTime(seconds: 4, preferredTimescale: 600)
     )
+    processor.waitUntilIdle()
 
     #expect(client.waitForCompletedCallCount(1))
     #expect(processor.latestMatte(
@@ -141,6 +146,7 @@ func presenterSegmentationTreatsClientFailureAsNoMatte() throws {
         try makePixelBuffer(width: 2, height: 2),
         presentationTime: CMTime(seconds: 1, preferredTimescale: 600)
     )
+    processor.waitUntilIdle()
     #expect(client.waitForCompletedCallCount(1))
     #expect(processor.latestMatte() != nil)
 
@@ -149,6 +155,7 @@ func presenterSegmentationTreatsClientFailureAsNoMatte() throws {
         try makePixelBuffer(width: 2, height: 2),
         presentationTime: CMTime(seconds: 1.1, preferredTimescale: 600)
     )
+    processor.waitUntilIdle()
 
     #expect(client.waitForCompletedCallCount(2))
     #expect(processor.latestMatte() == nil)
@@ -174,6 +181,7 @@ func presenterSegmentationResetClearsStateAndIgnoresInFlightResult() throws {
 
     processor.reset()
     release.signal()
+    processor.waitUntilIdle()
 
     #expect(client.waitForCompletedCallCount(1))
     #expect(processor.latestMatte() == nil)
@@ -182,6 +190,7 @@ func presenterSegmentationResetClearsStateAndIgnoresInFlightResult() throws {
         try makePixelBuffer(width: 2, height: 2),
         presentationTime: CMTime(seconds: 4, preferredTimescale: 600)
     )
+    processor.waitUntilIdle()
 
     #expect(client.waitForCompletedCallCount(2))
     #expect(processor.latestMatte()?.presentationTime.seconds == 4)

@@ -166,6 +166,10 @@ public final class PresenterSegmentationProcessor: @unchecked Sendable {
         }
     }
 
+    func waitUntilIdle() {
+        processingQueue.sync {}
+    }
+
     private func processPendingFrames() {
         while true {
             guard let pending = lock.withLock({ nextPendingFrameLocked() }) else { return }

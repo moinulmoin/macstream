@@ -171,8 +171,8 @@ func captureReadinessIgnoresDisabledOptionalSources() async throws {
     try? await Task.sleep(for: .milliseconds(30))
 
     #expect(store.captureReadiness.state == .needsAccess)
-    #expect(store.captureReadiness.detail == "Camera needs access.")
-    #expect(store.missingRequiredCapturePermissionKinds == [.camera])
+    #expect(store.captureReadiness.detail == "Camera and Microphone need access.")
+    #expect(store.missingRequiredCapturePermissionKinds == [.camera, .microphone])
 
     let camera = try #require(store.sources.first { $0.kind == .camera })
     let microphone = try #require(store.sources.first { $0.kind == .microphone })
@@ -202,8 +202,8 @@ func capturePermissionStateSeparatesPromptableBlockedAndMissingDevices() async {
     store.scanCaptureDevices()
     try? await Task.sleep(for: .milliseconds(30))
 
-    #expect(store.missingRequiredCapturePermissionKinds == [.camera])
-    #expect(store.promptableRequiredCapturePermissionKinds.isEmpty)
+    #expect(store.missingRequiredCapturePermissionKinds == [.camera, .microphone])
+    #expect(store.promptableRequiredCapturePermissionKinds == [.microphone])
     #expect(store.blockedRequiredCapturePermissionKinds == [.camera])
     #expect(store.missingRequiredCaptureDeviceKinds.isEmpty)
 }
@@ -224,8 +224,8 @@ func capturePermissionStateSurfacesMissingRequiredHardware() async {
     store.scanCaptureDevices()
     try? await Task.sleep(for: .milliseconds(30))
 
-    #expect(store.missingRequiredCapturePermissionKinds == [.camera])
-    #expect(store.promptableRequiredCapturePermissionKinds.isEmpty)
+    #expect(store.missingRequiredCapturePermissionKinds == [.camera, .microphone])
+    #expect(store.promptableRequiredCapturePermissionKinds == [.microphone])
     #expect(store.blockedRequiredCapturePermissionKinds.isEmpty)
     #expect(store.missingRequiredCaptureDeviceKinds == [.camera])
 }
@@ -1105,8 +1105,8 @@ func PreflightCoachUsesActionableCopyForUnrequestedPermission() {
         isScanningCapture: false
     )
 
-    #expect(advice.first?.action == .openCaptureSettings(.camera))
-    #expect(advice.first?.detail == "Camera permission has not been granted yet. Use the permission action or open System Settings.")
+    #expect(advice.first?.action == .requestCapturePermission(.camera))
+    #expect(advice.first?.detail == "Camera permission has not been granted yet. Ask macOS for access.")
 }
 
 @Test
@@ -1196,7 +1196,7 @@ func PreflightCoachReportsMissingDestinationAfterCaptureAndSources() {
         isScanningCapture: false
     )
 
-    #expect(advice.first?.action == .usePreviewDestination)
+    #expect(advice.first?.action == .openDestinationSetup)
     #expect(advice.first?.detail == destination.validationError)
     #expect(advice.first?.detail.contains("sk_live_secret") == false)
 }

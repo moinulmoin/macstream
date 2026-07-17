@@ -357,6 +357,47 @@ func adaptivePerformanceModeUsesEfficiencyWhenRTMPAppendQueueSaturates() async {
 
     #expect(store.effectivePerformanceMode == .efficiency)
     #expect(store.streamState == .degraded("RTMP append queue saturated; reducing capture cost."))
+    #expect(store.operatorRecoveryGuidance == OperatorRecoveryGuidance(
+        kind: .backpressure,
+        title: "Output queues full",
+        detail: "All RTMP lanes are falling behind. Switch to Efficiency mode, or stop before lowering FPS or resolution.",
+        action: .reduceOutputCost
+    ))
+}
+
+@Test
+@MainActor
+func recoveredRTMPLaneDoesNotKeepBackpressureGuidanceFromCumulativeRejections() async {
+    let destination = StreamDestination(
+        name: "Twitch",
+        rtmpURL: "rtmps://live.example.com/app/test-key"
+    )
+    let pipeline = ConfigurableMediaPipeline(streamTransport: .rtmpPublish)
+    pipeline.currentHealth = StreamHealth(
+        bitrateKbps: 4_000,
+        publishState: .publishing,
+        captureFPS: 30,
+        rtmpPendingAppends: 0,
+        rtmpAppendCapacity: 3
+    )
+    pipeline.currentDestinationStatuses = [
+        StreamDestinationStatus(
+            id: destination.id,
+            name: destination.name,
+            state: .publishing,
+            pendingAppends: 0,
+            appendCapacity: 3,
+            appendRejections: 4
+        )
+    ]
+    let store = StudioStore(mediaPipeline: pipeline)
+    store.destination = destination
+
+    store.startStream()
+    try? await Task.sleep(for: .milliseconds(50))
+
+    #expect(store.streamState == .live)
+    #expect(store.operatorRecoveryGuidance == nil)
 }
 
 @Test

@@ -402,6 +402,37 @@ func audioDeliveryHealthReportsMicrophoneIndependentlyFromSystemAudio() {
 }
 
 @Test
+func microphoneLevelMeasurementThrottleCapsMeterWorkButNotDeliveryFreshness() {
+    var tracker = AudioDeliveryHealthTracker()
+    tracker.reset(
+        expectsSystemAudio: false,
+        expectsMicrophone: true,
+        at: 0
+    )
+
+    var lastMeasurementAt: UInt64?
+    var measurementCount = 0
+    let callbackInterval: UInt64 = 16_666_667
+    let measurementInterval: UInt64 = 66_666_667
+
+    for callbackIndex in 0..<60 {
+        let now = UInt64(callbackIndex) * callbackInterval
+        tracker.recordMicrophoneCallback(at: now)
+        if SystemMediaPipeline.shouldMeasureMicrophoneLevel(
+            now: now,
+            lastMeasurementAt: lastMeasurementAt,
+            minimumIntervalNanoseconds: measurementInterval
+        ) {
+            measurementCount += 1
+            lastMeasurementAt = now
+        }
+    }
+
+    #expect(measurementCount == 15)
+    #expect(tracker.microphoneState(at: 59 * callbackInterval) == .active)
+}
+
+@Test
 func audioDeliveryHealthResetStartsANewCaptureLifecycle() {
     var tracker = AudioDeliveryHealthTracker()
     tracker.reset(
@@ -1590,6 +1621,159 @@ func rtmpFanoutAcceptsWhenAnyDestinationAcceptsAndVisitsEveryLane() throws {
     #expect(lanes[1].status.failureDetail == "Destination is falling behind; media is being dropped.")
 }
 
+@Test
+func compositedRoutePollsCurrentQueuesAndRendersWhenOneLaneDrains() throws {
+    let alwaysFullPublisher = TestRTMPPublisher(
+        acceptsAppends: false,
+        appendQueueSnapshot: RTMPAppendQueueSnapshot(pendingCount: 3, capacity: 3)
+    )
+    let drainingPublisher = TestRTMPPublisher(
+        appendQueueSnapshot: RTMPAppendQueueSnapshot(pendingCount: 3, capacity: 3)
+    )
+    let lanes = [
+        try makePublishingLane(
+            destination: StreamDestination(name: "Full", rtmpURL: "rtmp://127.0.0.1/live/full-key"),
+            publisher: alwaysFullPublisher
+        ),
+        try makePublishingLane(
+            destination: StreamDestination(name: "Draining", rtmpURL: "rtmp://127.0.0.1/live/draining-key"),
+            publisher: drainingPublisher
+        )
+    ]
+    let sampleBuffer = try makeFanoutSampleBuffer()
+    var health = StreamHealth()
+    var renderCount = 0
+
+    let saturatedResult = SystemMediaPipeline.routeSharedCompositedFrame(
+        lanes: lanes,
+        health: &health,
+        isRecordingRequested: false,
+        canAppendRecording: false,
+        shouldPublish: true,
+        render: {
+            renderCount += 1
+            return sampleBuffer
+        },
+        appendRecording: { _ in false },
+        publish: { SystemMediaPipeline.fanOut($0, track: 0, lanes: lanes) }
+    )
+
+    #expect(renderCount == 0)
+    #expect(!saturatedResult.didPublish)
+    #expect(!saturatedResult.didSatisfyRequestedConsumers)
+    #expect(lanes.allSatisfy { $0.status.state == .degraded })
+    #expect(lanes.allSatisfy { $0.status.appendRejections == 1 })
+    #expect(health.rtmpPendingAppends == 6)
+    #expect(health.rtmpAppendCapacity == 6)
+    #expect(health.publishState == .publishing)
+
+    drainingPublisher.setAppendQueueSnapshot(
+        RTMPAppendQueueSnapshot(pendingCount: 0, capacity: 3)
+    )
+    let drainedResult = SystemMediaPipeline.routeSharedCompositedFrame(
+        lanes: lanes,
+        health: &health,
+        isRecordingRequested: false,
+        canAppendRecording: false,
+        shouldPublish: true,
+        render: {
+            renderCount += 1
+            return sampleBuffer
+        },
+        appendRecording: { _ in false },
+        publish: { SystemMediaPipeline.fanOut($0, track: 0, lanes: lanes) }
+    )
+
+    #expect(renderCount == 1)
+    #expect(drainedResult.didPublish)
+    #expect(drainedResult.didSatisfyRequestedConsumers)
+    #expect(alwaysFullPublisher.appendCount == 1)
+    #expect(drainingPublisher.appendCount == 1)
+    #expect(lanes[0].status.state == .degraded)
+    #expect(lanes[0].status.appendRejections == 2)
+    #expect(lanes[1].status.state == .publishing)
+    #expect(lanes[1].status.failureDetail == nil)
+    #expect(lanes[1].status.appendRejections == 1)
+    #expect(health.rtmpPendingAppends == 3)
+    #expect(health.rtmpAppendCapacity == 6)
+}
+
+@Test
+func compositedRouteRecordsLocallyWithoutClaimingRTMPPublishSuccess() throws {
+    let publisher = TestRTMPPublisher(
+        appendQueueSnapshot: RTMPAppendQueueSnapshot(pendingCount: 3, capacity: 3)
+    )
+    let lane = try makePublishingLane(
+        destination: StreamDestination(name: "Full", rtmpURL: "rtmp://127.0.0.1/live/full-key"),
+        publisher: publisher
+    )
+    let sampleBuffer = try makeFanoutSampleBuffer()
+    var health = StreamHealth()
+    var recordingAppendCount = 0
+    var publishingAppendCount = 0
+
+    let result = SystemMediaPipeline.routeSharedCompositedFrame(
+        lanes: [lane],
+        health: &health,
+        isRecordingRequested: true,
+        canAppendRecording: true,
+        shouldPublish: true,
+        render: { sampleBuffer },
+        appendRecording: { _ in
+            recordingAppendCount += 1
+            return true
+        },
+        publish: { _ in
+            publishingAppendCount += 1
+            return true
+        }
+    )
+
+    #expect(recordingAppendCount == 1)
+    #expect(publishingAppendCount == 0)
+    #expect(result.didAppendRecording)
+    #expect(!result.didPublish)
+    #expect(!result.didSatisfyRequestedConsumers)
+    #expect(lane.status.state == .degraded)
+    #expect(lane.status.appendRejections == 1)
+    #expect(health.rtmpPendingAppends == 3)
+    #expect(health.rtmpAppendCapacity == 3)
+}
+
+@Test
+func compositedRouteKeepsRecordingDemandWhenWriterIsBackpressured() throws {
+    let publisher = TestRTMPPublisher(
+        appendQueueSnapshot: RTMPAppendQueueSnapshot(pendingCount: 0, capacity: 3)
+    )
+    let lane = try makePublishingLane(
+        destination: StreamDestination(name: "Ready", rtmpURL: "rtmp://127.0.0.1/live/ready-key"),
+        publisher: publisher
+    )
+    let sampleBuffer = try makeFanoutSampleBuffer()
+    var health = StreamHealth()
+    var recordingAppendCount = 0
+
+    let result = SystemMediaPipeline.routeSharedCompositedFrame(
+        lanes: [lane],
+        health: &health,
+        isRecordingRequested: true,
+        canAppendRecording: false,
+        shouldPublish: true,
+        render: { sampleBuffer },
+        appendRecording: { _ in
+            recordingAppendCount += 1
+            return true
+        },
+        publish: { SystemMediaPipeline.fanOut($0, track: 0, lanes: [lane]) }
+    )
+
+    #expect(recordingAppendCount == 0)
+    #expect(!result.didAppendRecording)
+    #expect(result.didPublish)
+    #expect(result.wasRecordingRequested)
+    #expect(!result.didSatisfyRequestedConsumers)
+}
+
 
 private actor OrderedAppendRecorder {
     private(set) var values: [Int] = []
@@ -1716,14 +1900,20 @@ private final class TestRTMPPublisher: RTMPPublisher, @unchecked Sendable {
     private let lock = NSLock()
     private let connectOperation: Connect
     private let acceptsAppends: Bool
+    private var storedAppendQueueSnapshot: RTMPAppendQueueSnapshot
     private var storedAppendCount = 0
     private var storedCloseCount = 0
 
     init(
         acceptsAppends: Bool = true,
+        appendQueueSnapshot: RTMPAppendQueueSnapshot = RTMPAppendQueueSnapshot(
+            pendingCount: 0,
+            capacity: 3
+        ),
         connect: @escaping Connect = {}
     ) {
         self.acceptsAppends = acceptsAppends
+        self.storedAppendQueueSnapshot = appendQueueSnapshot
         self.connectOperation = connect
     }
 
@@ -1746,6 +1936,16 @@ private final class TestRTMPPublisher: RTMPPublisher, @unchecked Sendable {
         return acceptsAppends
     }
 
+    func appendQueueSnapshot() -> RTMPAppendQueueSnapshot {
+        lock.withLock { storedAppendQueueSnapshot }
+    }
+
+    func setAppendQueueSnapshot(_ snapshot: RTMPAppendQueueSnapshot) {
+        lock.withLock {
+            storedAppendQueueSnapshot = snapshot
+        }
+    }
+
     func close() async {
         lock.withLock {
             storedCloseCount += 1
@@ -1755,7 +1955,8 @@ private final class TestRTMPPublisher: RTMPPublisher, @unchecked Sendable {
 
 private func makePublishingLane(
     destination: StreamDestination,
-    publisher: any RTMPPublisher
+    publisher: any RTMPPublisher,
+    state: StreamDestinationPublishState = .publishing
 ) throws -> RTMPPublisherLane {
     RTMPPublisherLane(
         destination: destination,
@@ -1764,7 +1965,7 @@ private func makePublishingLane(
         status: StreamDestinationStatus(
             id: destination.id,
             name: destination.name,
-            state: .publishing
+            state: state
         )
     )
 }

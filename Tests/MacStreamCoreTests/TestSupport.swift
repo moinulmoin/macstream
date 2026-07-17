@@ -25,6 +25,7 @@ final class FixedSignalProvider: SignalProvider, @unchecked Sendable {
 final class ConfigurableMediaPipeline: MediaPipeline, @unchecked Sendable {
     let streamTransport: StreamTransportKind
     var currentHealth: StreamHealth?
+    var currentDestinationStatuses: [StreamDestinationStatus] = []
     var recordingFailureDetail: String?
     var captureSetupWarnings: [String] = []
     var lastConfiguration: MediaPipelineConfiguration?
@@ -34,6 +35,10 @@ final class ConfigurableMediaPipeline: MediaPipeline, @unchecked Sendable {
 
     init(streamTransport: StreamTransportKind = .endpointValidation) {
         self.streamTransport = streamTransport
+    }
+
+    var destinationStatuses: [StreamDestinationStatus] {
+        currentDestinationStatuses
     }
 
     func update(configuration: MediaPipelineConfiguration) {

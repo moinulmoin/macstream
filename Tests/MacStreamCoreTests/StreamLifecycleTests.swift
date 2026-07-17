@@ -266,6 +266,12 @@ func failedStreamStartStaysRetryableAndEditable() async {
 
     #expect(store.streamState == .failed("Bad endpoint"))
     #expect(store.streamStatusDetail == "Bad endpoint")
+    #expect(store.operatorRecoveryGuidance == OperatorRecoveryGuidance(
+        kind: .failedStart,
+        title: "Start failed",
+        detail: "Check RTMP setup and the destination status, then retry.",
+        action: .retryStream
+    ))
     #expect(!store.isLive)
     #expect(store.canStartStream)
     #expect(store.canEditDestination)
@@ -277,6 +283,7 @@ func failedStreamStartStaysRetryableAndEditable() async {
     await waitUntilStreamIsLive(store)
 
     #expect(store.streamState == .live)
+    #expect(store.operatorRecoveryGuidance == nil)
     #expect(store.isLive)
     #expect(pipeline.startCount == 2)
 }
@@ -381,6 +388,12 @@ func liveRTMPDisconnectStopsOldPublisherAndRecoversWithBoundedRetry() async {
     pipeline.failSession("RTMP connection closed by the server.", recoveryStartFailures: 2)
     store.advanceDirector()
     #expect(store.isStreamConnecting)
+    #expect(store.operatorRecoveryGuidance == OperatorRecoveryGuidance(
+        kind: .reconnecting,
+        title: "Reconnecting",
+        detail: "MacStream is retrying the RTMP session with the existing destination setup.",
+        action: .waitForRecovery
+    ))
 
     for _ in 0..<400 {
         guard store.streamState != .live || pipeline.startStreamCount < 4 else { break }
@@ -394,6 +407,7 @@ func liveRTMPDisconnectStopsOldPublisherAndRecoversWithBoundedRetry() async {
     #expect(store.events.contains { $0.title == "Stream interrupted" })
     #expect(store.events.contains { $0.title == "Stream recovered" })
     #expect(!store.events.contains { $0.title == "Stream recovery failed" })
+    #expect(store.operatorRecoveryGuidance == nil)
 
     store.stopStream()
     await waitUntilStreamIsOffline(store)
@@ -539,11 +553,63 @@ func liveRTMPRecoveryEndsInTruthfulFailureAfterRetryBudget() async {
     }
 
     #expect(store.streamState == .failed("Transient recovery failure 3"))
+    #expect(store.operatorRecoveryGuidance == OperatorRecoveryGuidance(
+        kind: .recoveryFailed,
+        title: "Recovery failed",
+        detail: "Reconnect retries ended. Check the destination, then retry.",
+        action: .checkDestination
+    ))
     #expect(pipeline.stopStreamCount == 1)
     #expect(pipeline.startStreamCount == 3)
     #expect(store.streamStartAttempt == 2)
     #expect(store.events.contains { $0.title == "Stream recovery failed" })
     #expect(!store.canStopStream)
+}
+
+@Test
+@MainActor
+func ordinaryStartFailureDoesNotReuseEarlierRecoveryFailureGuidance() async {
+    let pipeline = SessionRecoveryMediaPipeline()
+    let store = StudioStore(
+        mediaPipeline: pipeline,
+        streamStartRetryPolicy: .none
+    )
+    store.destination = StreamDestination(
+        name: "Twitch",
+        rtmpURL: "rtmps://live.example.com/app/sk_live_secret"
+    )
+
+    store.startRecording()
+    await waitUntilRecordingIsActive(store)
+    store.startStream()
+    await waitUntilStreamIsLive(store)
+
+    pipeline.failSession("RTMP connection failed.", recoveryStartFailures: 2)
+    store.advanceDirector()
+    for _ in 0..<1_000 {
+        if case .failed = store.streamState { break }
+        await Task.yield()
+    }
+
+    #expect(store.recordingState == .recording)
+    #expect(store.operatorRecoveryGuidance?.kind == .recoveryFailed)
+
+    store.startStream()
+    for _ in 0..<1_000 {
+        if case .failed = store.streamState, pipeline.startStreamCount == 3 { break }
+        await Task.yield()
+    }
+
+    #expect(store.streamState == .failed("Transient recovery failure 3"))
+    #expect(store.operatorRecoveryGuidance == OperatorRecoveryGuidance(
+        kind: .failedStart,
+        title: "Start failed",
+        detail: "Check RTMP setup and the destination status, then retry.",
+        action: .retryStream
+    ))
+
+    store.stopRecording()
+    await waitUntilRecordingIsStopped(store)
 }
 
 @Test

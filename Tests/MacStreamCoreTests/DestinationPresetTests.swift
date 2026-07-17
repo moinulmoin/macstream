@@ -97,6 +97,53 @@ func rtmpModeRequiresAnEnabledValidDestination() {
     store.setDestinationEnabled(id: store.destination.id, isEnabled: false)
     #expect(store.destinationValidationError == "Enable at least one RTMP destination.")
 }
+
+@Test
+@MainActor
+func preflightChecksEveryEnabledDestinationInsteadOfOnlyTheSelectedOne() async {
+    let store = StudioStore(captureDeviceProvider: FixedCaptureDeviceProvider(report: CapturePreflightReport()))
+    let brbScene = store.scenes.first { $0.kind == .brb }
+
+    if let brbScene {
+        store.selectScene(brbScene)
+    }
+    store.setDestinationMode(.rtmp)
+    store.applyDestinationPreset(.twitch)
+    store.setRTMPStreamKey("twitch-secret")
+    let readyDestinationID = store.destination.id
+
+    store.addDestination()
+    store.selectDestination(id: readyDestinationID)
+    store.scanCaptureDevices()
+    try? await Task.sleep(for: .milliseconds(30))
+
+    #expect(store.destination.isReadyToStart)
+    #expect(store.destinationValidationError != nil)
+    #expect(store.preflightAdvice.first?.action == .openDestinationSetup)
+}
+
+@Test
+@MainActor
+func preflightIgnoresSelectedInvalidDestinationWhenItIsDisabled() async {
+    let store = StudioStore(captureDeviceProvider: FixedCaptureDeviceProvider(report: CapturePreflightReport()))
+    if let brbScene = store.scenes.first(where: { $0.kind == .brb }) {
+        store.selectScene(brbScene)
+    }
+    store.setDestinationMode(.rtmp)
+    store.applyDestinationPreset(.twitch)
+    store.setRTMPStreamKey("twitch-secret")
+
+    store.addDestination()
+    let invalidDestinationID = store.destination.id
+    store.setDestinationEnabled(id: invalidDestinationID, isEnabled: false)
+    store.scanCaptureDevices()
+    try? await Task.sleep(for: .milliseconds(30))
+
+    #expect(store.destination.validationError != nil)
+    #expect(store.destinationValidationError == nil)
+    #expect(store.preflightAdvice.isEmpty)
+}
+
 @Test
 @MainActor
 func applyingPresetWithoutFixedIngestLeavesURLEditable() {

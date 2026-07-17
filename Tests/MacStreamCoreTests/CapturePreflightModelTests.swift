@@ -65,6 +65,112 @@ func capturePermissionAttentionGroupsDeviceInstancesByPermissionKind() {
     #expect(report.permissionAttentionKindCount == 3)
     #expect(CapturePreflightReport.permissionAttentionSummary(for: devices) == "3 capture permissions need attention.")
 }
+
+@Test
+func preflightAdviceRequestsNativeCameraAndMicrophonePermissionWhenPromptable() {
+    let sources = [
+        StudioSource(kind: .camera),
+        StudioSource(kind: .screen),
+        StudioSource(kind: .microphone)
+    ]
+
+    let cameraAdvice = PreflightCoach.advice(
+        report: CapturePreflightReport(devices: [
+            CaptureDeviceInfo(id: "camera-1", kind: .camera, name: "FaceTime Camera", permission: .notDetermined)
+        ]),
+        sources: sources,
+        selectedScene: .face,
+        selectedScreenCaptureTarget: nil,
+        selectedCameraDeviceID: nil,
+        selectedMicrophoneDeviceID: nil,
+        destination: StreamDestination(),
+        hasRunInitialCaptureScan: true,
+        isScanningCapture: false
+    )
+
+    #expect(cameraAdvice.first?.action == .requestCapturePermission(.camera))
+    #expect(cameraAdvice.first?.detail == "Camera permission has not been granted yet. Ask macOS for access.")
+
+    let microphoneAdvice = PreflightCoach.advice(
+        report: CapturePreflightReport(devices: [
+            CaptureDeviceInfo(id: "camera-1", kind: .camera, name: "FaceTime Camera", permission: .granted),
+            CaptureDeviceInfo(id: "microphone-1", kind: .microphone, name: "Studio Mic", permission: .notDetermined)
+        ]),
+        sources: sources,
+        selectedScene: .face,
+        selectedScreenCaptureTarget: nil,
+        selectedCameraDeviceID: "camera-1",
+        selectedMicrophoneDeviceID: nil,
+        destination: StreamDestination(),
+        hasRunInitialCaptureScan: true,
+        isScanningCapture: false
+    )
+
+    #expect(microphoneAdvice.first?.action == .requestCapturePermission(.microphone))
+    #expect(microphoneAdvice.first?.detail == "Microphone permission has not been granted yet. Ask macOS for access.")
+}
+
+@Test
+func preflightAdviceKeepsSettingsAndRelaunchPathForBlockedPermissions() {
+    let sources = [
+        StudioSource(kind: .camera),
+        StudioSource(kind: .screen),
+        StudioSource(kind: .microphone)
+    ]
+
+    let deniedCameraAdvice = PreflightCoach.advice(
+        report: CapturePreflightReport(devices: [
+            CaptureDeviceInfo(id: "camera-1", kind: .camera, name: "FaceTime Camera", permission: .denied)
+        ]),
+        sources: sources,
+        selectedScene: .face,
+        selectedScreenCaptureTarget: nil,
+        selectedCameraDeviceID: nil,
+        selectedMicrophoneDeviceID: nil,
+        destination: StreamDestination(),
+        hasRunInitialCaptureScan: true,
+        isScanningCapture: false
+    )
+
+    #expect(deniedCameraAdvice.first?.action == .openCaptureSettings(.camera))
+    #expect(deniedCameraAdvice.first?.detail == "Camera permission was denied. Open System Settings to grant access.")
+
+    let screenAdvice = PreflightCoach.advice(
+        report: CapturePreflightReport(devices: [
+            CaptureDeviceInfo(id: "display-1", kind: .display, name: "Studio Display", permission: .notDetermined)
+        ]),
+        sources: sources,
+        selectedScene: .screenOnly,
+        selectedScreenCaptureTarget: nil,
+        selectedCameraDeviceID: nil,
+        selectedMicrophoneDeviceID: nil,
+        destination: StreamDestination(),
+        hasRunInitialCaptureScan: true,
+        isScanningCapture: false
+    )
+
+    #expect(screenAdvice.first?.action == .openCaptureSettings(.display))
+    #expect(screenAdvice.first?.detail == "Screen Recording permission has not been granted yet. Open System Settings, then reopen MacStream.")
+}
+
+@Test
+func incompleteRTMPAdviceKeepsDestinationSetupAsPrimaryIntent() {
+    let advice = PreflightCoach.advice(
+        report: CapturePreflightReport(),
+        sources: [],
+        selectedScene: .brb,
+        selectedScreenCaptureTarget: nil,
+        selectedCameraDeviceID: nil,
+        selectedMicrophoneDeviceID: nil,
+        destination: StreamDestination(mode: .rtmp, name: "Twitch", rtmpURL: ""),
+        hasRunInitialCaptureScan: true,
+        isScanningCapture: false
+    )
+
+    #expect(advice.first?.id == "destination-rtmp-setup")
+    #expect(advice.first?.title == "Finish RTMP setup")
+    #expect(advice.first?.action == .openDestinationSetup)
+}
 @Test
 func screenCaptureScanDoesNotLoadShareableContentBeforePermissionIsVisible() async {
     let listing = CountingScreenCaptureContentListing()

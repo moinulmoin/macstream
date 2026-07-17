@@ -612,6 +612,9 @@ public final class SystemMediaPipeline: NSObject, MediaPipeline, SCStreamOutput,
         ) = queue.sync {
             let previousConfiguration = self.mediaConfiguration
             self.mediaConfiguration = configuration
+            let usesPresenterSegmentation = Self.usesPresenterSegmentation(configuration: configuration)
+            self.recordingCameraFrameSlot?.setPresenterSegmentationEnabled(usesPresenterSegmentation)
+            self.publishingCameraFrameSlot?.setPresenterSegmentationEnabled(usesPresenterSegmentation)
             let now = DispatchTime.now().uptimeNanoseconds
             let hasActiveCapture = self.stream != nil || self.publishingStream != nil || self.writer != nil
             self.audioDeliveryHealthTracker.updateExpectations(
@@ -1461,6 +1464,7 @@ public final class SystemMediaPipeline: NSObject, MediaPipeline, SCStreamOutput,
         let session = AVCaptureSession()
         let output = AVCaptureVideoDataOutput()
         let frameSlot = CameraFrameSlot()
+        frameSlot.setPresenterSegmentationEnabled(Self.usesPresenterSegmentation(configuration: configuration))
         let compositionSignal = cameraCompositionSignal
         let receiver = CameraFrameReceiver(
             frameSlot: frameSlot,
@@ -1947,10 +1951,11 @@ public final class SystemMediaPipeline: NSObject, MediaPipeline, SCStreamOutput,
         publishingMicrophoneOutput === output
     }
 
-    private func recordingCameraPixelBuffer() -> CVPixelBuffer? {
+    private func recordingCameraFrame() -> CameraFrameLookup {
         let lookup = recordingCameraFrameSlot?.lookup()
             ?? CameraFrameLookup(
                 pixelBuffer: nil,
+                presenterMattePixelBuffer: nil,
                 presentationTime: nil,
                 didResolveFirstFrame: false
             )
@@ -1959,16 +1964,17 @@ public final class SystemMediaPipeline: NSObject, MediaPipeline, SCStreamOutput,
                 "Compositor resolved first recording camera frame pixelFormat=\(CVPixelBufferGetPixelFormatType(pixelBuffer), privacy: .public) sampledLuma=\(Self.sampledCameraLuma(pixelBuffer), privacy: .public)"
             )
         }
-        return lookup.pixelBuffer
+        return lookup
     }
 
-    private func publishingCameraPixelBuffer() -> CVPixelBuffer? {
+    private func publishingCameraFrame() -> CameraFrameLookup {
         let frameSlot = publishingCaptureMode == .recordingOwned
             ? recordingCameraFrameSlot
             : publishingCameraFrameSlot
         let lookup = frameSlot?.lookup()
             ?? CameraFrameLookup(
                 pixelBuffer: nil,
+                presenterMattePixelBuffer: nil,
                 presentationTime: nil,
                 didResolveFirstFrame: false
             )
@@ -1977,7 +1983,7 @@ public final class SystemMediaPipeline: NSObject, MediaPipeline, SCStreamOutput,
                 "Compositor resolved first publishing camera frame pixelFormat=\(CVPixelBufferGetPixelFormatType(pixelBuffer), privacy: .public) sampledLuma=\(Self.sampledCameraLuma(pixelBuffer), privacy: .public)"
             )
         }
-        return lookup.pixelBuffer
+        return lookup
     }
 
     private func processCameraDrivenComposedFrame() {
@@ -2872,7 +2878,7 @@ public final class SystemMediaPipeline: NSObject, MediaPipeline, SCStreamOutput,
             sampleBuffer,
             pixelBufferPool: publishingPixelBufferPool,
             videoCompositor: publishingVideoCompositor,
-            cameraPixelBuffer: publishingCameraPixelBuffer()
+            cameraFrame: publishingCameraFrame()
         ) else {
             return false
         }
@@ -2939,7 +2945,7 @@ public final class SystemMediaPipeline: NSObject, MediaPipeline, SCStreamOutput,
             sampleBuffer,
             pixelBufferPool: videoPixelBufferAdaptor?.pixelBufferPool,
             videoCompositor: videoCompositor,
-            cameraPixelBuffer: recordingCameraPixelBuffer()
+            cameraFrame: recordingCameraFrame()
         ) else {
             return SharedScreenRouteResult(
                 didAppendRecording: false,
@@ -3092,7 +3098,7 @@ public final class SystemMediaPipeline: NSObject, MediaPipeline, SCStreamOutput,
                 sampleBuffer,
                 pixelBufferPool: videoPixelBufferAdaptor.pixelBufferPool,
                 videoCompositor: videoCompositor,
-                cameraPixelBuffer: recordingCameraPixelBuffer()
+                cameraFrame: recordingCameraFrame()
               )
         else {
             return false
@@ -3105,7 +3111,7 @@ public final class SystemMediaPipeline: NSObject, MediaPipeline, SCStreamOutput,
         _ sampleBuffer: CMSampleBuffer,
         pixelBufferPool: CVPixelBufferPool?,
         videoCompositor: VideoCanvasCompositor?,
-        cameraPixelBuffer: CVPixelBuffer?
+        cameraFrame: CameraFrameLookup
     ) -> CVPixelBuffer? {
         guard let screenPixelBuffer = sampleBuffer.imageBuffer,
               let pixelBufferPool,
@@ -3128,7 +3134,8 @@ public final class SystemMediaPipeline: NSObject, MediaPipeline, SCStreamOutput,
 
         videoCompositor.render(
             screenPixelBuffer: screenPixelBuffer,
-            cameraPixelBuffer: cameraPixelBuffer,
+            cameraPixelBuffer: cameraFrame.pixelBuffer,
+            cameraMattePixelBuffer: cameraFrame.presenterMattePixelBuffer,
             to: outputPixelBuffer
         )
         return outputPixelBuffer
@@ -3212,6 +3219,11 @@ public final class SystemMediaPipeline: NSObject, MediaPipeline, SCStreamOutput,
 
     static func requiresCameraCapture(sceneKind: SceneKind) -> Bool {
         sceneKind == .screenAndFace
+    }
+
+    static func usesPresenterSegmentation(configuration: MediaPipelineConfiguration) -> Bool {
+        configuration.sceneKind == .screenAndFace
+            && configuration.layoutSettings.presenterComposition.mode == .presenterOverlay
     }
 
     static func outputVideoSize(for configuration: MediaPipelineConfiguration) -> (width: Int, height: Int) {
@@ -4219,18 +4231,27 @@ private struct CameraCapture {
 
 private final class CameraFrameSlot: @unchecked Sendable {
     private let lock = NSLock()
+    private let presenterSegmentationProcessor = PresenterSegmentationProcessor()
     private var latestPixelBuffer: CVPixelBuffer?
     private var latestPresentationTime: CMTime?
     private var didObserveCallback = false
     private var didResolveFrame = false
+    private var isPresenterSegmentationEnabled = false
 
     func store(_ pixelBuffer: CVPixelBuffer?, presentationTime: CMTime?) -> Bool {
         lock.lock()
         let isFirstCallback = !didObserveCallback
+        let shouldSubmitPresenterFrame = isPresenterSegmentationEnabled && pixelBuffer != nil
         didObserveCallback = true
         if let pixelBuffer {
             latestPixelBuffer = pixelBuffer
             latestPresentationTime = presentationTime
+        }
+        if shouldSubmitPresenterFrame, let pixelBuffer {
+            presenterSegmentationProcessor.submit(
+                pixelBuffer,
+                presentationTime: presentationTime ?? .invalid
+            )
         }
         lock.unlock()
         return isFirstCallback
@@ -4247,16 +4268,32 @@ private final class CameraFrameSlot: @unchecked Sendable {
         lock.lock()
         let pixelBuffer = latestPixelBuffer
         let presentationTime = latestPresentationTime
+        let shouldUsePresenterMatte = isPresenterSegmentationEnabled
         let didResolveFirstFrame = pixelBuffer != nil && !didResolveFrame
         if didResolveFirstFrame {
             didResolveFrame = true
         }
         lock.unlock()
+        let presenterMattePixelBuffer = shouldUsePresenterMatte
+            ? presenterSegmentationProcessor.latestMatte(matching: presentationTime)?.pixelBuffer
+            : nil
         return CameraFrameLookup(
             pixelBuffer: pixelBuffer,
+            presenterMattePixelBuffer: presenterMattePixelBuffer,
             presentationTime: presentationTime,
             didResolveFirstFrame: didResolveFirstFrame
         )
+    }
+
+    func setPresenterSegmentationEnabled(_ isEnabled: Bool) {
+        let didDisable = lock.withLock {
+            let didDisable = isPresenterSegmentationEnabled && !isEnabled
+            isPresenterSegmentationEnabled = isEnabled
+            return didDisable
+        }
+        if didDisable {
+            presenterSegmentationProcessor.reset()
+        }
     }
 
     func reset() {
@@ -4266,6 +4303,7 @@ private final class CameraFrameSlot: @unchecked Sendable {
         didObserveCallback = false
         didResolveFrame = false
         lock.unlock()
+        presenterSegmentationProcessor.reset()
     }
 }
 
@@ -4301,6 +4339,7 @@ private final class CameraFrameReceiver: NSObject, AVCaptureVideoDataOutputSampl
 
 private struct CameraFrameLookup {
     var pixelBuffer: CVPixelBuffer?
+    var presenterMattePixelBuffer: CVPixelBuffer?
     var presentationTime: CMTime?
     var didResolveFirstFrame: Bool
 }

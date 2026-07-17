@@ -298,7 +298,13 @@ private struct LiveStatusPanelView: View {
             return store.recordingStatusDetail
         }
 
-        return "\(store.selectedScene.title) with \(store.preferences.layoutSettings.preset.shortTitle) layout."
+        let layoutSettings = store.preferences.layoutSettings
+        if store.selectedScene.kind == .screenAndFace,
+           layoutSettings.presenterComposition.mode == .presenterOverlay {
+            return "\(store.selectedScene.title) with Cutout · \(layoutSettings.presenterComposition.placement.title)."
+        }
+
+        return "\(store.selectedScene.title) with \(layoutSettings.preset.shortTitle) layout."
     }
 
     private var statusTitle: String {

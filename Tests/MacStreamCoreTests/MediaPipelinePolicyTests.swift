@@ -919,6 +919,50 @@ func videoCanvasRenderPlanUsesSplitGeometry() {
 }
 
 @Test
+func videoCanvasRenderPlanUsesPresenterOverlayGeometry() {
+    let outputSize = CGSize(width: 1_920, height: 1_080)
+    let settings = StudioLayoutSettings(
+        preset: .screen70Webcam30,
+        canvasPadding: 0.04,
+        presenterComposition: StudioPresenterCompositionSettings(
+            mode: .presenterOverlay,
+            placement: .top,
+            scale: 0.32
+        )
+    )
+    let plan = VideoCanvasRenderPlan.make(
+        outputSize: outputSize,
+        layoutSettings: settings
+    )
+    let layout = StudioCanvasLayout(size: outputSize, settings: settings)
+
+    #expect(plan.mode == .presenterOverlay)
+    #expect(plan.screenRect == layout.presenterComposition.screenRect.integral)
+    #expect(plan.cameraRect == layout.presenterComposition.presenterRect.integral)
+    #expect(plan.cameraViewport == settings.webcamViewport)
+}
+
+@Test
+func systemMediaPipelineEnablesPresenterSegmentationOnlyForScreenAndWebcamCutout() {
+    let cutout = StudioLayoutSettings(
+        presenterComposition: StudioPresenterCompositionSettings(mode: .presenterOverlay)
+    )
+
+    #expect(SystemMediaPipeline.usesPresenterSegmentation(configuration: MediaPipelineConfiguration(
+        sceneKind: .screenAndFace,
+        layoutSettings: cutout
+    )))
+    #expect(!SystemMediaPipeline.usesPresenterSegmentation(configuration: MediaPipelineConfiguration(
+        sceneKind: .screenOnly,
+        layoutSettings: cutout
+    )))
+    #expect(!SystemMediaPipeline.usesPresenterSegmentation(configuration: MediaPipelineConfiguration(
+        sceneKind: .screenAndFace,
+        layoutSettings: StudioLayoutSettings()
+    )))
+}
+
+@Test
 func videoCanvasRenderPlanUsesCanvasGeometryWithoutCameraForScreenOnly() {
     let outputSize = CGSize(width: 1_920, height: 1_080)
     let settings = StudioLayoutSettings(

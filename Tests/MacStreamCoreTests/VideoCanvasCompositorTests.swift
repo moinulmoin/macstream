@@ -107,6 +107,72 @@ func videoCanvasCompositorRendersBiPlanarCameraSource() throws {
     #expect(cameraPixel.b > 150)
 }
 
+@Test
+func videoCanvasCompositorUsesPresenterMatteWhenAvailable() throws {
+    let output = try makeSolidPixelBuffer(width: 160, height: 90, bgra: (0, 0, 0, 255))
+    let screen = try makeSolidPixelBuffer(width: 160, height: 90, bgra: (0, 0, 255, 255))
+    let camera = try makeSolidPixelBuffer(width: 160, height: 90, bgra: (0, 255, 0, 255))
+    let transparentMatte = try makeSolidMattePixelBuffer(width: 160, height: 90, value: 0)
+    let settings = StudioLayoutSettings(
+        canvasPadding: 0,
+        sourceGap: 0,
+        sourceCornerRadius: 0,
+        presenterComposition: StudioPresenterCompositionSettings(
+            mode: .presenterOverlay,
+            placement: .manual,
+            manualPosition: StudioNormalizedPoint(x: 0.5, y: 0.5),
+            scale: 0.5
+        )
+    )
+    let compositor = VideoCanvasCompositor(
+        outputWidth: 160,
+        outputHeight: 90,
+        cameraEnhancements: CameraEnhancementSettings(mirrorsPreview: false),
+        layoutSettings: settings,
+        sceneKind: .screenAndFace
+    )
+
+    compositor.render(
+        screenPixelBuffer: screen,
+        cameraPixelBuffer: camera,
+        cameraMattePixelBuffer: transparentMatte,
+        to: output
+    )
+
+    #expect(pixel(in: output, x: 80, y: 45) == Pixel(b: 0, g: 0, r: 255, a: 255))
+    #expect(pixel(in: output, x: 8, y: 8) == Pixel(b: 0, g: 0, r: 255, a: 255))
+}
+
+@Test
+func videoCanvasCompositorFallsBackToFramedPresenterWithoutFreshMatte() throws {
+    let output = try makeSolidPixelBuffer(width: 160, height: 90, bgra: (0, 0, 0, 255))
+    let screen = try makeSolidPixelBuffer(width: 160, height: 90, bgra: (0, 0, 255, 255))
+    let camera = try makeSolidPixelBuffer(width: 160, height: 90, bgra: (0, 255, 0, 255))
+    let settings = StudioLayoutSettings(
+        canvasPadding: 0,
+        sourceGap: 0,
+        sourceCornerRadius: 0,
+        presenterComposition: StudioPresenterCompositionSettings(
+            mode: .presenterOverlay,
+            placement: .manual,
+            manualPosition: StudioNormalizedPoint(x: 0.5, y: 0.5),
+            scale: 0.5
+        )
+    )
+    let compositor = VideoCanvasCompositor(
+        outputWidth: 160,
+        outputHeight: 90,
+        cameraEnhancements: CameraEnhancementSettings(mirrorsPreview: false),
+        layoutSettings: settings,
+        sceneKind: .screenAndFace
+    )
+
+    compositor.render(screenPixelBuffer: screen, cameraPixelBuffer: camera, to: output)
+
+    #expect(pixel(in: output, x: 80, y: 45) == Pixel(b: 0, g: 255, r: 0, a: 255))
+    #expect(pixel(in: output, x: 8, y: 8) == Pixel(b: 0, g: 0, r: 255, a: 255))
+}
+
 private struct Pixel: Equatable {
     var b: UInt8
     var g: UInt8
@@ -193,6 +259,32 @@ private func makeBiPlanarPixelBuffer(
             Int32(chroma),
             CVPixelBufferGetWidthOfPlane(pixelBuffer, 1) * 2
         )
+    }
+    return pixelBuffer
+}
+
+private func makeSolidMattePixelBuffer(width: Int, height: Int, value: UInt8) throws -> CVPixelBuffer {
+    var pixelBuffer: CVPixelBuffer?
+    guard CVPixelBufferCreate(
+        kCFAllocatorDefault,
+        width,
+        height,
+        kCVPixelFormatType_OneComponent8,
+        [kCVPixelBufferIOSurfacePropertiesKey as String: [:]] as CFDictionary,
+        &pixelBuffer
+    ) == kCVReturnSuccess,
+          let pixelBuffer
+    else {
+        throw PixelBufferTestError.creationFailed
+    }
+
+    CVPixelBufferLockBaseAddress(pixelBuffer, [])
+    defer { CVPixelBufferUnlockBaseAddress(pixelBuffer, []) }
+    guard let baseAddress = CVPixelBufferGetBaseAddress(pixelBuffer) else {
+        throw PixelBufferTestError.missingBaseAddress
+    }
+    for y in 0..<height {
+        memset(baseAddress.advanced(by: y * CVPixelBufferGetBytesPerRow(pixelBuffer)), Int32(value), width)
     }
     return pixelBuffer
 }

@@ -848,6 +848,144 @@ public enum StudioCanvasBackground: Codable, Equatable, Sendable {
     }
 }
 
+public enum StudioPresenterCompositionMode: String, CaseIterable, Codable, Identifiable, Sendable {
+    case preserveLayout
+    case presenterOverlay
+
+    public var id: String { rawValue }
+
+    public var title: String {
+        switch self {
+        case .preserveLayout: "Framed"
+        case .presenterOverlay: "Cutout"
+        }
+    }
+
+    public init(from decoder: any Decoder) throws {
+        let container = try decoder.singleValueContainer()
+        let rawValue = try container.decode(String.self)
+        self = Self(rawValue: rawValue) ?? .preserveLayout
+    }
+
+    public func encode(to encoder: any Encoder) throws {
+        var container = encoder.singleValueContainer()
+        try container.encode(rawValue)
+    }
+}
+
+public enum StudioPresenterPlacement: String, CaseIterable, Codable, Identifiable, Sendable {
+    case left
+    case right
+    case top
+    case bottom
+    case manual
+
+    public var id: String { rawValue }
+
+    public var title: String {
+        switch self {
+        case .left: "Left"
+        case .right: "Right"
+        case .top: "Top"
+        case .bottom: "Bottom"
+        case .manual: "Manual"
+        }
+    }
+
+    public init(from decoder: any Decoder) throws {
+        let container = try decoder.singleValueContainer()
+        let rawValue = try container.decode(String.self)
+        self = Self(rawValue: rawValue) ?? .right
+    }
+
+    public func encode(to encoder: any Encoder) throws {
+        var container = encoder.singleValueContainer()
+        try container.encode(rawValue)
+    }
+}
+
+public struct StudioNormalizedPoint: Codable, Equatable, Sendable {
+    public var x: Double {
+        didSet {
+            x = StudioLayoutSettings.normalizedUnitValue(x)
+        }
+    }
+    public var y: Double {
+        didSet {
+            y = StudioLayoutSettings.normalizedUnitValue(y)
+        }
+    }
+
+    public init(x: Double = 0.5, y: Double = 0.5) {
+        self.x = StudioLayoutSettings.normalizedUnitValue(x)
+        self.y = StudioLayoutSettings.normalizedUnitValue(y)
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case x
+        case y
+    }
+
+    public init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(
+            x: try container.decodeIfPresent(Double.self, forKey: .x) ?? 0.5,
+            y: try container.decodeIfPresent(Double.self, forKey: .y) ?? 0.5
+        )
+    }
+}
+
+public struct StudioPresenterCompositionSettings: Codable, Equatable, Sendable {
+    public static let minimumScale = 0.12
+    public static let maximumScale = 0.50
+    public static let defaultScale = 0.28
+
+    public var mode: StudioPresenterCompositionMode
+    public var placement: StudioPresenterPlacement
+    public var manualPosition: StudioNormalizedPoint
+    public var scale: Double {
+        didSet {
+            scale = Self.normalizedScale(scale)
+        }
+    }
+
+    public init(
+        mode: StudioPresenterCompositionMode = .preserveLayout,
+        placement: StudioPresenterPlacement = .right,
+        manualPosition: StudioNormalizedPoint = StudioNormalizedPoint(x: 0.82, y: 0.24),
+        scale: Double = Self.defaultScale
+    ) {
+        self.mode = mode
+        self.placement = placement
+        self.manualPosition = manualPosition
+        self.scale = Self.normalizedScale(scale)
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case mode
+        case placement
+        case manualPosition
+        case scale
+    }
+
+    public init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(
+            mode: try container.decodeIfPresent(StudioPresenterCompositionMode.self, forKey: .mode) ?? .preserveLayout,
+            placement: try container.decodeIfPresent(StudioPresenterPlacement.self, forKey: .placement) ?? .right,
+            manualPosition: try container.decodeIfPresent(StudioNormalizedPoint.self, forKey: .manualPosition)
+                ?? StudioNormalizedPoint(x: 0.82, y: 0.24),
+            scale: try container.decodeIfPresent(Double.self, forKey: .scale) ?? Self.defaultScale
+        )
+    }
+
+    public static func normalizedScale(_ scale: Double) -> Double {
+        let finiteScale = scale.isFinite ? scale : defaultScale
+        let clamped = min(max(finiteScale, minimumScale), maximumScale)
+        return (clamped * 100).rounded() / 100
+    }
+}
+
 public struct StudioLayoutSettings: Codable, Equatable, Sendable {
     public static let minimumSourceZoom = 0.75
     public static let maximumSourceZoom = 2.0
@@ -880,6 +1018,7 @@ public struct StudioLayoutSettings: Codable, Equatable, Sendable {
             sourceCornerRadius = Self.normalizedSourceCornerRadius(sourceCornerRadius)
         }
     }
+    public var presenterComposition: StudioPresenterCompositionSettings
 
     public var backgroundStyle: StudioBackgroundStyle {
         get {
@@ -915,6 +1054,7 @@ public struct StudioLayoutSettings: Codable, Equatable, Sendable {
         case webcamViewport
         case sourceGap
         case sourceCornerRadius
+        case presenterComposition
     }
 
     public init(
@@ -924,7 +1064,8 @@ public struct StudioLayoutSettings: Codable, Equatable, Sendable {
         screenZoom: Double = 1,
         webcamZoom: Double = 1,
         sourceGap: Double? = nil,
-        sourceCornerRadius: Double = 0.018
+        sourceCornerRadius: Double = 0.018,
+        presenterComposition: StudioPresenterCompositionSettings = StudioPresenterCompositionSettings()
     ) {
         self.init(
             preset: preset,
@@ -933,7 +1074,8 @@ public struct StudioLayoutSettings: Codable, Equatable, Sendable {
             screenViewport: StudioSourceViewportSettings(zoom: screenZoom),
             webcamViewport: StudioSourceViewportSettings(zoom: webcamZoom),
             sourceGap: sourceGap,
-            sourceCornerRadius: sourceCornerRadius
+            sourceCornerRadius: sourceCornerRadius,
+            presenterComposition: presenterComposition
         )
     }
 
@@ -944,7 +1086,8 @@ public struct StudioLayoutSettings: Codable, Equatable, Sendable {
         screenViewport: StudioSourceViewportSettings = StudioSourceViewportSettings(),
         webcamViewport: StudioSourceViewportSettings = StudioSourceViewportSettings(),
         sourceGap: Double? = nil,
-        sourceCornerRadius: Double = 0.018
+        sourceCornerRadius: Double = 0.018,
+        presenterComposition: StudioPresenterCompositionSettings = StudioPresenterCompositionSettings()
     ) {
         self.preset = preset
         self.canvasPadding = Self.normalizedCanvasPadding(canvasPadding)
@@ -961,6 +1104,7 @@ public struct StudioLayoutSettings: Codable, Equatable, Sendable {
         )
         self.sourceGap = Self.normalizedSourceGap(sourceGap ?? Self.defaultSourceGap(canvasPadding: self.canvasPadding))
         self.sourceCornerRadius = Self.normalizedSourceCornerRadius(sourceCornerRadius)
+        self.presenterComposition = presenterComposition
     }
 
     public init(from decoder: any Decoder) throws {
@@ -988,7 +1132,11 @@ public struct StudioLayoutSettings: Codable, Equatable, Sendable {
             webcamViewport: webcamViewport,
             sourceGap: try container.decodeIfPresent(Double.self, forKey: .sourceGap) ?? Self.defaultSourceGap(canvasPadding: canvasPadding),
             sourceCornerRadius: try container.decodeIfPresent(Double.self, forKey: .sourceCornerRadius)
-                ?? Self.defaultSourceCornerRadius
+                ?? Self.defaultSourceCornerRadius,
+            presenterComposition: try container.decodeIfPresent(
+                StudioPresenterCompositionSettings.self,
+                forKey: .presenterComposition
+            ) ?? StudioPresenterCompositionSettings()
         )
     }
 
@@ -1001,6 +1149,7 @@ public struct StudioLayoutSettings: Codable, Equatable, Sendable {
         try container.encode(webcamViewport, forKey: .webcamViewport)
         try container.encode(sourceGap, forKey: .sourceGap)
         try container.encode(sourceCornerRadius, forKey: .sourceCornerRadius)
+        try container.encode(presenterComposition, forKey: .presenterComposition)
     }
 
     public static func normalizedSourceZoom(_ zoom: Double) -> Double {
@@ -1031,6 +1180,10 @@ public struct StudioLayoutSettings: Codable, Equatable, Sendable {
 
     public static func normalizedColorComponent(_ component: Double) -> Double {
         quantizedClamp(component, minimum: 0, maximum: 1, fallback: 1, scale: 1_000)
+    }
+
+    public static func normalizedUnitValue(_ value: Double) -> Double {
+        quantizedClamp(value, minimum: 0, maximum: 1, fallback: 0.5, scale: 1_000)
     }
 
     public static func defaultSourceGap(canvasPadding: Double) -> Double {
@@ -1116,8 +1269,94 @@ public struct StudioCanvasLayout: Equatable, Sendable {
         )
     }
 
+    public var presenterComposition: StudioPresenterCompositionGeometry {
+        if settings.presenterComposition.mode == .preserveLayout {
+            if settings.preset.isSplit {
+                return StudioPresenterCompositionGeometry(
+                    screenRect: splitScreenRect,
+                    presenterRect: splitWebcamRect
+                )
+            }
+            return StudioPresenterCompositionGeometry(
+                screenRect: contentRect,
+                presenterRect: pictureInPictureRect
+            )
+        }
+
+        return StudioPresenterCompositionGeometry(
+            screenRect: contentRect,
+            presenterRect: presenterOverlayRect
+        )
+    }
+
+    public var presenterOverlayRect: CGRect {
+        let presenterSettings = settings.presenterComposition
+        let margin = max(12, min(contentRect.width, contentRect.height) * 0.024)
+        let presenterWidth = min(
+            max(1, contentRect.width - (margin * 2)),
+            max(1, contentRect.width * presenterSettings.scale)
+        )
+        let presenterHeight = min(
+            max(1, contentRect.height - (margin * 2)),
+            max(1, presenterWidth * 9 / 16)
+        )
+        let origin = presenterOverlayOrigin(
+            size: CGSize(width: presenterWidth, height: presenterHeight),
+            margin: margin
+        )
+
+        return CGRect(
+            x: origin.x,
+            y: origin.y,
+            width: presenterWidth,
+            height: presenterHeight
+        )
+    }
+
+    private func presenterOverlayOrigin(size: CGSize, margin: CGFloat) -> CGPoint {
+        let clampedMinX = contentRect.minX + margin
+        let clampedMaxX = contentRect.maxX - margin - size.width
+        let clampedMinY = contentRect.minY + margin
+        let clampedMaxY = contentRect.maxY - margin - size.height
+        let safeMinX = min(clampedMinX, clampedMaxX)
+        let safeMaxX = max(clampedMinX, clampedMaxX)
+        let safeMinY = min(clampedMinY, clampedMaxY)
+        let safeMaxY = max(clampedMinY, clampedMaxY)
+        let centeredX = min(max(contentRect.midX - (size.width / 2), safeMinX), safeMaxX)
+        let centeredY = min(max(contentRect.midY - (size.height / 2), safeMinY), safeMaxY)
+
+        switch settings.presenterComposition.placement {
+        case .left:
+            return CGPoint(x: safeMinX, y: centeredY)
+        case .right:
+            return CGPoint(x: safeMaxX, y: centeredY)
+        case .top:
+            return CGPoint(x: centeredX, y: safeMaxY)
+        case .bottom:
+            return CGPoint(x: centeredX, y: safeMinY)
+        case .manual:
+            let position = settings.presenterComposition.manualPosition
+            let x = contentRect.minX + (contentRect.width * position.x) - (size.width / 2)
+            let y = contentRect.minY + (contentRect.height * position.y) - (size.height / 2)
+            return CGPoint(
+                x: min(max(x, safeMinX), safeMaxX),
+                y: min(max(y, safeMinY), safeMaxY)
+            )
+        }
+    }
+
     private static func safeDimension(_ dimension: CGFloat) -> CGFloat {
         dimension.isFinite ? max(1, dimension) : 1
+    }
+}
+
+public struct StudioPresenterCompositionGeometry: Equatable, Sendable {
+    public var screenRect: CGRect
+    public var presenterRect: CGRect
+
+    public init(screenRect: CGRect, presenterRect: CGRect) {
+        self.screenRect = screenRect
+        self.presenterRect = presenterRect
     }
 }
 

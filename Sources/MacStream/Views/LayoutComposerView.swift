@@ -27,26 +27,17 @@ struct LayoutComposerView: View {
             }
 
             VStack(alignment: .leading, spacing: 12) {
-                VStack(alignment: .leading, spacing: 8) {
-                    StudioGroupLabel(title: "Preset", systemImage: "rectangle.3.group")
+                presenterCompositionControls
 
-                    LazyVGrid(columns: presetColumns, alignment: .leading, spacing: 8) {
-                        ForEach(StudioLayoutPreset.allCases) { preset in
-                            LayoutPresetButton(
-                                preset: preset,
-                                isSelected: store.preferences.layoutSettings.preset == preset
-                            ) {
-                                updateLayout { $0.preset = preset }
-                            }
-                        }
-                    }
+                if !isPresenterOverlayMode {
+                    presetControls
                 }
 
                 backgroundControls
 
                 StudioBadge(
                     title: layoutSummaryTitle,
-                    systemImage: store.preferences.layoutSettings.preset.symbolName,
+                    systemImage: layoutSummarySymbol,
                     tint: .secondary
                 )
 
@@ -54,7 +45,10 @@ struct LayoutComposerView: View {
 
                 DisclosureGroup(isExpanded: $isSourceFramingExpanded) {
                     VStack(alignment: .leading, spacing: 10) {
-                        sourceGapControl
+                        if !isPresenterOverlayMode,
+                           store.preferences.layoutSettings.preset.isSplit {
+                            sourceGapControl
+                        }
                         sourceCornerRadiusControl
 
                         SourceViewportControls(
@@ -102,8 +96,34 @@ struct LayoutComposerView: View {
         ]
     }
 
+    private var presetControls: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            StudioGroupLabel(title: "Preset", systemImage: "rectangle.3.group")
+
+            LazyVGrid(columns: presetColumns, alignment: .leading, spacing: 8) {
+                ForEach(StudioLayoutPreset.allCases) { preset in
+                    LayoutPresetButton(
+                        preset: preset,
+                        isSelected: store.preferences.layoutSettings.preset == preset
+                    ) {
+                        updateLayout { $0.preset = preset }
+                    }
+                }
+            }
+        }
+    }
+
     private var layoutSummaryTitle: String {
-        "\(store.preferences.layoutSettings.preset.shortTitle) · \(backgroundSummaryTitle)"
+        if isPresenterOverlayMode {
+            return "Cutout · \(store.preferences.layoutSettings.presenterComposition.placement.title) · \(backgroundSummaryTitle)"
+        }
+        return "\(store.preferences.layoutSettings.preset.shortTitle) · \(backgroundSummaryTitle)"
+    }
+
+    private var layoutSummarySymbol: String {
+        isPresenterOverlayMode
+            ? "person.crop.rectangle"
+            : store.preferences.layoutSettings.preset.symbolName
     }
 
     private var backgroundSummaryTitle: String {
@@ -192,6 +212,64 @@ struct LayoutComposerView: View {
         )
     }
 
+    private var presenterCompositionControls: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            StudioGroupLabel(title: "Composition", systemImage: "person.crop.rectangle")
+
+            Picker("Mode", selection: presenterModeBinding) {
+                ForEach(StudioPresenterCompositionMode.allCases) { mode in
+                    Text(mode.title).tag(mode)
+                }
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            .accessibilityLabel(Text("Presenter composition mode"))
+
+            if isPresenterOverlayMode {
+                Picker("Placement", selection: presenterPlacementBinding) {
+                    ForEach(StudioPresenterPlacement.allCases) { placement in
+                        Text(placement.title).tag(placement)
+                    }
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+                .accessibilityLabel(Text("Presenter placement"))
+
+                SettingSliderRow(
+                    title: "Scale",
+                    systemImage: "arrow.up.left.and.arrow.down.right",
+                    value: presenterScaleBinding,
+                    range: StudioPresenterCompositionSettings.minimumScale...StudioPresenterCompositionSettings.maximumScale,
+                    step: 0.01,
+                    valueTitle: { percentTitle($0) },
+                    accessibilityLabel: "Presenter scale"
+                )
+
+                if store.preferences.layoutSettings.presenterComposition.placement == .manual {
+                    SettingSliderRow(
+                        title: "Horizontal",
+                        systemImage: "arrow.left.and.right",
+                        value: presenterManualXBinding,
+                        range: 0...1,
+                        step: 0.01,
+                        valueTitle: { percentTitle($0) },
+                        accessibilityLabel: "Manual presenter horizontal position"
+                    )
+
+                    SettingSliderRow(
+                        title: "Vertical",
+                        systemImage: "arrow.up.and.down",
+                        value: presenterManualYBinding,
+                        range: 0...1,
+                        step: 0.01,
+                        valueTitle: { percentTitle($0) },
+                        accessibilityLabel: "Manual presenter vertical position"
+                    )
+                }
+            }
+        }
+    }
+
     private var sourceGapControl: some View {
         SettingSliderRow(
             title: "Gap",
@@ -268,6 +346,55 @@ struct LayoutComposerView: View {
                 updateLayout { $0.sourceCornerRadius = newRadius }
             }
         )
+    }
+
+    private var presenterModeBinding: Binding<StudioPresenterCompositionMode> {
+        Binding(
+            get: { store.preferences.layoutSettings.presenterComposition.mode },
+            set: { newMode in
+                updateLayout { $0.presenterComposition.mode = newMode }
+            }
+        )
+    }
+
+    private var presenterPlacementBinding: Binding<StudioPresenterPlacement> {
+        Binding(
+            get: { store.preferences.layoutSettings.presenterComposition.placement },
+            set: { newPlacement in
+                updateLayout { $0.presenterComposition.placement = newPlacement }
+            }
+        )
+    }
+
+    private var presenterScaleBinding: Binding<Double> {
+        Binding(
+            get: { store.preferences.layoutSettings.presenterComposition.scale },
+            set: { newScale in
+                updateLayout { $0.presenterComposition.scale = newScale }
+            }
+        )
+    }
+
+    private var presenterManualXBinding: Binding<Double> {
+        Binding(
+            get: { store.preferences.layoutSettings.presenterComposition.manualPosition.x },
+            set: { newX in
+                updateLayout { $0.presenterComposition.manualPosition.x = newX }
+            }
+        )
+    }
+
+    private var presenterManualYBinding: Binding<Double> {
+        Binding(
+            get: { store.preferences.layoutSettings.presenterComposition.manualPosition.y },
+            set: { newY in
+                updateLayout { $0.presenterComposition.manualPosition.y = newY }
+            }
+        )
+    }
+
+    private var isPresenterOverlayMode: Bool {
+        store.preferences.layoutSettings.presenterComposition.mode == .presenterOverlay
     }
 
     private var webcamZoomBinding: Binding<Double> {

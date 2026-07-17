@@ -176,54 +176,56 @@ struct PreviewCanvasView: View {
     }
 
     private func screenAndWebcamLayout(in layout: StudioCanvasLayout) -> some View {
-        Group {
-            if layoutSettings.preset.isSplit {
-                splitScreenAndWebcamLayout(in: layout)
-            } else {
-                pictureInPictureLayout(in: layout)
-            }
-        }
-    }
-
-    private func splitScreenAndWebcamLayout(in layout: StudioCanvasLayout) -> some View {
-        ZStack {
-            sourceFrame(cornerRadius: layout.sourceCornerRadius) {
-                zoomedScreenFill
-            }
-            .frame(width: layout.splitScreenRect.width, height: layout.splitScreenRect.height)
-            .position(x: layout.splitScreenRect.midX, y: layout.splitScreenRect.midY)
-
-            sourceFrame(cornerRadius: layout.sourceCornerRadius) {
-                zoomedCameraFill
-            }
-            .frame(width: layout.splitWebcamRect.width, height: layout.splitWebcamRect.height)
-            .position(x: layout.splitWebcamRect.midX, y: layout.splitWebcamRect.midY)
-        }
-    }
-
-    private func pictureInPictureLayout(in layout: StudioCanvasLayout) -> some View {
-        let pipRect = layout.pictureInPictureRect
+        let geometry = layout.presenterComposition
+        let screenPosition = swiftUIPosition(for: geometry.screenRect, in: layout)
+        let presenterPosition = swiftUIPosition(for: geometry.presenterRect, in: layout)
 
         return ZStack {
             sourceFrame(cornerRadius: layout.sourceCornerRadius) {
                 zoomedScreenFill
             }
-            .frame(width: layout.contentRect.width, height: layout.contentRect.height)
-            .position(x: layout.contentRect.midX, y: layout.contentRect.midY)
+            .frame(width: geometry.screenRect.width, height: geometry.screenRect.height)
+            .position(x: screenPosition.x, y: screenPosition.y)
 
-            sourceFrame(cornerRadius: layout.sourceCornerRadius) {
-                sourceViewport(layoutSettings.webcamViewport) {
-                    pictureInPictureCamera
-                }
+            presenterPreviewFrame(in: geometry.presenterRect, layout: layout)
+                .position(x: presenterPosition.x, y: presenterPosition.y)
+        }
+    }
+
+    private func presenterPreviewFrame(in rect: CGRect, layout: StudioCanvasLayout) -> some View {
+        let isFloating = !layoutSettings.preset.isSplit
+            || layoutSettings.presenterComposition.mode == .presenterOverlay
+        let cornerRadius = presenterCornerRadius(for: rect, layout: layout)
+
+        return sourceFrame(cornerRadius: cornerRadius) {
+            sourceViewport(layoutSettings.webcamViewport) {
+                pictureInPictureCamera
             }
-            .frame(width: pipRect.width, height: pipRect.height)
-            .overlay {
-                RoundedRectangle(cornerRadius: layout.sourceCornerRadius, style: .continuous)
+        }
+        .frame(width: rect.width, height: rect.height)
+        .overlay {
+            if isFloating {
+                RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
                     .stroke(.white.opacity(0.24), lineWidth: 1)
             }
-            .shadow(color: .black.opacity(0.35), radius: 18, y: 8)
-            .position(x: pipRect.midX, y: layout.outputRect.height - pipRect.midY)
         }
+        .shadow(
+            color: isFloating ? .black.opacity(0.35) : .clear,
+            radius: isFloating ? 18 : 0,
+            y: isFloating ? 8 : 0
+        )
+    }
+
+    private func presenterCornerRadius(for rect: CGRect, layout: StudioCanvasLayout) -> CGFloat {
+        guard layoutSettings.presenterComposition.mode == .presenterOverlay else {
+            return layout.sourceCornerRadius
+        }
+
+        return max(layout.sourceCornerRadius, min(rect.width, rect.height) * 0.08)
+    }
+
+    private func swiftUIPosition(for rect: CGRect, in layout: StudioCanvasLayout) -> CGPoint {
+        CGPoint(x: rect.midX, y: layout.outputRect.height - rect.midY)
     }
 
     private func sourceViewport<Content: View>(

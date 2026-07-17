@@ -8,6 +8,7 @@ struct VideoCanvasRenderPlan: Equatable, Sendable {
         case screenOnly
         case pictureInPicture
         case split
+        case presenterOverlay
     }
 
     enum BackgroundDescriptor: Equatable, Sendable {
@@ -38,6 +39,18 @@ struct VideoCanvasRenderPlan: Equatable, Sendable {
                 mode: .screenOnly,
                 screenRect: canvasLayout.contentRect.integral,
                 cameraRect: .zero,
+                screenViewport: layoutSettings.screenViewport,
+                cameraViewport: layoutSettings.webcamViewport,
+                sourceCornerRadius: canvasLayout.sourceCornerRadius,
+                backgroundDescriptor: backgroundDescriptor(for: layoutSettings.background)
+            )
+        }
+        if layoutSettings.presenterComposition.mode == .presenterOverlay {
+            let geometry = canvasLayout.presenterComposition
+            return VideoCanvasRenderPlan(
+                mode: .presenterOverlay,
+                screenRect: geometry.screenRect.integral,
+                cameraRect: geometry.presenterRect.integral,
                 screenViewport: layoutSettings.screenViewport,
                 cameraViewport: layoutSettings.webcamViewport,
                 sourceCornerRadius: canvasLayout.sourceCornerRadius,
@@ -203,10 +216,12 @@ final class VideoCanvasCompositor {
     func render(
         screenPixelBuffer: CVPixelBuffer,
         cameraPixelBuffer: CVPixelBuffer?,
+        cameraMattePixelBuffer: CVPixelBuffer? = nil,
         to outputPixelBuffer: CVPixelBuffer
     ) {
         let screenImage = normalized(CIImage(cvPixelBuffer: screenPixelBuffer))
         let cameraImage = cameraPixelBuffer.map { enhancedCameraImage(from: $0) }
+        let cameraMatteImage = cameraMattePixelBuffer.map { orientedCameraImage(CIImage(cvPixelBuffer: $0)) }
         let plan = renderPlan
         var composed = background
 
@@ -218,13 +233,24 @@ final class VideoCanvasCompositor {
         )
             .composited(over: composed)
         if plan.mode != .screenOnly {
-            composed = renderCamera(
-                cameraImage,
-                in: plan.cameraRect,
-                viewport: plan.cameraViewport,
-                mask: cameraSourceMask
-            )
-                .composited(over: composed)
+            let cameraLayer = if plan.mode == .presenterOverlay,
+                                 let cameraImage,
+                                 let cameraMatteImage {
+                renderPresenter(
+                    cameraImage,
+                    matteImage: cameraMatteImage,
+                    in: plan.cameraRect,
+                    viewport: plan.cameraViewport
+                )
+            } else {
+                renderCamera(
+                    cameraImage,
+                    in: plan.cameraRect,
+                    viewport: plan.cameraViewport,
+                    mask: cameraSourceMask
+                )
+            }
+            composed = cameraLayer.composited(over: composed)
         }
 
         context.render(
@@ -265,6 +291,47 @@ final class VideoCanvasCompositor {
         return renderSource(cameraImage, in: targetRect, viewport: viewport, mask: mask)
     }
 
+    private func renderPresenter(
+        _ cameraImage: CIImage,
+        matteImage: CIImage,
+        in targetRect: CGRect,
+        viewport: StudioSourceViewportSettings
+    ) -> CIImage {
+        let targetRect = targetRect.integral
+        guard !targetRect.isEmpty,
+              !cameraImage.extent.isEmpty,
+              !matteImage.extent.isEmpty
+        else {
+            return CIImage.empty()
+        }
+
+        let transform = VideoCanvasRenderPlan.sourceTransform(
+            sourceExtent: cameraImage.extent,
+            targetRect: targetRect,
+            viewport: viewport
+        )
+        let renderedCamera = cameraImage
+            .transformed(by: transform)
+            .cropped(to: targetRect)
+        let cameraAlignedMatte = matteImage.transformed(by: CGAffineTransform(
+            scaleX: cameraImage.extent.width / matteImage.extent.width,
+            y: cameraImage.extent.height / matteImage.extent.height
+        ))
+        let renderedMatte = normalized(cameraAlignedMatte)
+            .transformed(by: transform)
+            .cropped(to: targetRect)
+
+        return renderedCamera
+            .applyingFilter(
+                "CIBlendWithMask",
+                parameters: [
+                    kCIInputBackgroundImageKey: CIImage.empty(),
+                    kCIInputMaskImageKey: renderedMatte
+                ]
+            )
+            .cropped(to: targetRect)
+    }
+
     private func renderSource(
         _ image: CIImage,
         in targetRect: CGRect,
@@ -299,17 +366,7 @@ final class VideoCanvasCompositor {
     }
 
     private func enhancedCameraImage(from pixelBuffer: CVPixelBuffer) -> CIImage {
-        var image = normalized(CIImage(cvPixelBuffer: pixelBuffer))
-
-        if cameraEnhancements.mirrorsPreview {
-            image = image.transformed(by: CGAffineTransform(scaleX: -1, y: 1))
-            image = normalized(image)
-        }
-
-        if cameraEnhancements.rotation != .degrees0 {
-            image = image.transformed(by: CGAffineTransform(rotationAngle: cameraEnhancements.rotation.radians))
-            image = normalized(image)
-        }
+        let image = orientedCameraImage(CIImage(cvPixelBuffer: pixelBuffer))
 
         guard cameraEnhancements.usesAutoLight,
               let filter = colorControlsFilter
@@ -324,6 +381,22 @@ final class VideoCanvasCompositor {
         let outputImage = filter.outputImage.map(normalized) ?? image
         filter.setValue(nil, forKey: kCIInputImageKey)
         return outputImage
+    }
+
+    private func orientedCameraImage(_ source: CIImage) -> CIImage {
+        var image = normalized(source)
+
+        if cameraEnhancements.mirrorsPreview {
+            image = image.transformed(by: CGAffineTransform(scaleX: -1, y: 1))
+            image = normalized(image)
+        }
+
+        if cameraEnhancements.rotation != .degrees0 {
+            image = image.transformed(by: CGAffineTransform(rotationAngle: cameraEnhancements.rotation.radians))
+            image = normalized(image)
+        }
+
+        return image
     }
 
     private static func backgroundImage(

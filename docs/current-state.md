@@ -4,10 +4,9 @@ MacStream is a personal-use macOS 26 prototype focused on Apple Silicon
 streaming performance and reliability.
 
 The current public release is
-[v0.5.0](https://github.com/moinulmoin/macstream/releases/tag/v0.5.0). The
-[v0.6.0 release candidate](releases/v0.6.0.md) is implemented and passing its
-local validation matrix; it becomes current only after signed publication and
-public artifact verification succeed. See the [changelog](../CHANGELOG.md) for
+[v0.6.0](https://github.com/moinulmoin/macstream/releases/tag/v0.6.0). Its
+[release notes](releases/v0.6.0.md), signed and notarized artifacts, checksums,
+and Sparkle appcast are published. See the [changelog](../CHANGELOG.md) for
 release history.
 
 ## Implemented
@@ -74,7 +73,7 @@ Scope can change after each release based on real usage.
   use a framed fallback in the idle setup preview.
 - Fall back cleanly when person segmentation is unavailable or too expensive.
 
-### [v0.6 - Workflow Polish And Measured Performance](v0.6-workflow-performance-goal.md) (release candidate)
+### [v0.6 - Workflow Polish And Measured Performance](v0.6-workflow-performance-goal.md) (shipped)
 
 - Tighten first-run permissions, destination setup, and recovery guidance.
 - Report native camera-effect status and open system-owned controls only where

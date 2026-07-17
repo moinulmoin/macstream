@@ -980,9 +980,15 @@ func stopStreamStopsOnlyAutoStartedRecording() async {
     )
 
     store.startStream()
-    try? await Task.sleep(for: .milliseconds(80))
+    for _ in 0..<200 {
+        guard store.streamState != .live || store.recordingState != .recording else { break }
+        try? await Task.sleep(for: .milliseconds(5))
+    }
     store.stopStream()
-    try? await Task.sleep(for: .milliseconds(80))
+    for _ in 0..<200 {
+        guard store.recordingState != .stopped || !pipeline.didStopRecording else { break }
+        try? await Task.sleep(for: .milliseconds(5))
+    }
 
     #expect(pipeline.didStartRecording)
     #expect(pipeline.didStopRecording)

@@ -2568,7 +2568,14 @@ public final class SystemMediaPipeline: NSObject, MediaPipeline, SCStreamOutput,
                 self.updateAggregateRTMPHealthOnQueue()
             }
         } catch {
-            await publisher.close()
+            let lane = queue.sync {
+                self.rtmpPublisherLanes.first(where: { $0.id == id })
+            }
+            if let lane {
+                await lane.closePublisherOnce(publisher)
+            } else {
+                await publisher.close()
+            }
             queue.sync {
                 self.markRTMPPublisherLaneFailedOnQueue(
                     id: id,

@@ -38,6 +38,14 @@ private func waitUntilRecordingIsStopped(_ store: StudioStore) async {
 }
 
 @MainActor
+private func waitUntilRecordingFails(_ store: StudioStore) async {
+    for _ in 0..<200 {
+        if case .failed = store.recordingState { return }
+        try? await Task.sleep(for: .milliseconds(5))
+    }
+}
+
+@MainActor
 private func waitUntilCaptureScanCompletes(_ store: StudioStore) async {
     for _ in 0..<100 {
         guard !store.hasRunInitialCaptureScan else { return }
@@ -266,7 +274,7 @@ func failedStreamStartStaysRetryableAndEditable() async {
     store.destination.rtmpURL = "rtmps://live.example.com/app/sk_live_recovered"
     pipeline.errorToThrow = nil
     store.startStream()
-    try? await Task.sleep(for: .milliseconds(50))
+    await waitUntilStreamIsLive(store)
 
     #expect(store.streamState == .live)
     #expect(store.isLive)
@@ -848,13 +856,13 @@ func recordingFailureDuringLiveStreamFailsRecordingOnly() async {
     store.directorMode = .auto
 
     store.startStream()
-    try? await Task.sleep(for: .milliseconds(80))
+    await waitUntilStreamIsLive(store)
     store.startRecording()
-    try? await Task.sleep(for: .milliseconds(80))
+    await waitUntilRecordingIsActive(store)
     pipeline.recordingFailureDetail = "Recording failed: disk full while streaming"
 
     store.advanceDirector()
-    try? await Task.sleep(for: .milliseconds(80))
+    await waitUntilRecordingFails(store)
 
     #expect(store.recordingState == .failed("Recording failed: disk full while streaming"))
     #expect(store.streamState.isLive)

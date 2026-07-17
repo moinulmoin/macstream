@@ -148,9 +148,12 @@ func activeRealCaptureAllowsSupportedComposedSceneSwitches() async throws {
     store.destination = StreamDestination(name: "RTMP", rtmpURL: "rtmp://127.0.0.1/live/stream")
     store.selectScene(screenScene)
     store.scanCaptureDevices()
-    try? await Task.sleep(for: .milliseconds(30))
+    await waitForStudioState { store.canStartStream }
+
+    #expect(store.canStartStream)
+
     store.startStream()
-    try? await Task.sleep(for: .milliseconds(50))
+    await waitForStudioState { store.isLive }
 
     #expect(store.isLive)
     #expect(store.canSelectScene(screenAndFaceScene))
@@ -183,12 +186,12 @@ func activeRecordingRejectsUnsupportedSceneSwitches() async throws {
 
     store.selectScene(screenScene)
     store.scanCaptureDevices()
-    try? await Task.sleep(for: .milliseconds(30))
+    await waitForStudioState { store.canStartRecording }
 
     #expect(store.canStartRecording)
 
     store.startRecording()
-    try? await Task.sleep(for: .milliseconds(50))
+    await waitForStudioState { store.recordingState == .recording }
 
     #expect(store.recordingState == .recording)
     #expect(!store.canSelectScene(faceScene))
@@ -901,4 +904,12 @@ func activeStreamStagesOutputChangesButAppliesLayoutImmediately() async throws {
     #expect(store.currentOutputFrameRate == 60)
     #expect(pipeline.lastConfiguration?.maxVideoWidth == 3_840)
     #expect(pipeline.lastConfiguration?.framesPerSecond == 60)
+}
+
+@MainActor
+private func waitForStudioState(_ predicate: @MainActor () -> Bool) async {
+    for _ in 0..<200 {
+        if predicate() { return }
+        try? await Task.sleep(for: .milliseconds(5))
+    }
 }

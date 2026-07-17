@@ -56,6 +56,9 @@ struct SettingsView: View {
             }
             cancelSavedEndpointRestore()
         }
+        .onChange(of: store.selectedDestinationID) { _, _ in
+            cancelSavedEndpointRestore()
+        }
     }
 
     private var generalTab: some View {
@@ -128,19 +131,76 @@ struct SettingsView: View {
                 .pickerStyle(.segmented)
                 .disabled(!store.canEditDestination)
 
+                if store.destinationMode == .rtmp {
+                    destinationList
+                    selectedDestinationEditor
+                } else {
+                    Label(store.destination.safeDisplayDetail, systemImage: StreamDestinationMode.preview.symbolName)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+        }
+        .formStyle(.grouped)
+        .padding(StudioMetrics.lg)
+    }
+
+    private var destinationList: some View {
+        VStack(alignment: .leading, spacing: StudioMetrics.sm) {
+            HStack {
+                Text("Targets")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+
+                Spacer()
+
+                Button {
+                    store.addDestination()
+                } label: {
+                    Label("Add", systemImage: "plus")
+                }
+                .controlSize(.small)
+                .disabled(!store.canAddDestination)
+                .help("Add up to \(StudioStore.maxStreamDestinations) destinations")
+            }
+
+            VStack(spacing: StudioMetrics.xs) {
+                ForEach(store.destinations) { destination in
+                    destinationListRow(destination)
+                }
+            }
+
+            Text(store.destinationSummary)
+                .font(.caption)
+                .foregroundStyle(destinationDetailTint)
+
+            if let validationError = store.destinationValidationError {
+                Text(validationError)
+                    .font(.caption)
+                    .foregroundStyle(StudioPalette.warning)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+    }
+
+    private var selectedDestinationEditor: some View {
+        VStack(alignment: .leading, spacing: StudioMetrics.sm) {
+            Divider()
+
+            if store.selectedDestination != nil {
                 presetPicker
 
-                if store.destination.mode == .rtmp {
-                    TextField("Name", text: $store.destination.name)
-                        .disabled(!store.canEditDestination)
+                TextField("Name", text: destinationName)
+                    .disabled(!store.canEditDestination)
 
-                    TextField("Server URL", text: rtmpServerURL)
-                        .textContentType(.URL)
-                        .disabled(!store.canEditDestination)
+                TextField("Server URL", text: rtmpServerURL)
+                    .textContentType(.URL)
+                    .disabled(!store.canEditDestination)
 
-                    SecureField("Stream key", text: rtmpStreamKey)
-                        .disabled(!store.canEditDestination)
+                SecureField("Stream key", text: rtmpStreamKey)
+                    .disabled(!store.canEditDestination)
 
+                HStack(alignment: .center, spacing: StudioMetrics.sm) {
                     Button {
                         restoreSavedEndpoint()
                     } label: {
@@ -158,31 +218,131 @@ struct SettingsView: View {
                     .controlSize(.small)
                     .disabled(!store.canEditDestination || restoreEndpointTask != nil)
 
-                    if let restoreEndpointMessage {
-                        Text(restoreEndpointMessage)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-
                     Text(store.destination.safeDisplayDetail)
                         .font(.caption)
                         .foregroundStyle(destinationDetailTint)
+                        .lineLimit(1)
+                }
 
-                    if let destinationKeyHint {
-                        Label(destinationKeyHint, systemImage: "info.circle")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
-                } else {
-                    Label(store.destination.safeDisplayDetail, systemImage: StreamDestinationMode.preview.symbolName)
+                if let restoreEndpointMessage {
+                    Text(restoreEndpointMessage)
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
+
+                if let destinationKeyHint {
+                    Label(destinationKeyHint, systemImage: "info.circle")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            } else {
+                Text("Add an RTMP target to edit it.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
         }
-        .formStyle(.grouped)
-        .padding(StudioMetrics.lg)
+    }
+
+    private func destinationListRow(_ destination: StreamDestination) -> some View {
+        let isSelected = store.selectedDestinationID == destination.id || (store.selectedDestinationID == nil && store.destinations.first?.id == destination.id)
+        let status = statusForDestination(destination)
+
+        return HStack(alignment: .center, spacing: StudioMetrics.sm) {
+            Toggle("", isOn: destinationEnabledBinding(destination.id))
+                .labelsHidden()
+                .toggleStyle(.checkbox)
+                .disabled(!store.canEditDestination)
+                .help(destination.isEnabled ? "Disable destination" : "Enable destination")
+
+            Button {
+                store.selectDestination(id: destination.id)
+            } label: {
+                HStack(alignment: .firstTextBaseline, spacing: StudioMetrics.sm) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(destination.name.isEmpty ? "RTMP Destination" : destination.name)
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.primary)
+                            .lineLimit(1)
+
+                        Text(destination.safeDisplayDetail)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                    }
+
+                    Spacer(minLength: StudioMetrics.sm)
+
+                    Label(status.title, systemImage: status.symbolName)
+                        .font(.caption)
+                        .foregroundStyle(status.tint)
+                        .lineLimit(1)
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+
+            Button(role: .destructive) {
+                store.removeDestination(id: destination.id)
+            } label: {
+                Image(systemName: "minus.circle")
+            }
+            .buttonStyle(.borderless)
+            .controlSize(.small)
+            .disabled(!store.canEditDestination)
+            .help("Remove destination")
+        }
+        .padding(.vertical, 4)
+        .padding(.horizontal, 6)
+        .background {
+            RoundedRectangle(cornerRadius: StudioMetrics.controlRadius, style: .continuous)
+                .fill(isSelected ? Color.accentColor.opacity(0.12) : Color.clear)
+        }
+        .overlay {
+            RoundedRectangle(cornerRadius: StudioMetrics.controlRadius, style: .continuous)
+                .strokeBorder(isSelected ? Color.accentColor.opacity(0.35) : Color.primary.opacity(0.08), lineWidth: 1)
+        }
+        .accessibilityElement(children: .combine)
+    }
+
+    private func destinationEnabledBinding(_ id: StreamDestination.ID) -> Binding<Bool> {
+        Binding(
+            get: { store.destinations.first(where: { $0.id == id })?.isEnabled ?? false },
+            set: { store.setDestinationEnabled(id: id, isEnabled: $0) }
+        )
+    }
+
+    private func statusForDestination(_ destination: StreamDestination) -> (title: String, symbolName: String, tint: Color) {
+        guard destination.isEnabled else {
+            return ("Disabled", "circle.slash", .secondary)
+        }
+
+        if let status = store.destinationStatuses.first(where: { $0.id == destination.id }) {
+            return statusPresentation(status)
+        }
+
+        if destination.isReadyToStart {
+            return ("Ready", "checkmark.circle", .secondary)
+        }
+
+        return ("Needs setup", "exclamationmark.triangle", StudioPalette.warning)
+    }
+
+    private func statusPresentation(_ status: StreamDestinationStatus) -> (title: String, symbolName: String, tint: Color) {
+        switch status.state {
+        case .publishing:
+            return ("Live", "checkmark.circle.fill", StudioPalette.success)
+        case .connecting:
+            return ("Connecting", "arrow.triangle.2.circlepath", StudioPalette.warning)
+        case .degraded:
+            return ("Degraded", "exclamationmark.triangle", StudioPalette.warning)
+        case .reconnecting:
+            return ("Degraded", "arrow.triangle.2.circlepath", StudioPalette.warning)
+        case .failed:
+            return ("Failed", "exclamationmark.triangle.fill", StudioPalette.live)
+        case .idle:
+            return ("Idle", "circle", .secondary)
+        }
     }
 
     private var aiSetupTab: some View {
@@ -394,8 +554,19 @@ struct SettingsView: View {
 
     private var destinationMode: Binding<StreamDestinationMode> {
         Binding(
-            get: { store.destination.mode },
+            get: { store.destinationMode },
             set: { store.setDestinationMode($0) }
+        )
+    }
+
+    private var destinationName: Binding<String> {
+        Binding(
+            get: { store.destination.name },
+            set: { newValue in
+                var nextDestination = store.destination
+                nextDestination.name = newValue
+                store.destination = nextDestination
+            }
         )
     }
 
@@ -416,6 +587,10 @@ struct SettingsView: View {
     private func restoreSavedEndpoint() {
         restoreEndpointTask?.cancel()
 
+        guard let destinationID = store.selectedDestination?.id else {
+            restoreEndpointMessage = "Select a destination first"
+            return
+        }
         let requestedMode = store.destination.mode
         let requestedEndpoint = store.destination.rtmpURL
         let requestID = UUID()
@@ -423,10 +598,10 @@ struct SettingsView: View {
         restoreEndpointMessage = "Restoring…"
 
         let loadTask = Task.detached(priority: .userInitiated) {
-            MacStreamDestinationKeychain.loadRTMPURL(allowUserInteraction: true)
+            MacStreamDestinationKeychain.loadRTMPStreamKey(for: destinationID, allowUserInteraction: true)
         }
         restoreEndpointTask = Task { @MainActor in
-            let savedEndpoint = await loadTask.value
+            let savedStreamKey = await loadTask.value
             guard !Task.isCancelled,
                   requestID == restoreEndpointRequestID
             else {
@@ -441,15 +616,13 @@ struct SettingsView: View {
             }
 
             restoreEndpointTask = nil
-            guard let savedEndpoint, !savedEndpoint.isEmpty else {
-                restoreEndpointMessage = "No saved endpoint found"
+            guard let savedStreamKey, !savedStreamKey.isEmpty else {
+                restoreEndpointMessage = "No saved stream key found"
                 return
             }
 
-            let restoredEndpoint = StreamDestination(mode: .rtmp, rtmpURL: savedEndpoint)
-            store.setRTMPServerURL(restoredEndpoint.rtmpServerURL)
-            store.setRTMPStreamKey(restoredEndpoint.rtmpStreamKey)
-            restoreEndpointMessage = "Saved endpoint restored"
+            store.setRTMPStreamKey(savedStreamKey)
+            restoreEndpointMessage = "Saved stream key restored"
         }
     }
 
@@ -461,7 +634,7 @@ struct SettingsView: View {
     }
 
     private var destinationDetailTint: Color {
-        store.destination.isReadyToStart ? .secondary : .orange
+        store.destinationValidationError == nil ? .secondary : .orange
     }
 
     private var setupPromptBinding: Binding<String> {

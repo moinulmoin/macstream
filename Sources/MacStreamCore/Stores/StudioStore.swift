@@ -5,6 +5,7 @@ import Observation
 @Observable
 public final class StudioStore {
     public static let defaultSetupPrompt = "I do coding streams with camera and screen."
+    public static let maxStreamDestinations = 3
 
     public private(set) var scenes: [StudioScene]
     public private(set) var sources: [StudioSource]
@@ -32,19 +33,37 @@ public final class StudioStore {
     public private(set) var clipMarkers: [ClipMarker] = []
     public private(set) var latestClipExportURL: URL?
     public private(set) var latestSessionReportURL: URL?
-    public var destination = StreamDestination() {
-        didSet {
-            guard !isRevertingDestinationChange else { return }
-            guard destination != oldValue else { return }
+    public private(set) var destinationMode: StreamDestinationMode = .preview
+    public private(set) var destinations: [StreamDestination] = []
+    public private(set) var selectedDestinationID: StreamDestination.ID?
+    public private(set) var destinationStatuses: [StreamDestinationStatus] = []
+    private var previewDestination = StreamDestination()
 
-            guard canEditDestination else {
-                isRevertingDestinationChange = true
-                destination = oldValue
-                isRevertingDestinationChange = false
-                return
+    public var destination: StreamDestination {
+        get {
+            guard destinationMode == .rtmp else { return previewDestination }
+            return selectedDestination ?? destinations.first ?? StreamDestination(mode: .rtmp, name: "RTMP Destination", rtmpURL: "")
+        }
+        set {
+            guard canEditDestination else { return }
+            let previousDestination = destination
+            if newValue.isPreviewSession {
+                previewDestination = newValue
+                destinationMode = .preview
+            } else {
+                destinationMode = .rtmp
+                if let index = destinations.firstIndex(where: { $0.id == newValue.id }) {
+                    destinations[index] = newValue
+                } else if let selectedDestinationID,
+                          let index = destinations.firstIndex(where: { $0.id == selectedDestinationID }) {
+                    destinations[index] = newValue
+                } else {
+                    destinations.append(newValue)
+                }
+                selectedDestinationID = newValue.id
             }
-
-            destinationDidChange(from: oldValue)
+            guard destination != previousDestination else { return }
+            destinationDidChange(from: previousDestination)
         }
     }
     public var setupPrompt = StudioStore.defaultSetupPrompt
@@ -106,7 +125,6 @@ public final class StudioStore {
     @ObservationIgnored private var lastAppliedSignalConfiguration: SignalSamplingConfiguration?
     @ObservationIgnored private var lastAppliedMediaConfiguration: MediaPipelineConfiguration?
     @ObservationIgnored private var isSignalProviderActive = false
-    @ObservationIgnored private var isRevertingDestinationChange = false
     @ObservationIgnored private var activeOutputCaptureSettings: OutputCaptureSettings?
     private static let requiredCaptureHealthRecoverySamples = 2
     static let zeroCaptureFPSPressureDelay: Duration = .seconds(2)
@@ -168,6 +186,38 @@ public final class StudioStore {
         scenes.first { $0.id == selectedSceneID } ?? scenes[0]
     }
 
+    public var selectedDestination: StreamDestination? {
+        guard let selectedDestinationID else { return destinations.first }
+        return destinations.first { $0.id == selectedDestinationID } ?? destinations.first
+    }
+
+    public var enabledDestinations: [StreamDestination] {
+        guard destinationMode == .rtmp else { return [previewDestination] }
+        return destinations.filter(\.isEnabled)
+    }
+
+    public var destinationValidationError: String? {
+        guard destinationMode == .rtmp else { return nil }
+        guard !enabledDestinations.isEmpty else {
+            return "Enable at least one RTMP destination."
+        }
+        return enabledDestinations.lazy.compactMap(\.validationError).first
+    }
+
+    public var destinationSummary: String {
+        guard destinationMode == .rtmp else { return previewDestination.safeDisplayDetail }
+        let enabledCount = enabledDestinations.count
+        guard enabledCount > 0 else { return "No destinations enabled" }
+        let readyCount = enabledDestinations.filter(\.isReadyToStart).count
+        return readyCount == enabledCount
+            ? "\(readyCount) destination\(readyCount == 1 ? "" : "s") ready"
+            : "\(readyCount) of \(enabledCount) destinations ready"
+    }
+
+    public var canAddDestination: Bool {
+        canEditDestination && destinations.count < Self.maxStreamDestinations
+    }
+
     public var selectedSceneKind: SceneKind {
         selectedScene.kind
     }
@@ -197,7 +247,7 @@ public final class StudioStore {
             && lifecycleShutdownTask == nil
             && !isRecordingStarting
             && !isRecordingStopping
-            && destination.isReadyToStart
+            && destinationValidationError == nil
             && streamStartBlockedReason == nil
     }
 
@@ -724,7 +774,7 @@ public final class StudioStore {
 
         return switch streamState {
         case .offline:
-            destination.validationError ?? "Ready"
+            destinationValidationError ?? "Ready"
         case .connecting:
             switch streamTransport {
             case .preview:
@@ -784,6 +834,23 @@ public final class StudioStore {
         guard canEditDestination, destination != savedDestination else { return }
 
         destination = savedDestination
+    }
+
+    public func applySavedDestinations(
+        mode: StreamDestinationMode,
+        destinations savedDestinations: [StreamDestination],
+        selectedDestinationID: StreamDestination.ID? = nil
+    ) {
+        guard canEditDestination else { return }
+        destinations = Array(savedDestinations.filter { !$0.isPreviewSession }.prefix(Self.maxStreamDestinations))
+        self.selectedDestinationID = selectedDestinationID.flatMap { requestedID in
+            destinations.contains(where: { $0.id == requestedID }) ? requestedID : nil
+        } ?? destinations.first?.id
+        destinationMode = mode
+        if mode == .rtmp, destinations.isEmpty {
+            addDestination()
+        }
+        streamTransport = Self.streamTransport(for: destination, pipelineTransport: mediaPipeline.streamTransport)
     }
 
     public func applySavedSourceConfiguration(_ savedConfiguration: [StudioSourceConfiguration]) {
@@ -856,8 +923,10 @@ public final class StudioStore {
     public func startStream() {
         guard canStartStream else { return }
         let startID = UUID()
+        let startDestinations = enabledDestinations
         let startDestination = destination
-        let retryPolicy = startDestination.isPreviewSession ? .none : streamStartRetryPolicy
+        let startDestinationDetail = destinationMode == .preview ? startDestination.safeDisplayDetail : destinationSummary
+        let retryPolicy = destinationMode == .preview ? .none : streamStartRetryPolicy
         streamStartTask?.cancel()
         streamStartID = startID
         streamStartAttempt = 1
@@ -873,12 +942,12 @@ public final class StudioStore {
                 ? "Stop preview before generating local setup rules."
                 : "Stop streaming before generating local setup rules."
         )
-        addEvent(kind: .stream, title: "Starting \(streamTransport.title)", detail: startDestination.safeDisplayDetail)
+        addEvent(kind: .stream, title: "Starting \(streamTransport.title)", detail: startDestinationDetail)
 
         streamStartTask = Task {
             do {
                 try await startStreamWithRetry(
-                    destination: startDestination,
+                    destinations: startDestinations,
                     policy: retryPolicy,
                     startID: startID
                 )
@@ -888,9 +957,10 @@ public final class StudioStore {
                 streamStartTask = nil
                 streamStartID = nil
                 streamState = .live
+                refreshDestinationRuntimeState()
                 beginCaptureSession(
                     title: "Session started",
-                    detail: startDestination.safeDisplayDetail
+                    detail: startDestinationDetail
                 )
                 let mediaConfiguration = currentMediaPipelineConfiguration
                 health = mediaPipeline.currentHealth ?? StreamHealth(
@@ -915,6 +985,7 @@ public final class StudioStore {
                 applyPerformanceConfiguration()
                 releaseOutputCaptureSettingsIfIdle()
                 health = StreamHealth()
+                destinationStatuses = mediaPipeline.destinationStatuses
                 resetCaptureHealthPressure()
                 cancelPendingAutoCue()
                 stopDirectorLoop()
@@ -939,12 +1010,12 @@ public final class StudioStore {
         cancelPendingAutoCue()
         stopDirectorLoop()
         let stopTask = Task {
-            await pendingStartTask?.value
             await mediaPipeline.stopStream()
             isStreamStopping = false
             streamState = .offline
             applyPerformanceConfiguration()
             health = StreamHealth()
+            destinationStatuses = []
             resetCaptureHealthPressure()
             syncMediaHealthLoop()
             if shouldStopOwnedRecording {
@@ -1146,24 +1217,47 @@ public final class StudioStore {
     }
 
     public func setDestinationMode(_ mode: StreamDestinationMode) {
-        guard canEditDestination, destination.mode != mode else { return }
-
-        var nextDestination = destination
-        nextDestination.mode = mode
-        switch mode {
-        case .preview:
-            if nextDestination.name.isEmpty || nextDestination.name == "RTMP Destination" {
-                nextDestination.name = "Preview Session"
-            }
-        case .rtmp:
-            if nextDestination.name.isEmpty || nextDestination.name == "Preview Session" {
-                nextDestination.name = "RTMP Destination"
-            }
-            if nextDestination.usesPreviewSentinelURL {
-                nextDestination.rtmpURL = ""
-            }
+        guard canEditDestination, destinationMode != mode else { return }
+        let previousDestination = destination
+        destinationMode = mode
+        if mode == .rtmp, destinations.isEmpty {
+            addDestination()
         }
-        destination = nextDestination
+        destinationDidChange(from: previousDestination)
+    }
+
+    public func addDestination() {
+        guard canAddDestination else { return }
+        let newDestination = StreamDestination(mode: .rtmp, name: "RTMP Destination", rtmpURL: "")
+        destinations.append(newDestination)
+        selectedDestinationID = newDestination.id
+        destinationMode = .rtmp
+    }
+
+    public func selectDestination(id: StreamDestination.ID) {
+        guard destinations.contains(where: { $0.id == id }) else { return }
+        selectedDestinationID = id
+    }
+
+    public func setDestinationEnabled(id: StreamDestination.ID, isEnabled: Bool) {
+        guard canEditDestination,
+              let index = destinations.firstIndex(where: { $0.id == id }),
+              destinations[index].isEnabled != isEnabled
+        else { return }
+        destinations[index].isEnabled = isEnabled
+    }
+
+    public func removeDestination(id: StreamDestination.ID) {
+        guard canEditDestination,
+              let index = destinations.firstIndex(where: { $0.id == id })
+        else { return }
+        destinations.remove(at: index)
+        if selectedDestinationID == id {
+            selectedDestinationID = destinations.first?.id
+        }
+        if destinations.isEmpty {
+            destinationMode = .preview
+        }
     }
 
 
@@ -1419,9 +1513,13 @@ public final class StudioStore {
 
     @discardableResult
     public func exportSessionReport(to directory: URL? = nil) -> URL? {
+        let reportDestinations = destinationMode == .preview ? [destination] : destinations
+        let destinationStatusesByID = Dictionary(uniqueKeysWithValues: destinationStatuses.map { ($0.id, $0) })
         let report = SessionReportPayload(
             exportedAt: Date(),
-            destinationName: destination.name,
+            destinations: reportDestinations.map {
+                SessionDestinationState(destination: $0, status: destinationStatusesByID[$0.id])
+            },
             streamTransport: streamTransport,
             recordingPath: lastRecordingURL?.path,
             sourceStates: sources.map(SessionSourceState.init(source:)),
@@ -1856,6 +1954,7 @@ public final class StudioStore {
 
     private func beginStreamRecovery(after detail: String) {
         let recoveryID = UUID()
+        let recoveryDestinations = enabledDestinations
         let recoveryDestination = destination
         let retryPolicy = streamStartRetryPolicy
         streamRecoveryMetrics.interruptionCount += 1
@@ -1878,7 +1977,7 @@ public final class StudioStore {
 
             do {
                 try await startStreamWithRetry(
-                    destination: recoveryDestination,
+                    destinations: recoveryDestinations,
                     policy: retryPolicy,
                     startID: recoveryID
                 )
@@ -2230,10 +2329,8 @@ public final class StudioStore {
         SetupChecklistItem(
             id: .destination,
             title: "Destination",
-            detail: destination.isReadyToStart
-                ? (destination.isPreviewSession ? "Preview session ready." : destination.safeDisplayDetail)
-                : (destination.validationError ?? "Destination needs attention."),
-            isComplete: destination.isReadyToStart
+            detail: destinationValidationError ?? (destinationMode == .preview ? "Preview session ready." : destinationSummary),
+            isComplete: destinationValidationError == nil
         )
     }
 
@@ -2673,7 +2770,7 @@ public final class StudioStore {
     }
 
     private func startStreamWithRetry(
-        destination: StreamDestination,
+        destinations: [StreamDestination],
         policy: StreamStartRetryPolicy,
         startID: UUID
     ) async throws {
@@ -2685,7 +2782,7 @@ public final class StudioStore {
             streamStartAttempt = attempt
 
             do {
-                try await mediaPipeline.startStream(destination: destination)
+                try await mediaPipeline.startStream(destinations: destinations)
                 return
             } catch {
                 lastError = error
@@ -2711,6 +2808,7 @@ public final class StudioStore {
         if handleRecordingFailureIfNeeded() || handleStreamFailureIfNeeded() {
             return
         }
+        refreshDestinationRuntimeState()
         let mediaConfiguration = currentMediaPipelineConfiguration
         if let pipelineHealth = mediaPipeline.currentHealth {
             let microphoneSourceLevel = isSourceEnabled(.microphone) ? sourceLevel(.microphone) : 0
@@ -2734,6 +2832,28 @@ public final class StudioStore {
         health.captureFPS = hasActiveMediaCapture ? mediaConfiguration.framesPerSecond : 0
         health.droppedFrames = latestSignals.isScreenFrozen ? health.droppedFrames + 12 : max(health.droppedFrames - 1, 0)
         applyCaptureHealthPressure()
+    }
+
+    private func refreshDestinationRuntimeState() {
+        destinationStatuses = mediaPipeline.destinationStatuses
+        guard streamTransport == .rtmpPublish, streamState.isLive else { return }
+
+        let impairedCount = destinationStatuses.filter { $0.state != .publishing }.count
+        let activeCount = destinationStatuses.filter { $0.state == .publishing || $0.state == .degraded }.count
+        let backpressuredCount = destinationStatuses.filter { $0.state == .degraded }.count
+        if impairedCount > 0 {
+            let detail: String
+            if backpressuredCount > 0 {
+                detail = "\(backpressuredCount) destination\(backpressuredCount == 1 ? " is" : "s are") falling behind"
+            } else if activeCount > 0 {
+                detail = "\(impairedCount) destination\(impairedCount == 1 ? " is" : "s are") reconnecting"
+            } else {
+                detail = "All destinations are reconnecting"
+            }
+            streamState = .degraded(detail)
+        } else if case .degraded = streamState {
+            streamState = .live
+        }
     }
 
     private func applyCaptureHealthPressure() {

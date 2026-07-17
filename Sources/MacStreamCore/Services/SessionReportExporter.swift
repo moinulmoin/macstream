@@ -36,7 +36,7 @@ public struct SessionReportExporter: Sendable {
 
 public struct SessionReportPayload: Codable, Equatable, Sendable {
     public var exportedAt: Date
-    public var destinationName: String
+    public var destinations: [SessionDestinationState]
     public var streamTransport: StreamTransportKind
     public var recordingPath: String?
     public var sourceStates: [SessionSourceState]
@@ -52,7 +52,7 @@ public struct SessionReportPayload: Codable, Equatable, Sendable {
 
     public init(
         exportedAt: Date,
-        destinationName: String,
+        destinations: [SessionDestinationState],
         streamTransport: StreamTransportKind,
         recordingPath: String?,
         sourceStates: [SessionSourceState] = [],
@@ -67,7 +67,7 @@ public struct SessionReportPayload: Codable, Equatable, Sendable {
         events: [StudioEvent]
     ) {
         self.exportedAt = exportedAt
-        self.destinationName = destinationName
+        self.destinations = destinations
         self.streamTransport = streamTransport
         self.recordingPath = recordingPath
         self.sourceStates = sourceStates
@@ -80,6 +80,38 @@ public struct SessionReportPayload: Codable, Equatable, Sendable {
         self.latestSignals = latestSignals
         self.clipMarkers = clipMarkers
         self.events = events
+    }
+}
+
+public struct SessionDestinationState: Codable, Equatable, Sendable {
+    public var id: UUID
+    public var name: String
+    public var isEnabled: Bool
+    public var publishState: StreamDestinationPublishState?
+    public var failureDetail: String?
+
+    public init(
+        id: UUID,
+        name: String,
+        isEnabled: Bool,
+        publishState: StreamDestinationPublishState? = nil,
+        failureDetail: String? = nil
+    ) {
+        self.id = id
+        self.name = name
+        self.isEnabled = isEnabled
+        self.publishState = publishState
+        self.failureDetail = failureDetail
+    }
+
+    public init(destination: StreamDestination, status: StreamDestinationStatus? = nil) {
+        self.init(
+            id: destination.id,
+            name: destination.name,
+            isEnabled: destination.isEnabled,
+            publishState: status?.state,
+            failureDetail: status?.failureDetail
+        )
     }
 }
 

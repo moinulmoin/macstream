@@ -11,7 +11,7 @@ func sessionReportExporterWritesJSONPayload() throws {
         .appendingPathComponent("macstream-session-export-\(UUID().uuidString)", isDirectory: true)
     let report = SessionReportPayload(
         exportedAt: Date(timeIntervalSince1970: 30),
-        destinationName: "Twitch",
+        destinations: [SessionDestinationState(id: UUID(), name: "Twitch", isEnabled: true, publishState: .publishing)],
         streamTransport: .endpointValidation,
         recordingPath: "/tmp/macstream.mov",
         sourceStates: [
@@ -55,7 +55,7 @@ func sessionReportExporterAvoidsSameSecondOverwrite() throws {
         .appendingPathComponent("macstream-session-export-collision-\(UUID().uuidString)", isDirectory: true)
     let report = SessionReportPayload(
         exportedAt: Date(timeIntervalSince1970: 20),
-        destinationName: "Preview",
+        destinations: [SessionDestinationState(id: UUID(), name: "Preview", isEnabled: true)],
         streamTransport: .preview,
         recordingPath: nil,
         preferences: StudioPreferences(),
@@ -92,7 +92,7 @@ func studioStoreExportsSessionReportWithoutSecretURL() async throws {
 
     #expect(store.latestSessionReportURL == url)
     #expect(store.events[0].title == "Report exported")
-    #expect(text.contains("\"destinationName\" : \"Twitch\""))
+    #expect(text.contains("\"name\" : \"Twitch\""))
     #expect(!text.contains("sk_live_secret"))
     #expect(!text.contains("rtmps://live.example.com"))
 }

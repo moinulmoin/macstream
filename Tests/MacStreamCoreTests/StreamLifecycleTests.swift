@@ -76,7 +76,8 @@ func studioStoreUpdatesDestinationModeWithoutStartingStream() {
 
     #expect(store.destination.mode == .preview)
     #expect(store.destination.name == "Preview Session")
-    #expect(store.destination.rtmpURL == "rtmps://live.example.com/app/sk_live_secret")
+    #expect(store.destination.rtmpURL == "preview")
+    #expect(store.selectedDestination?.rtmpURL == "rtmps://live.example.com/app/sk_live_secret")
     #expect(store.streamTransport == .preview)
 }
 
@@ -719,6 +720,9 @@ func cancelWhileConnectingIgnoresLateStreamStartCompletion() async {
     store.startStream()
     try? await Task.sleep(for: .milliseconds(10))
     store.stopStream()
+    try? await Task.sleep(for: .milliseconds(10))
+
+    #expect(pipeline.stopCount == 1)
 
     try? await Task.sleep(for: .milliseconds(120))
 
@@ -760,7 +764,7 @@ func studioStoreRedactsDestinationSecretInStreamEvents() async {
     try? await Task.sleep(for: .milliseconds(50))
 
     let eventDetails = store.events.map(\.detail).joined(separator: "\n")
-    #expect(eventDetails.contains("rtmps://live.example.com/app/****"))
+    #expect(eventDetails.contains("1 destination ready"))
     #expect(!eventDetails.contains("sk_live_secret"))
 }
 
@@ -1174,7 +1178,7 @@ private final class SharedCaptureFailureMediaPipeline: MediaPipeline, @unchecked
 
     func update(configuration: MediaPipelineConfiguration) {}
 
-    func startStream(destination: StreamDestination) async throws {
+    func startStream(destinations: [StreamDestination]) async throws {
         startStreamCount += 1
         transitions.append("startStream")
     }

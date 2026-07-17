@@ -94,7 +94,7 @@ private final class PreviewFrameMediaPipeline: MediaPipeline, @unchecked Sendabl
 
     var mediaPreviewFrameSource: MediaPreviewFrameSource? { source }
 
-    func startStream(destination: StreamDestination) async throws {}
+    func startStream(destinations: [StreamDestination]) async throws {}
     func stopStream() async {}
 
     func startRecording() async throws -> URL {

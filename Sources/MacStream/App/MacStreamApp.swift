@@ -153,6 +153,62 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 }
 
+private struct PersistedDestinationConfiguration: Codable, Equatable {
+    static let currentVersion = 1
+
+    var version = currentVersion
+    var mode: StreamDestinationMode
+    var destinations: [PersistedStreamDestination]
+    var selectedDestinationID: UUID?
+
+    init(
+        mode: StreamDestinationMode,
+        destinations: [StreamDestination],
+        selectedDestinationID: UUID?
+    ) {
+        version = Self.currentVersion
+        self.mode = mode
+        self.destinations = destinations
+            .filter { !$0.isPreviewSession }
+            .map(PersistedStreamDestination.init(destination:))
+        self.selectedDestinationID = selectedDestinationID.flatMap { requestedID in
+            destinations.contains(where: { $0.id == requestedID }) ? requestedID : nil
+        }
+    }
+
+    var streamDestinations: [StreamDestination] {
+        destinations.map(\.streamDestination)
+    }
+}
+
+private struct PersistedStreamDestination: Codable, Equatable {
+    var id: UUID
+    var isEnabled: Bool
+    var mode: StreamDestinationMode
+    var name: String
+    var serverURL: String
+
+    init(destination: StreamDestination) {
+        id = destination.id
+        isEnabled = destination.isEnabled
+        mode = destination.mode
+        name = destination.name
+        serverURL = destination.rtmpServerURL
+    }
+
+    var streamDestination: StreamDestination {
+        var destination = StreamDestination(
+            id: id,
+            isEnabled: isEnabled,
+            mode: mode,
+            name: name,
+            rtmpURL: ""
+        )
+        destination.setRTMPServerURL(serverURL)
+        return destination
+    }
+}
+
 @main
 struct MacStreamApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
@@ -166,8 +222,7 @@ struct MacStreamApp: App {
     @AppStorage("previewRenderQuality") private var previewRenderQualityRaw = StudioPreviewRenderQuality.automatic.rawValue
     @AppStorage("defaultSceneKind") private var defaultSceneKindRaw = SceneKind.brb.rawValue
     @AppStorage("setupPrompt") private var setupPrompt = StudioStore.defaultSetupPrompt
-    @AppStorage("destinationMode") private var destinationModeRaw = StreamDestinationMode.preview.rawValue
-    @AppStorage("destinationName") private var destinationName = "Preview Session"
+    @AppStorage("streamDestinations") private var streamDestinationsJSON = ""
     @AppStorage("sourceConfiguration") private var sourceConfigurationJSON = ""
     @AppStorage("screenCaptureTargetPreference") private var screenCaptureTargetPreferenceJSON = ""
     @AppStorage("cameraDeviceIDPreference") private var savedCameraDeviceID = ""
@@ -183,7 +238,8 @@ struct MacStreamApp: App {
     @State private var updater = SparkleUpdater()
     @State private var didApplyLaunchSetupDefaults = false
     @State private var didApplyStartupConfiguration = false
-    @State private var lastPersistedDestination: StreamDestination?
+    @State private var lastPersistedDestinations: PersistedDestinationConfiguration?
+    @State private var lastPersistedDestinationStreamKeys: [UUID: String] = [:]
     @State private var destinationSaveTask: Task<Void, Never>?
     @State private var sourceConfigurationSaveTask: Task<Void, Never>?
     private static let persistenceDebounceDuration: Duration = .milliseconds(350)
@@ -243,9 +299,9 @@ struct MacStreamApp: App {
 
         Settings {
             SettingsView(store: store, updater: updater)
-                .onChange(of: store.destination) { _, newDestination in
-                    scheduleDestinationSave(newDestination)
-                }
+                .onChange(of: store.destinationMode) { _, _ in scheduleDestinationSave() }
+                .onChange(of: store.destinations) { _, _ in scheduleDestinationSave() }
+                .onChange(of: store.selectedDestinationID) { _, _ in scheduleDestinationSave() }
                 .onChange(of: store.sourceConfiguration) { _, newConfiguration in
                     scheduleSourceConfigurationSave(newConfiguration)
                 }
@@ -323,7 +379,9 @@ struct MacStreamApp: App {
 
     private func persistenceObservers<Content: View>(_ content: Content) -> some View {
         content
-            .onChange(of: store.destination) { _, newDestination in scheduleDestinationSave(newDestination) }
+            .onChange(of: store.destinationMode) { _, _ in scheduleDestinationSave() }
+            .onChange(of: store.destinations) { _, _ in scheduleDestinationSave() }
+            .onChange(of: store.selectedDestinationID) { _, _ in scheduleDestinationSave() }
             .onChange(of: store.sourceConfiguration) { _, newConfiguration in scheduleSourceConfigurationSave(newConfiguration) }
             .onChange(of: store.screenCaptureTargetPreference) { _, newTarget in saveScreenCaptureTargetPreference(newTarget) }
             .onChange(of: store.cameraDeviceIDPreference) { _, newID in saveCameraDeviceIDPreference(newID) }
@@ -361,56 +419,91 @@ struct MacStreamApp: App {
     }
 
     private func applySavedDestination() {
-        let mode = StreamDestinationMode(rawValue: destinationModeRaw) ?? .preview
-        // Startup intentionally leaves RTMP endpoints blank because Security.framework reads can block first-window rendering. Restoration is explicit in Settings.
-        let rtmpURL = mode == .rtmp
-            ? ""
-            : "preview"
-        let fallbackName = mode == .rtmp ? "RTMP Destination" : "Preview Session"
-        let trimmedName = destinationName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let data = streamDestinationsJSON.data(using: .utf8),
+              let configuration = try? JSONDecoder().decode(PersistedDestinationConfiguration.self, from: data),
+              configuration.version == PersistedDestinationConfiguration.currentVersion
+        else {
+            lastPersistedDestinations = currentDestinationConfiguration()
+            return
+        }
 
-        let savedDestination = StreamDestination(
-            mode: mode,
-            name: trimmedName.isEmpty ? fallbackName : trimmedName,
-            rtmpURL: rtmpURL
+        lastPersistedDestinations = configuration
+        lastPersistedDestinationStreamKeys = [:]
+        store.applySavedDestinations(
+            mode: configuration.mode,
+            destinations: configuration.streamDestinations,
+            selectedDestinationID: configuration.selectedDestinationID
         )
-        lastPersistedDestination = savedDestination
-        store.applySavedDestination(savedDestination)
     }
 
-    private func saveDestination(_ destination: StreamDestination) {
-        guard destination != lastPersistedDestination else { return }
+    private func saveDestinationConfiguration() {
+        let configuration = currentDestinationConfiguration()
+        let previousConfiguration = lastPersistedDestinations
+        let previousIDs = Set(previousConfiguration?.destinations.map(\.id) ?? [])
+        let currentIDs = Set(configuration.destinations.map(\.id))
+        var didPersistSecrets = true
 
-        let endpointChanged = lastPersistedDestination?.mode != destination.mode
-            || lastPersistedDestination?.rtmpURL != destination.rtmpURL
-        destinationModeRaw = destination.mode.rawValue
-        destinationName = destination.name
-
-        var didPersistEndpoint = true
-        if endpointChanged, destination.isPersistableEndpoint {
-            if !MacStreamDestinationKeychain.saveRTMPURL(destination.rtmpURL) {
-                didPersistEndpoint = false
-                store.reportPersistenceFailure("RTMP destination could not be saved to Keychain.")
+        for removedID in previousIDs.subtracting(currentIDs) {
+            if !MacStreamDestinationKeychain.deleteRTMPStreamKey(for: removedID) {
+                didPersistSecrets = false
+                store.reportPersistenceFailure("Removed RTMP destination stream key could not be removed from Keychain.")
             }
-        } else if endpointChanged {
-            if !MacStreamDestinationKeychain.deleteRTMPURL() {
-                didPersistEndpoint = false
-                store.reportPersistenceFailure("RTMP destination could not be removed from Keychain.")
+            lastPersistedDestinationStreamKeys[removedID] = nil
+        }
+
+        for destination in store.destinations where !destination.isPreviewSession {
+            let persistedStreamKey = lastPersistedDestinationStreamKeys[destination.id] ?? ""
+            let currentStreamKey = destination.rtmpStreamKey.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard currentStreamKey != persistedStreamKey else { continue }
+
+            if currentStreamKey.isEmpty {
+                if lastPersistedDestinationStreamKeys[destination.id] != nil,
+                   !MacStreamDestinationKeychain.deleteRTMPStreamKey(for: destination.id) {
+                    didPersistSecrets = false
+                    store.reportPersistenceFailure("RTMP destination stream key could not be removed from Keychain.")
+                    continue
+                }
+                lastPersistedDestinationStreamKeys[destination.id] = nil
+            } else if MacStreamDestinationKeychain.saveRTMPStreamKey(currentStreamKey, for: destination.id) {
+                lastPersistedDestinationStreamKeys[destination.id] = currentStreamKey
+            } else {
+                didPersistSecrets = false
+                store.reportPersistenceFailure("RTMP destination stream key could not be saved to Keychain.")
             }
         }
 
-        if didPersistEndpoint {
-            lastPersistedDestination = destination
+        guard configuration != previousConfiguration else {
+            return
+        }
+
+        guard let data = try? JSONEncoder().encode(configuration),
+              let json = String(data: data, encoding: .utf8)
+        else {
+            store.reportPersistenceFailure("RTMP destination metadata could not be encoded.")
+            return
+        }
+
+        streamDestinationsJSON = json
+        if didPersistSecrets {
+            lastPersistedDestinations = configuration
         }
     }
 
-    private func scheduleDestinationSave(_ destination: StreamDestination) {
+    private func currentDestinationConfiguration() -> PersistedDestinationConfiguration {
+        PersistedDestinationConfiguration(
+            mode: store.destinationMode,
+            destinations: store.destinations,
+            selectedDestinationID: store.selectedDestinationID
+        )
+    }
+
+    private func scheduleDestinationSave() {
         destinationSaveTask?.cancel()
         destinationSaveTask = Task { @MainActor in
             try? await Task.sleep(for: Self.persistenceDebounceDuration)
             guard !Task.isCancelled else { return }
 
-            saveDestination(destination)
+            saveDestinationConfiguration()
             destinationSaveTask = nil
         }
     }
@@ -456,7 +549,7 @@ struct MacStreamApp: App {
         sourceConfigurationSaveTask = nil
 
         if shouldSaveDestination {
-            saveDestination(store.destination)
+            saveDestinationConfiguration()
         }
 
         if shouldSaveSourceConfiguration {
@@ -578,10 +671,10 @@ struct MacStreamApp: App {
             if store.streamTransport == .endpointValidation { return "Cancel Endpoint Check" }
             return "Cancel Start Streaming"
         }
-        if !store.destination.isPreviewSession, store.streamTransport == .endpointValidation {
+        if store.destinationMode == .rtmp, store.streamTransport == .endpointValidation {
             return "Check Endpoint"
         }
-        return store.destination.isPreviewSession ? "Start Preview" : "Start Streaming"
+        return store.destinationMode == .preview ? "Start Preview" : "Start Streaming"
     }
 
     private var recordingCommandTitle: String {

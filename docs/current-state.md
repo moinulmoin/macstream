@@ -21,6 +21,8 @@ The current public release is
 - Optional record-while-streaming behavior.
 - RTMP/RTMPS endpoint validation in the dependency-light build.
 - HaishinKit publishing build for real RTMP/RTMPS media output.
+- One composed output fanned out to as many as three independently queued destinations.
+- Per-destination throughput, failure, reconnect, and Keychain-backed secret state.
 - Runtime reconnect with interruption, outcome, and downtime metrics.
 - A/V drift, throughput, dropped-frame, and RTMP append-queue health.
 - Adaptive performance response to capture pressure and macOS system state.
@@ -49,7 +51,7 @@ MacStream works on one release goal at a time. The next milestone does not begin
 until the current milestone is implemented, reviewed, validated, and shipped.
 Scope can change after each release based on real usage.
 
-### v0.4 - Multi-Destination Streaming
+### v0.4 - Multi-Destination Streaming (implemented, release validation pending)
 
 - Configure and persist multiple RTMP/RTMPS destinations.
 - Publish the same composed program output to selected destinations.

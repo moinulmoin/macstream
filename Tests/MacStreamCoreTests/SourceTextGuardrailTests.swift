@@ -124,7 +124,7 @@ func studioKeepsFrequentControlsInBottomDeck() throws {
     let studioRootSource = String(studioSource[..<previewColumnIndex])
     let settingsDestinationIndex = try #require(settingsSource.range(of: "Section(\"Destination\")")?.lowerBound)
     let settingsDestinationModeIndex = try #require(settingsSource.range(of: "Picker(\"Mode\", selection: destinationMode)")?.lowerBound)
-    let settingsRTMPDestinationIndex = try #require(settingsSource.range(of: "if store.destination.mode == .rtmp {")?.lowerBound)
+    let settingsRTMPDestinationIndex = try #require(settingsSource.range(of: "if store.destinationMode == .rtmp {")?.lowerBound)
     let destinationNameIndex = try #require(settingsSource.range(of: "TextField(\"Name\"")?.lowerBound)
     let destinationServerIndex = try #require(settingsSource.range(of: "TextField(\"Server URL\"")?.lowerBound)
     let destinationSecureIndex = try #require(settingsSource.range(of: "SecureField(\"Stream key\"")?.lowerBound)
@@ -263,8 +263,8 @@ func studioKeepsFrequentControlsInBottomDeck() throws {
     #expect(appSource.contains("intelligenceProvider: RuleBasedLocalIntelligenceProvider()"))
     #expect(appSource.contains("@AppStorage(\"defaultSceneKind\")"))
     #expect(appSource.contains("@AppStorage(\"setupPrompt\")"))
-    #expect(appSource.contains("@AppStorage(\"destinationMode\")"))
-    #expect(appSource.contains("@AppStorage(\"destinationName\")"))
+    #expect(appSource.contains("@AppStorage(\"streamDestinations\")"))
+    #expect(!appSource.contains("@AppStorage(\"destinationName\")"))
     #expect(appSource.contains("@AppStorage(\"sourceConfiguration\")"))
     #expect(appSource.contains("@AppStorage(\"screenCaptureTargetPreference\")"))
     #expect(appSource.contains("@Environment(\\.scenePhase)"))
@@ -274,7 +274,7 @@ func studioKeepsFrequentControlsInBottomDeck() throws {
     #expect(appSource.contains("applySavedScreenCaptureTargetPreference()"))
     #expect(appSource.contains("store.applyLaunchSetupDefaults("))
     #expect(appSource.contains("store.applySavedSetupPrompt(newValue)"))
-    #expect(appSource.contains("scheduleDestinationSave(newDestination)"))
+    #expect(appSource.contains("scheduleDestinationSave()"))
     #expect(appSource.contains("scheduleSourceConfigurationSave(newConfiguration)"))
     #expect(appSource.contains("saveScreenCaptureTargetPreference(newTarget)"))
     #expect(appSource.contains("destinationSaveTask?.cancel()"))
@@ -316,7 +316,7 @@ func studioKeepsFrequentControlsInBottomDeck() throws {
     #expect(settingsSource.contains("Picker(\"Startup scene\""))
     #expect(settingsSource.contains("Section(\"Destination\")"))
     #expect(settingsSource.contains("Picker(\"Mode\", selection: destinationMode)"))
-    #expect(settingsSource.contains("TextField(\"Name\", text: $store.destination.name)"))
+    #expect(settingsSource.contains("TextField(\"Name\", text: destinationName)"))
     #expect(settingsSource.contains("TextField(\"Server URL\", text: rtmpServerURL)"))
     #expect(settingsSource.contains("SecureField(\"Stream key\", text: rtmpStreamKey)"))
     #expect(settingsSource.contains("private var destinationMode: Binding<StreamDestinationMode>"))
@@ -340,7 +340,7 @@ func studioKeepsFrequentControlsInBottomDeck() throws {
     #expect(storeSource.contains("public func applySavedSourceConfiguration(_ savedConfiguration: [StudioSourceConfiguration])"))
     #expect(storeSource.contains("public private(set) var screenCaptureTargetPreference: ScreenCaptureTarget?"))
     #expect(storeSource.contains("public func applySavedScreenCaptureTargetPreference(_ target: ScreenCaptureTarget?)"))
-    #expect(destinationSource.contains("Label(store.destination.safeDisplayDetail, systemImage: store.destination.mode.symbolName)"))
+    #expect(destinationSource.contains("Label(store.destinationSummary, systemImage: \"list.bullet.rectangle\")"))
     #expect(destinationSource.contains("SettingsLink"))
     #expect(destinationSource.contains("Label(\"Configure\", systemImage: \"gearshape\")"))
     #expect(destinationSource.contains("destinationDetailTint"))
@@ -598,26 +598,6 @@ func releaseAutomationDefinesSignedNotarizedMacPipeline() throws {
     #expect(release.contains("SPARKLE_PRIVATE_KEY"))
     #expect(release.contains("\"$RUNNER_TEMP/bin/sign_update\""))
     #expect(docs.contains("Sparkle"))
-}
-
-@Test
-func keychainPersistenceReportsFailuresToApp() throws {
-    let keychainURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
-        .appendingPathComponent("Sources/MacStream/Support/MacStreamDestinationKeychain.swift")
-    let appURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
-        .appendingPathComponent("Sources/MacStream/App/MacStreamApp.swift")
-    let keychainSource = try String(contentsOf: keychainURL, encoding: .utf8)
-    let appSource = try String(contentsOf: appURL, encoding: .utf8)
-
-    #expect(keychainSource.contains("static func saveRTMPURL(_ value: String) -> Bool"))
-    #expect(keychainSource.contains("static func loadRTMPURL(allowUserInteraction: Bool = false) -> String?"))
-    #expect(keychainSource.contains("static func deleteRTMPURL(allowUserInteraction: Bool = false) -> Bool"))
-    #expect(keychainSource.contains("context.interactionNotAllowed = true"))
-    #expect(keychainSource.contains("return SecItemAdd(item as CFDictionary, nil) == errSecSuccess"))
-    #expect(appSource.contains("let rtmpURL = mode == .rtmp"))
-    #expect(appSource.contains("if !MacStreamDestinationKeychain.saveRTMPURL(destination.rtmpURL)"))
-    #expect(appSource.contains("if !MacStreamDestinationKeychain.deleteRTMPURL()"))
-    #expect(appSource.contains("store.reportPersistenceFailure"))
 }
 
 @Test

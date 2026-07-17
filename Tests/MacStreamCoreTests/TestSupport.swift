@@ -29,6 +29,7 @@ final class ConfigurableMediaPipeline: MediaPipeline, @unchecked Sendable {
     var captureSetupWarnings: [String] = []
     var lastConfiguration: MediaPipelineConfiguration?
     var configurationAtStartStream: MediaPipelineConfiguration?
+    var destinationsAtStartStream: [StreamDestination] = []
     var updateCount = 0
 
     init(streamTransport: StreamTransportKind = .endpointValidation) {
@@ -40,8 +41,9 @@ final class ConfigurableMediaPipeline: MediaPipeline, @unchecked Sendable {
         lastConfiguration = configuration
     }
 
-    func startStream(destination: StreamDestination) async throws {
+    func startStream(destinations: [StreamDestination]) async throws {
         configurationAtStartStream = lastConfiguration
+        destinationsAtStartStream = destinations
     }
 
     func stopStream() async {}
@@ -61,7 +63,7 @@ final class TransportCountingMediaPipeline: MediaPipeline, @unchecked Sendable {
         return .rtmpPublish
     }
 
-    func startStream(destination: StreamDestination) async throws {}
+    func startStream(destinations: [StreamDestination]) async throws {}
 
     func stopStream() async {}
 
@@ -77,7 +79,7 @@ final class ReadinessGatedMediaPipeline: MediaPipeline, @unchecked Sendable {
         true
     }
 
-    func startStream(destination: StreamDestination) async throws {}
+    func startStream(destinations: [StreamDestination]) async throws {}
 
     func stopStream() async {}
 
@@ -115,7 +117,7 @@ final class ScreenVideoGatedMediaPipeline: MediaPipeline, @unchecked Sendable {
         [.screenOnly, .screenAndFace]
     }
 
-    func startStream(destination: StreamDestination) async throws {}
+    func startStream(destinations: [StreamDestination]) async throws {}
 
     func stopStream() async {}
 
@@ -160,7 +162,7 @@ final class ComposedScreenVideoMediaPipeline: MediaPipeline, @unchecked Sendable
         lastConfiguration = configuration
     }
 
-    func startStream(destination: StreamDestination) async throws {
+    func startStream(destinations: [StreamDestination]) async throws {
         startCount += 1
         configurationAtStartStream = lastConfiguration
     }
@@ -221,7 +223,7 @@ final class RecoveringMediaPipeline: MediaPipeline, @unchecked Sendable {
     var errorToThrow: (any Error)?
     var startCount = 0
 
-    func startStream(destination: StreamDestination) async throws {
+    func startStream(destinations: [StreamDestination]) async throws {
         startCount += 1
         if let errorToThrow {
             throw errorToThrow
@@ -247,7 +249,7 @@ final class FlakyStartMediaPipeline: MediaPipeline, @unchecked Sendable {
         self.streamTransport = streamTransport
     }
 
-    func startStream(destination: StreamDestination) async throws {
+    func startStream(destinations: [StreamDestination]) async throws {
         startCount += 1
         if startCount <= failuresBeforeSuccess {
             throw TestStreamError(message: "Transient start failure \(startCount)")
@@ -283,7 +285,7 @@ final class SessionRecoveryMediaPipeline: MediaPipeline, @unchecked Sendable {
         remainingStartFailures = max(0, recoveryStartFailures)
     }
 
-    func startStream(destination: StreamDestination) async throws {
+    func startStream(destinations: [StreamDestination]) async throws {
         startStreamCount += 1
         if remainingStartFailures > 0 {
             remainingStartFailures -= 1
@@ -312,7 +314,7 @@ final class DelayedStartMediaPipeline: MediaPipeline, @unchecked Sendable {
     var startCount = 0
     var startRecordingCount = 0
 
-    func startStream(destination: StreamDestination) async throws {
+    func startStream(destinations: [StreamDestination]) async throws {
         startCount += 1
         try await Task.sleep(for: .milliseconds(70))
     }
@@ -331,7 +333,7 @@ final class DelayedStopMediaPipeline: MediaPipeline, @unchecked Sendable {
     var streamTransport: StreamTransportKind = .preview
     var stopCount = 0
 
-    func startStream(destination: StreamDestination) async throws {}
+    func startStream(destinations: [StreamDestination]) async throws {}
 
     func stopStream() async {
         stopCount += 1
@@ -349,7 +351,7 @@ final class DelayedStopRecordingPipeline: MediaPipeline, @unchecked Sendable {
     var streamTransport: StreamTransportKind = .preview
     var stopRecordingCount = 0
 
-    func startStream(destination: StreamDestination) async throws {}
+    func startStream(destinations: [StreamDestination]) async throws {}
 
     func stopStream() async {}
 
@@ -368,7 +370,7 @@ final class NonCancellableDelayedStartMediaPipeline: MediaPipeline, @unchecked S
     var startCount = 0
     var stopCount = 0
 
-    func startStream(destination: StreamDestination) async throws {
+    func startStream(destinations: [StreamDestination]) async throws {
         startCount += 1
         await withCheckedContinuation { continuation in
             DispatchQueue.global().asyncAfter(deadline: .now() + 0.06) {
@@ -394,7 +396,7 @@ final class NonCancellableDelayedRecordingPipeline: MediaPipeline, @unchecked Se
     var startRecordingCount = 0
     var stopRecordingCount = 0
 
-    func startStream(destination: StreamDestination) async throws {
+    func startStream(destinations: [StreamDestination]) async throws {
         startStreamCount += 1
     }
 
@@ -434,7 +436,7 @@ final class LifecycleTrackingMediaPipeline: MediaPipeline, @unchecked Sendable {
     private var streamStopContinuation: CheckedContinuation<Void, Never>?
     private var shouldFinishStreamStop = false
 
-    func startStream(destination: StreamDestination) async throws {
+    func startStream(destinations: [StreamDestination]) async throws {
         startStreamCount += 1
         transitions.append("startStream")
         streamStartCalledContinuation?.resume()
@@ -766,7 +768,7 @@ final class SpyMediaPipeline: MediaPipeline, @unchecked Sendable {
     var didStartRecording = false
     var didStopRecording = false
 
-    func startStream(destination: StreamDestination) async throws {
+    func startStream(destinations: [StreamDestination]) async throws {
         didStartStream = true
     }
 

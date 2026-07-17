@@ -33,6 +33,70 @@ func editingDestinationServerURLAndStreamKeyBuildsCompleteRTMPEndpoint() {
     #expect(store.destination.rtmpURL == "rtmps://live-api-s.facebook.com:443/rtmp/fb_secret")
     #expect(store.destination.isReadyToStart)
 }
+
+@Test
+@MainActor
+func multipleEnabledDestinationsStartAsOneSession() async {
+    let pipeline = ConfigurableMediaPipeline(streamTransport: .rtmpPublish)
+    let store = StudioStore(
+        mediaPipeline: pipeline,
+        captureDeviceProvider: FixedCaptureDeviceProvider(report: CapturePreflightReport())
+    )
+
+    store.setDestinationMode(.rtmp)
+    store.applyDestinationPreset(.twitch)
+    store.setRTMPStreamKey("twitch-secret")
+    let twitchID = store.destination.id
+
+    store.addDestination()
+    store.applyDestinationPreset(.youtube)
+    store.setRTMPStreamKey("youtube-secret")
+    let youtubeID = store.destination.id
+
+    store.startStream()
+    await waitForLiveState(store)
+
+    #expect(Set(pipeline.destinationsAtStartStream.map(\.id)) == Set([twitchID, youtubeID]))
+    #expect(pipeline.destinationsAtStartStream.allSatisfy { $0.isEnabled })
+}
+
+@Test
+@MainActor
+func disabledDestinationIsExcludedFromStreamStart() async {
+    let pipeline = ConfigurableMediaPipeline(streamTransport: .rtmpPublish)
+    let store = StudioStore(
+        mediaPipeline: pipeline,
+        captureDeviceProvider: FixedCaptureDeviceProvider(report: CapturePreflightReport())
+    )
+
+    store.setDestinationMode(.rtmp)
+    store.applyDestinationPreset(.twitch)
+    store.setRTMPStreamKey("twitch-secret")
+    let enabledID = store.destination.id
+
+    store.addDestination()
+    store.applyDestinationPreset(.youtube)
+    store.setRTMPStreamKey("youtube-secret")
+    store.setDestinationEnabled(id: store.destination.id, isEnabled: false)
+
+    store.startStream()
+    await waitForLiveState(store)
+
+    #expect(pipeline.destinationsAtStartStream.map(\.id) == [enabledID])
+}
+
+@Test
+@MainActor
+func rtmpModeRequiresAnEnabledValidDestination() {
+    let store = StudioStore(captureDeviceProvider: FixedCaptureDeviceProvider(report: CapturePreflightReport()))
+
+    store.setDestinationMode(.rtmp)
+    #expect(!store.canStartStream)
+    #expect(store.destinationValidationError != nil)
+
+    store.setDestinationEnabled(id: store.destination.id, isEnabled: false)
+    #expect(store.destinationValidationError == "Enable at least one RTMP destination.")
+}
 @Test
 @MainActor
 func applyingPresetWithoutFixedIngestLeavesURLEditable() {
@@ -127,6 +191,13 @@ func applyingCustomPresetKeepsUserTypedURL() {
 @MainActor
 func kickPresetRequiresPastedEndpoint() {
     #expect(StreamPlatformPreset.kick.ingestURL == nil)
+}
+
+@MainActor
+private func waitForLiveState(_ store: StudioStore) async {
+    for _ in 0..<100 where !store.streamState.isLive {
+        try? await Task.sleep(for: .milliseconds(5))
+    }
 }
 
 @Test

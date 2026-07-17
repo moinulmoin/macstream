@@ -54,6 +54,18 @@ func rtmpDestinationExposesEditableServerURLAndStreamKey() throws {
 }
 
 @Test
+func fullPublishURLPastedIntoServerFieldMovesSecretIntoStreamKey() throws {
+    var destination = StreamDestination(mode: .rtmp, name: "YouTube", rtmpURL: "")
+
+    destination.setRTMPServerURL("rtmps://live.example.com/app/sk_live_secret?token=abc")
+
+    #expect(destination.rtmpServerURL == "rtmps://live.example.com/app/")
+    #expect(destination.rtmpStreamKey == "sk_live_secret?token=abc")
+    #expect(destination.safeDisplayDetail == "rtmps://live.example.com/app/****")
+    #expect(!destination.rtmpServerURL.contains("sk_live_secret"))
+}
+
+@Test
 func rtmpDestinationPreservesStreamNameQueryTokens() throws {
     let destination = StreamDestination(
         name: "Token RTMP",
@@ -106,6 +118,39 @@ func rtmpDestinationRedactsStreamKeyForDisplay() {
     #expect(destination.validationError == nil)
     #expect(destination.safeDisplayDetail == "rtmps://live.example.com/app/****")
     #expect(!destination.safeDisplayDetail.contains("sk_live_secret"))
+}
+
+@Test
+func streamDestinationKeepsStableIdentityAcrossEdits() {
+    let id = UUID()
+    var destination = StreamDestination(
+        id: id,
+        isEnabled: false,
+        mode: .rtmp,
+        name: "Backup",
+        rtmpURL: "rtmps://live.example.com/app/secret"
+    )
+
+    destination.name = "Backup ingest"
+    destination.setRTMPStreamKey("new-secret")
+
+    #expect(destination.id == id)
+    #expect(!destination.isEnabled)
+    #expect(!destination.safeDisplayDetail.contains("new-secret"))
+}
+
+@Test
+func destinationStatusDoesNotContainEndpointSecrets() {
+    let status = StreamDestinationStatus(
+        id: UUID(),
+        name: "YouTube",
+        state: .failed,
+        failureDetail: "Connection timed out"
+    )
+
+    #expect(status.state == .failed)
+    #expect(status.failureDetail == "Connection timed out")
+    #expect(!String(describing: status).contains("stream-key"))
 }
 
 @Test

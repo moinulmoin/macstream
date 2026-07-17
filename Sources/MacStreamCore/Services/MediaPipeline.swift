@@ -17,6 +17,7 @@ public protocol MediaPipeline: Sendable {
     var currentHealth: StreamHealth? { get }
     var recordingFailureDetail: String? { get }
     var streamFailureDetail: String? { get }
+    var destinationStatuses: [StreamDestinationStatus] { get }
     var captureSetupWarnings: [String] { get }
     var requiresCaptureReadinessForStart: Bool { get }
     var requiresScreenCaptureVideoForStream: Bool { get }
@@ -25,7 +26,7 @@ public protocol MediaPipeline: Sendable {
     var supportedSceneKindsForRecording: Set<SceneKind> { get }
 
     func update(configuration: MediaPipelineConfiguration)
-    func startStream(destination: StreamDestination) async throws
+    func startStream(destinations: [StreamDestination]) async throws
     func stopStream() async
     func startRecording() async throws -> URL
     func stopRecording() async
@@ -37,6 +38,7 @@ public extension MediaPipeline {
     var currentHealth: StreamHealth? { nil }
     var recordingFailureDetail: String? { nil }
     var streamFailureDetail: String? { nil }
+    var destinationStatuses: [StreamDestinationStatus] { [] }
     var captureSetupWarnings: [String] { [] }
     var requiresCaptureReadinessForStart: Bool { false }
     var requiresScreenCaptureVideoForStream: Bool { false }
@@ -149,11 +151,13 @@ public enum StreamPlatformPreset: String, CaseIterable, Identifiable, Sendable {
     }
 }
 
-public struct StreamDestination: Equatable, Sendable {
+public struct StreamDestination: Identifiable, Equatable, Sendable {
+    public let id: UUID
+    public var isEnabled: Bool
     public var mode: StreamDestinationMode
     public var name: String
-    public var rtmpServerURL: String
-    public var rtmpStreamKey: String
+    public private(set) var rtmpServerURL: String
+    public private(set) var rtmpStreamKey: String
 
     public var rtmpURL: String {
         get {
@@ -167,11 +171,15 @@ public struct StreamDestination: Equatable, Sendable {
     }
 
     public init(
+        id: UUID = UUID(),
+        isEnabled: Bool = true,
         mode: StreamDestinationMode? = nil,
         name: String = "Preview Session",
         rtmpURL: String = "preview"
     ) {
         let splitURL = Self.splitRTMPURL(rtmpURL)
+        self.id = id
+        self.isEnabled = isEnabled
         self.mode = mode ?? Self.inferMode(from: rtmpURL)
         self.name = name
         self.rtmpServerURL = splitURL.serverURL
@@ -236,7 +244,11 @@ public struct StreamDestination: Equatable, Sendable {
 
     public mutating func setRTMPServerURL(_ serverURL: String) {
         mode = .rtmp
-        rtmpServerURL = serverURL.trimmingCharacters(in: .whitespacesAndNewlines)
+        let splitURL = Self.splitRTMPURL(serverURL)
+        rtmpServerURL = splitURL.serverURL
+        if !splitURL.streamKey.isEmpty {
+            rtmpStreamKey = splitURL.streamKey
+        }
     }
 
     public mutating func setRTMPStreamKey(_ streamKey: String) {
@@ -330,6 +342,57 @@ public struct StreamDestination: Equatable, Sendable {
     }
 }
 
+public enum StreamDestinationPublishState: String, Codable, Equatable, Sendable {
+    case idle
+    case connecting
+    case publishing
+    case degraded
+    case reconnecting
+    case failed
+
+    public var title: String {
+        switch self {
+        case .idle: "Idle"
+        case .connecting: "Connecting"
+        case .publishing: "Publishing"
+        case .degraded: "Degraded"
+        case .reconnecting: "Reconnecting"
+        case .failed: "Failed"
+        }
+    }
+}
+
+public struct StreamDestinationStatus: Identifiable, Codable, Equatable, Sendable {
+    public var id: UUID
+    public var name: String
+    public var state: StreamDestinationPublishState
+    public var failureDetail: String?
+    public var outboundBytesPerSecond: Int64
+    public var pendingAppends: Int
+    public var appendCapacity: Int
+    public var appendRejections: Int
+
+    public init(
+        id: UUID,
+        name: String,
+        state: StreamDestinationPublishState = .idle,
+        failureDetail: String? = nil,
+        outboundBytesPerSecond: Int64 = 0,
+        pendingAppends: Int = 0,
+        appendCapacity: Int = 0,
+        appendRejections: Int = 0
+    ) {
+        self.id = id
+        self.name = name
+        self.state = state
+        self.failureDetail = failureDetail
+        self.outboundBytesPerSecond = max(0, outboundBytesPerSecond)
+        self.pendingAppends = max(0, pendingAppends)
+        self.appendCapacity = max(0, appendCapacity)
+        self.appendRejections = max(0, appendRejections)
+    }
+}
+
 public struct RTMPPublishTarget: Equatable, Sendable {
     public var connectionURL: String
     public var streamName: String
@@ -363,7 +426,7 @@ public struct PreviewMediaPipeline: MediaPipeline {
         .preview
     }
 
-    public func startStream(destination: StreamDestination) async throws {
+    public func startStream(destinations: [StreamDestination]) async throws {
     }
 
     public func stopStream() async {
@@ -417,6 +480,7 @@ public final class SystemMediaPipeline: NSObject, MediaPipeline, SCStreamOutput,
     private var streamFailureReason: String?
     private var setupWarnings: [String] = []
     private var rtmpPublisher: RTMPPublisher?
+    private var rtmpPublisherLanes: [RTMPPublisherLane] = []
     private var videoCompositor: VideoCanvasCompositor?
     private var publishingVideoCompositor: VideoCanvasCompositor?
     private var publishingPixelBufferPool: CVPixelBufferPool?
@@ -443,11 +507,6 @@ public final class SystemMediaPipeline: NSObject, MediaPipeline, SCStreamOutput,
     private var firstPublishingVideoContinuation: CheckedContinuation<Void, any Error>?
     private var firstPublishingVideoTimeoutTask: Task<Void, Never>?
     private var didPublishFirstVideoFrame = false
-    private var rtmpPublisherEventTask: Task<Void, Never>?
-    private var rtmpPublisherHealthTask: Task<Void, Never>?
-    private var observedRTMPPublisher: RTMPPublisher?
-    private var lastRTMPByteCount: Int64?
-    private var lastRTMPByteSampledAt: Date?
     private var publishingAudioTrackPlan: (systemAudio: UInt8?, microphone: UInt8?, mainTrack: UInt8) = (nil, nil, 0)
     private var nextCameraRecoveryGeneration: UInt64 = 0
     private var cameraRecoveryGenerations: [ObjectIdentifier: UInt64] = [:]
@@ -495,6 +554,11 @@ public final class SystemMediaPipeline: NSObject, MediaPipeline, SCStreamOutput,
         queue.sync { streamFailureReason }
     }
 
+    public var destinationStatuses: [StreamDestinationStatus] {
+        queue.sync {
+            rtmpPublisherLanes.map(\.status)
+        }
+    }
 
     public var captureSetupWarnings: [String] {
         queue.sync { setupWarnings }
@@ -534,6 +598,9 @@ public final class SystemMediaPipeline: NSObject, MediaPipeline, SCStreamOutput,
     private static let firstPublishingVideoFrameTimeout: Duration = .seconds(8)
     private static let cameraFirstFrameRetryDelay: DispatchTimeInterval = .seconds(1)
     private static let cameraFirstFrameFailureDelay: DispatchTimeInterval = .seconds(2)
+    private static let rtmpReconnectLimit = 3
+    private static let rtmpConnectionFailureDetail = "RTMP destination connection failed."
+    private static let rtmpBackpressureDetail = "Destination is falling behind; media is being dropped."
 
     static let sharesMicrophoneCaptureBetweenStreamAndRecording = true
 
@@ -615,22 +682,82 @@ public final class SystemMediaPipeline: NSObject, MediaPipeline, SCStreamOutput,
         }
     }
 
-    public func startStream(destination: StreamDestination) async throws {
-        if destination.isPreviewSession {
+    public func startStream(destinations: [StreamDestination]) async throws {
+        let rtmpDestinations = destinations.filter { $0.isEnabled && !$0.isPreviewSession }
+        guard !rtmpDestinations.isEmpty else {
             return
         }
 
-        let target = try destination.rtmpPublishTarget()
-        let publisher = rtmpPublisherFactory(target)
-        try await publisher.configure(configuration: mediaConfiguration)
-        startRTMPPublisherObservation(for: publisher)
+        let configuration = queue.sync { mediaConfiguration }
+        let preparedLanes = try rtmpDestinations.map { destination in
+            let target = try destination.rtmpPublishTarget()
+            let publisher = rtmpPublisherFactory(target)
+            return RTMPPublisherLane(
+                destination: destination,
+                target: target,
+                publisher: publisher,
+                status: StreamDestinationStatus(
+                    id: destination.id,
+                    name: destination.name,
+                    state: .connecting,
+                    appendCapacity: publisher.appendQueueSnapshot().capacity
+                )
+            )
+        }
 
+        queue.sync {
+            self.installRTMPPublisherLanesOnQueue(preparedLanes)
+            self.streamFailureReason = nil
+            self.updateAggregateRTMPHealthOnQueue()
+        }
+
+        var connectedIDs = Set<UUID>()
+        var firstFailureDetail: String?
         do {
-            try await publisher.connect()
-            try Task.checkCancellation()
-            queue.sync {
-                self.rtmpPublisher = publisher
+            await withTaskGroup(of: (RTMPPublisherLane, String?).self) { group in
+                for lane in preparedLanes {
+                    group.addTask {
+                        do {
+                            try await lane.publisher.configure(configuration: configuration)
+                            try await lane.publisher.connect()
+                            try Task.checkCancellation()
+                            return (lane, nil)
+                        } catch {
+                            return (lane, Self.rtmpConnectionFailureDetail)
+                        }
+                    }
+                }
+
+                for await (lane, failureDetail) in group {
+                    if let failureDetail {
+                        if firstFailureDetail == nil {
+                            firstFailureDetail = failureDetail
+                        }
+                        queue.sync {
+                            self.markRTMPPublisherLaneFailedOnQueue(
+                                id: lane.id,
+                                detail: failureDetail,
+                                schedulesReconnect: true
+                            )
+                        }
+                    } else {
+                        connectedIDs.insert(lane.id)
+                        queue.sync {
+                            self.markRTMPPublisherLaneConnectedOnQueue(id: lane.id, publisher: lane.publisher)
+                        }
+                    }
+                }
             }
+
+            try Task.checkCancellation()
+            guard !connectedIDs.isEmpty else {
+                let detail = firstFailureDetail ?? "No RTMP destinations connected."
+                queue.sync {
+                    self.streamFailureReason = detail
+                }
+                throw MediaPipelineError.unavailable(detail)
+            }
+
             if Self.capturesMediaForStreamTransport {
                 do {
                     try await startPublishingCapture()
@@ -640,15 +767,14 @@ public final class SystemMediaPipeline: NSObject, MediaPipeline, SCStreamOutput,
                 }
             }
         } catch {
-            stopRTMPPublisherObservation()
-            await publisher.close()
+            await stopStream()
             throw error
         }
     }
 
     public func stopStream() async {
         let state = queue.sync {
-            let publisher = rtmpPublisher
+            let lanes = rtmpPublisherLanes
             let stream = publishingStream
             let microphoneSession = publishingMicrophoneSession
             let cameraSession = publishingCameraSession
@@ -665,13 +791,8 @@ public final class SystemMediaPipeline: NSObject, MediaPipeline, SCStreamOutput,
                 recordingUsesPublishingMicrophoneSession = false
             }
 
-            rtmpPublisher = nil
+            clearRTMPPublisherLanesOnQueue(clearFailure: true)
             publishingAudioTrackPlan = (nil, nil, 0)
-            rtmpPublisherEventTask?.cancel()
-            rtmpPublisherEventTask = nil
-            rtmpPublisherHealthTask?.cancel()
-            rtmpPublisherHealthTask = nil
-            observedRTMPPublisher = nil
             streamFailureReason = nil
             publishingStream = nil
             publishingCaptureGeometry = nil
@@ -692,8 +813,6 @@ public final class SystemMediaPipeline: NSObject, MediaPipeline, SCStreamOutput,
             publishingOwnsMicrophoneSession = false
             finishFirstPublishingVideoFrameWaitOnQueue(throwing: CancellationError())
             didPublishFirstVideoFrame = false
-            lastRTMPByteCount = nil
-            lastRTMPByteSampledAt = nil
             let now = DispatchTime.now().uptimeNanoseconds
             audioDeliveryHealthTracker.resetRTMPAudioAppendRejections()
             if self.stream == nil, self.writer == nil {
@@ -720,7 +839,7 @@ public final class SystemMediaPipeline: NSObject, MediaPipeline, SCStreamOutput,
                 shouldStopStream: stopPlan.shouldStopStream,
                 shouldStopMicrophoneSession: stopPlan.shouldStopMicrophoneSession,
                 shouldStopCameraSession: stopPlan.shouldStopCameraSession,
-                publisher: publisher
+                publisherLanes: lanes
             )
         }
 
@@ -733,7 +852,7 @@ public final class SystemMediaPipeline: NSObject, MediaPipeline, SCStreamOutput,
         if state.shouldStopCameraSession, state.cameraSession?.isRunning == true {
             state.cameraSession?.stopRunning()
         }
-        await state.publisher?.close()
+        await closeRTMPPublisherLanes(state.publisherLanes)
     }
 
     public func startRecording() async throws -> URL {
@@ -1184,12 +1303,16 @@ public final class SystemMediaPipeline: NSObject, MediaPipeline, SCStreamOutput,
         }
     }
 
+    private var hasActiveRTMPPublisherOnQueue: Bool {
+        rtmpPublisherLanes.contains(where: \.canAcceptAppends)
+    }
+
     private var shouldPromoteSharedPublishingBeforeStoppingRecording: Bool {
         get async {
             queue.sync {
                 Self.shouldPromotePublishingBeforeStoppingRecording(
                     publishingMode: publishingCaptureMode,
-                    hasPublisher: rtmpPublisher != nil
+                    hasPublisher: hasActiveRTMPPublisherOnQueue
                 )
             }
         }
@@ -1209,7 +1332,7 @@ public final class SystemMediaPipeline: NSObject, MediaPipeline, SCStreamOutput,
     ) -> DedicatedPublishingCaptureSnapshot? {
         let plan = Self.dedicatedPublishingRecordingAdoptionPlan(
             publishingMode: publishingCaptureMode,
-            hasPublisher: rtmpPublisher != nil,
+            hasPublisher: hasActiveRTMPPublisherOnQueue,
             hasPublishingStream: publishingStream != nil,
             hasPublishingCaptureGeometry: publishingCaptureGeometry != nil,
             sceneKind: configuration.sceneKind,
@@ -1240,7 +1363,7 @@ public final class SystemMediaPipeline: NSObject, MediaPipeline, SCStreamOutput,
     private func canCommitDedicatedPublishingCaptureSnapshot(
         _ snapshot: DedicatedPublishingCaptureSnapshot
     ) -> Bool {
-        rtmpPublisher === snapshot.publisher
+        rtmpPublisherLanes.contains(where: { $0.publisher === snapshot.publisher && $0.canAcceptAppends })
             && publishingCaptureMode == .dedicated
             && publishingStream === snapshot.stream
             && publishingCaptureGeometry == snapshot.geometry
@@ -1469,10 +1592,10 @@ public final class SystemMediaPipeline: NSObject, MediaPipeline, SCStreamOutput,
         }
 
         let setupState = queue.sync {
-            (configuration: self.mediaConfiguration, publisher: self.rtmpPublisher)
+            (configuration: self.mediaConfiguration, hasPublisher: self.hasActiveRTMPPublisherOnQueue)
         }
         let mediaConfiguration = setupState.configuration
-        guard let expectedPublisher = setupState.publisher else {
+        guard setupState.hasPublisher else {
             throw CancellationError()
         }
         let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
@@ -1549,7 +1672,7 @@ public final class SystemMediaPipeline: NSObject, MediaPipeline, SCStreamOutput,
         try Task.checkCancellation()
 
         let didCommit = queue.sync {
-            guard self.rtmpPublisher === expectedPublisher,
+            guard self.hasActiveRTMPPublisherOnQueue,
                   self.publishingCaptureMode == expectedPriorMode
             else {
                 return false
@@ -1742,7 +1865,7 @@ public final class SystemMediaPipeline: NSObject, MediaPipeline, SCStreamOutput,
             recordingFailureReason = detail
         }
         if (publishingCameraSession === session
-            || (recordingCameraSession === session && rtmpPublisher != nil)),
+            || (recordingCameraSession === session && hasActiveRTMPPublisherOnQueue)),
            streamFailureReason == nil {
             streamFailureReason = detail
         }
@@ -1894,7 +2017,7 @@ public final class SystemMediaPipeline: NSObject, MediaPipeline, SCStreamOutput,
             return
         }
 
-        let shouldPublish = publishingCaptureMode == .recordingOwned && rtmpPublisher != nil
+        let shouldPublish = publishingCaptureMode == .recordingOwned && hasActiveRTMPPublisherOnQueue
         let result = appendAndPublishSharedCompositedVideoSampleIfNeeded(
             sampleBuffer,
             presentationTime: presentationTime,
@@ -2156,7 +2279,7 @@ public final class SystemMediaPipeline: NSObject, MediaPipeline, SCStreamOutput,
                 recordVideoSampleIfNeeded(outputType, isPublishingStream: true)
                 guard Self.shouldPublishScreenStreamSample(
                     isPublishingStream: isDedicatedPublishingStream,
-                    hasPublisher: rtmpPublisher != nil,
+                    hasPublisher: hasActiveRTMPPublisherOnQueue,
                     hasImageBuffer: sampleBuffer.imageBuffer != nil
                 ) else {
                     return
@@ -2186,7 +2309,7 @@ public final class SystemMediaPipeline: NSObject, MediaPipeline, SCStreamOutput,
                 guard Self.shouldProcessSystemAudioSample(configuration: mediaConfiguration) else { return }
                 recordSystemAudioCallback()
                 guard let track = publishingAudioTrackPlan.systemAudio else { return }
-                if Self.shouldPublishStreamSample(isPublishingStream: isDedicatedPublishingStream, hasPublisher: rtmpPublisher != nil) {
+                if Self.shouldPublishStreamSample(isPublishingStream: isDedicatedPublishingStream, hasPublisher: hasActiveRTMPPublisherOnQueue) {
                     if publishAudio(sampleBuffer, track: track) {
                         recordAcceptedAudioPresentationTime(presentationTime)
                     }
@@ -2259,7 +2382,7 @@ public final class SystemMediaPipeline: NSObject, MediaPipeline, SCStreamOutput,
                     sampleBuffer,
                     presentationTime: presentationTime,
                     shouldAppendRecording: videoInput.isReadyForMoreMediaData,
-                    shouldPublish: isSharedRecordingStream && rtmpPublisher != nil
+                    shouldPublish: isSharedRecordingStream && hasActiveRTMPPublisherOnQueue
                 )
                 handleSharedScreenRouteResult(result, outputType: outputType, writer: writer)
                 return
@@ -2277,7 +2400,7 @@ public final class SystemMediaPipeline: NSObject, MediaPipeline, SCStreamOutput,
             } else {
                 droppedFrame = true
             }
-            if isSharedRecordingStream, rtmpPublisher != nil {
+            if isSharedRecordingStream, hasActiveRTMPPublisherOnQueue {
                 if publish(sampleBuffer) {
                     didAcceptFrame = true
                     markFirstPublishingVideoFrameIfNeeded()
@@ -2313,7 +2436,7 @@ public final class SystemMediaPipeline: NSObject, MediaPipeline, SCStreamOutput,
             }
             if isSharedRecordingStream,
                let track = publishingAudioTrackPlan.systemAudio,
-               rtmpPublisher != nil {
+               hasActiveRTMPPublisherOnQueue {
                 didAcceptAudio = publishAudio(sampleBuffer, track: track) || didAcceptAudio
             }
             if didAcceptAudio {
@@ -2326,97 +2449,276 @@ public final class SystemMediaPipeline: NSObject, MediaPipeline, SCStreamOutput,
         }
     }
 
-    private func startRTMPPublisherObservation(for publisher: any RTMPPublisher) {
+    private func installRTMPPublisherLanesOnQueue(_ lanes: [RTMPPublisherLane]) {
+        clearRTMPPublisherLanesOnQueue(clearFailure: true)
+        rtmpPublisherLanes = lanes
+        rtmpPublisher = lanes.first?.publisher
+        for lane in lanes {
+            startRTMPPublisherObservationOnQueue(for: lane)
+        }
+    }
+
+    private func clearRTMPPublisherLanesOnQueue(clearFailure: Bool) {
+        for lane in rtmpPublisherLanes {
+            lane.isClosing = true
+            lane.cancelObservation()
+        }
+        rtmpPublisherLanes.removeAll()
+        rtmpPublisher = nil
+        if clearFailure {
+            streamFailureReason = nil
+        }
+    }
+
+    private func markRTMPPublisherLaneConnectedOnQueue(id: UUID, publisher: any RTMPPublisher) {
+        guard let lane = rtmpPublisherLanes.first(where: { $0.id == id }), !lane.isClosing else { return }
+        lane.publisher = publisher
+        lane.status.state = .publishing
+        lane.status.failureDetail = nil
+        lane.status.pendingAppends = publisher.appendQueueSnapshot().pendingCount
+        lane.status.appendCapacity = publisher.appendQueueSnapshot().capacity
+        lane.reconnectAttempts = 0
+        lane.lastByteCount = nil
+        lane.lastByteSampledAt = nil
+        rtmpPublisher = rtmpPublisherLanes.first(where: { $0.canAcceptAppends })?.publisher ?? rtmpPublisherLanes.first?.publisher
+        updateAggregateRTMPHealthOnQueue()
+    }
+
+    private func markRTMPPublisherLaneFailedOnQueue(
+        id: UUID,
+        detail: String,
+        schedulesReconnect: Bool
+    ) {
+        guard let lane = rtmpPublisherLanes.first(where: { $0.id == id }), !lane.isClosing else { return }
+        lane.status.state = schedulesReconnect && lane.reconnectAttempts < Self.rtmpReconnectLimit
+            ? .reconnecting
+            : .failed
+        lane.status.failureDetail = detail
+        lane.status.outboundBytesPerSecond = 0
+        lane.status.pendingAppends = 0
+        lane.eventTask?.cancel()
+        lane.eventTask = nil
+        lane.healthTask?.cancel()
+        lane.healthTask = nil
+        lane.closePublisherInBackgroundOnce(lane.publisher)
+        rtmpPublisher = rtmpPublisherLanes.first(where: { $0.canAcceptAppends })?.publisher
+        if schedulesReconnect, lane.reconnectAttempts < Self.rtmpReconnectLimit {
+            scheduleRTMPPublisherReconnectOnQueue(for: lane)
+        } else {
+            updateGlobalRTMPFailureIfAllLanesExhaustedOnQueue()
+        }
+        updateAggregateRTMPHealthOnQueue()
+    }
+
+    private func scheduleRTMPPublisherReconnectOnQueue(for lane: RTMPPublisherLane) {
+        guard lane.reconnectTask == nil else { return }
+        lane.reconnectAttempts += 1
+        let attempt = lane.reconnectAttempts
+        let delay = Self.rtmpReconnectBackoff(forAttempt: attempt)
+        lane.reconnectTask = Task { [weak self, lane] in
+            do {
+                try await Task.sleep(for: delay)
+            } catch {
+                return
+            }
+            await self?.reconnectRTMPPublisherLane(id: lane.id, attempt: attempt)
+        }
+    }
+
+    private func reconnectRTMPPublisherLane(id: UUID, attempt: Int) async {
+        let reconnectState = queue.sync { () -> (target: RTMPPublishTarget, configuration: MediaPipelineConfiguration)? in
+            guard let lane = rtmpPublisherLanes.first(where: { $0.id == id }),
+                  !lane.isClosing,
+                  lane.reconnectAttempts == attempt,
+                  lane.status.state == .reconnecting
+            else {
+                return nil
+            }
+            lane.reconnectTask = nil
+            return (lane.target, mediaConfiguration)
+        }
+        guard let reconnectState else { return }
+
+        let publisher = rtmpPublisherFactory(reconnectState.target)
+        do {
+            try await publisher.configure(configuration: reconnectState.configuration)
+            try await publisher.connect()
+            try Task.checkCancellation()
+            queue.sync {
+                guard let lane = self.rtmpPublisherLanes.first(where: { $0.id == id }),
+                      !lane.isClosing,
+                      lane.reconnectAttempts == attempt
+                else {
+                    Task {
+                        await publisher.close()
+                    }
+                    return
+                }
+                lane.cancelObservation()
+                lane.publisher = publisher
+                lane.status.state = .publishing
+                lane.status.failureDetail = nil
+                lane.status.pendingAppends = publisher.appendQueueSnapshot().pendingCount
+                lane.status.appendCapacity = publisher.appendQueueSnapshot().capacity
+                lane.lastByteCount = nil
+                lane.lastByteSampledAt = nil
+                self.startRTMPPublisherObservationOnQueue(for: lane)
+                self.rtmpPublisher = self.rtmpPublisherLanes.first(where: { $0.canAcceptAppends })?.publisher ?? publisher
+                self.streamFailureReason = nil
+                self.updateAggregateRTMPHealthOnQueue()
+            }
+        } catch {
+            await publisher.close()
+            queue.sync {
+                self.markRTMPPublisherLaneFailedOnQueue(
+                    id: id,
+                    detail: Self.rtmpConnectionFailureDetail,
+                    schedulesReconnect: true
+                )
+            }
+        }
+    }
+
+    private func startRTMPPublisherObservationOnQueue(for lane: RTMPPublisherLane) {
+        lane.cancelObservation()
+        let publisher = lane.publisher
         let events = publisher.events
         let eventTask = Task { [weak self] in
             for await event in events {
                 Self.rtmpLogger.info("RTMP status \(event.statusCode, privacy: .public)")
-                self?.handleRTMPPublisherEvent(event, publisher: publisher)
+                self?.handleRTMPPublisherEvent(event, laneID: lane.id, publisher: publisher)
             }
         }
         let healthTask = Task { [weak self] in
             while !Task.isCancelled {
-                await self?.sampleRTMPThroughput(from: publisher)
+                await self?.sampleRTMPThroughput(laneID: lane.id, from: publisher)
                 try? await Task.sleep(for: .seconds(1))
             }
         }
 
-        queue.sync {
-            self.rtmpPublisherEventTask?.cancel()
-            self.rtmpPublisherHealthTask?.cancel()
-            self.rtmpPublisherEventTask = eventTask
-            self.rtmpPublisherHealthTask = healthTask
-            self.observedRTMPPublisher = publisher
-            self.streamFailureReason = nil
-            self.lastRTMPByteCount = nil
-            self.lastRTMPByteSampledAt = nil
-            self.mediaHealth.publishState = Self.initialPublishState(
-                hasPublisher: true,
-                supportsPublishStatus: Self.capturesMediaForStreamTransport
-            )
-            self.mediaHealth.outboundBytesPerSecond = 0
-            self.mediaHealth.bitrateKbps = 0
-            let appendQueueSnapshot = publisher.appendQueueSnapshot()
-            self.mediaHealth.rtmpPendingAppends = appendQueueSnapshot.pendingCount
-            self.mediaHealth.rtmpAppendCapacity = appendQueueSnapshot.capacity
-        }
+        lane.eventTask = eventTask
+        lane.healthTask = healthTask
+        lane.lastByteCount = nil
+        lane.lastByteSampledAt = nil
     }
 
     private func stopRTMPPublisherObservation() {
         queue.sync {
-            self.rtmpPublisherEventTask?.cancel()
-            self.rtmpPublisherEventTask = nil
-            self.rtmpPublisherHealthTask?.cancel()
-            self.rtmpPublisherHealthTask = nil
-            self.observedRTMPPublisher = nil
-            self.lastRTMPByteCount = nil
-            self.lastRTMPByteSampledAt = nil
-            self.mediaHealth.publishState = .disconnected
-            self.mediaHealth.outboundBytesPerSecond = 0
-            self.mediaHealth.bitrateKbps = 0
-            self.mediaHealth.rtmpPendingAppends = 0
-            self.mediaHealth.rtmpAppendCapacity = 0
+            self.clearRTMPPublisherLanesOnQueue(clearFailure: true)
+            self.updateAggregateRTMPHealthOnQueue()
         }
     }
 
-    private func handleRTMPPublisherEvent(_ event: RTMPPublisherEvent, publisher: any RTMPPublisher) {
+    private func handleRTMPPublisherEvent(_ event: RTMPPublisherEvent, laneID: UUID, publisher: any RTMPPublisher) {
         queue.sync {
-            guard Self.shouldAcceptRTMPPublisherEvent(
-                isCurrentPublisher: self.rtmpPublisher === publisher,
-                isObservedConnectingPublisher: self.rtmpPublisher == nil && self.observedRTMPPublisher === publisher
-            ) else {
+            guard let lane = self.rtmpPublisherLanes.first(where: { $0.id == laneID }),
+                  lane.publisher === publisher,
+                  !lane.isClosing
+            else { return }
+
+            if let publishState = event.publishState {
+                switch publishState {
+                case .disconnected:
+                    lane.status.state = .reconnecting
+                case .handshaking:
+                    lane.status.state = .connecting
+                case .publishing:
+                    lane.status.state = .publishing
+                    lane.status.failureDetail = nil
+                    lane.reconnectAttempts = 0
+                }
+            }
+            if event.failureReason != nil {
+                self.markRTMPPublisherLaneFailedOnQueue(
+                    id: laneID,
+                    detail: Self.rtmpConnectionFailureDetail,
+                    schedulesReconnect: true
+                )
                 return
             }
-            if let publishState = event.publishState {
-                self.mediaHealth.publishState = publishState
-            }
-            if let failureReason = event.failureReason {
-                self.streamFailureReason = failureReason
-                self.mediaHealth.publishState = .disconnected
-            }
+            self.rtmpPublisher = self.rtmpPublisherLanes.first(where: { $0.canAcceptAppends })?.publisher
+                ?? self.rtmpPublisherLanes.first?.publisher
+            self.updateAggregateRTMPHealthOnQueue()
         }
     }
 
-    private func sampleRTMPThroughput(from publisher: any RTMPPublisher) async {
+    private func sampleRTMPThroughput(laneID: UUID, from publisher: any RTMPPublisher) async {
         let byteCount = await publisher.currentByteCount()
         let appendQueueSnapshot = publisher.appendQueueSnapshot()
         let sampledAt = Date()
         queue.sync {
-            guard self.rtmpPublisher === publisher else { return }
+            guard let lane = self.rtmpPublisherLanes.first(where: { $0.id == laneID }),
+                  lane.publisher === publisher,
+                  !lane.isClosing
+            else { return }
 
-            if let previousByteCount = self.lastRTMPByteCount,
-               let previousSampledAt = self.lastRTMPByteSampledAt {
+            if let previousByteCount = lane.lastByteCount,
+               let previousSampledAt = lane.lastByteSampledAt {
                 let byteDelta = max(0, byteCount - previousByteCount)
                 let elapsed = sampledAt.timeIntervalSince(previousSampledAt)
                 let bytesPerSecond = Self.outboundBytesPerSecond(byteDelta: byteDelta, elapsed: elapsed)
-                self.mediaHealth.outboundBytesPerSecond = bytesPerSecond
-                self.mediaHealth.bitrateKbps = Self.outboundBitrateKbps(bytesPerSecond: bytesPerSecond)
+                lane.status.outboundBytesPerSecond = bytesPerSecond
             }
 
-            self.lastRTMPByteCount = byteCount
-            self.lastRTMPByteSampledAt = sampledAt
-            self.mediaHealth.rtmpPendingAppends = appendQueueSnapshot.pendingCount
-            self.mediaHealth.rtmpAppendCapacity = appendQueueSnapshot.capacity
+            lane.lastByteCount = byteCount
+            lane.lastByteSampledAt = sampledAt
+            lane.status.pendingAppends = appendQueueSnapshot.pendingCount
+            lane.status.appendCapacity = appendQueueSnapshot.capacity
+            if lane.status.state == .degraded,
+               appendQueueSnapshot.pendingCount < appendQueueSnapshot.capacity {
+                lane.status.state = .publishing
+                lane.status.failureDetail = nil
+            }
+            self.updateAggregateRTMPHealthOnQueue()
+        }
+    }
+
+    private func updateAggregateRTMPHealthOnQueue() {
+        let statuses = rtmpPublisherLanes.map(\.status)
+        let outboundBytesPerSecond = statuses.reduce(Int64(0)) { $0 + $1.outboundBytesPerSecond }
+        mediaHealth.outboundBytesPerSecond = outboundBytesPerSecond
+        mediaHealth.bitrateKbps = Self.outboundBitrateKbps(bytesPerSecond: outboundBytesPerSecond)
+        mediaHealth.rtmpPendingAppends = statuses.reduce(0) { $0 + $1.pendingAppends }
+        mediaHealth.rtmpAppendCapacity = statuses.reduce(0) { $0 + $1.appendCapacity }
+        if statuses.contains(where: { $0.state == .publishing || $0.state == .degraded }) {
+            mediaHealth.publishState = .publishing
+        } else if statuses.contains(where: { $0.state == .connecting || $0.state == .reconnecting }) {
+            mediaHealth.publishState = .handshaking
+        } else {
+            mediaHealth.publishState = .disconnected
+        }
+    }
+
+    private func updateGlobalRTMPFailureIfAllLanesExhaustedOnQueue() {
+        guard !rtmpPublisherLanes.isEmpty,
+              rtmpPublisherLanes.allSatisfy({ $0.status.state == .failed })
+        else {
+            return
+        }
+        streamFailureReason = rtmpPublisherLanes
+            .compactMap { $0.status.failureDetail }
+            .first ?? "All RTMP destinations failed."
+        finishFirstPublishingVideoFrameWaitOnQueue(throwing: MediaPipelineError.unavailable(streamFailureReason ?? "All RTMP destinations failed."))
+    }
+
+    private func closeRTMPPublisherLanes(_ lanes: [RTMPPublisherLane]) async {
+        await withTaskGroup(of: Void.self) { group in
+            for lane in lanes {
+                group.addTask {
+                    await lane.closePublisherOnce(lane.publisher)
+                }
+            }
+        }
+    }
+
+    static func rtmpReconnectBackoff(forAttempt attempt: Int) -> Duration {
+        switch attempt {
+        case ..<2:
+            .seconds(1)
+        case 2:
+            .seconds(2)
+        default:
+            .seconds(4)
         }
     }
 
@@ -2495,7 +2797,28 @@ public final class SystemMediaPipeline: NSObject, MediaPipeline, SCStreamOutput,
     }
 
     private func publish(_ sampleBuffer: CMSampleBuffer, track: UInt8 = 0) -> Bool {
-        rtmpPublisher?.append(sampleBuffer, track: track) ?? true
+        Self.fanOut(sampleBuffer, track: track, lanes: rtmpPublisherLanes)
+    }
+
+    static func fanOut(
+        _ sampleBuffer: CMSampleBuffer,
+        track: UInt8,
+        lanes: [RTMPPublisherLane]
+    ) -> Bool {
+        var attemptedAppend = false
+        var didAcceptAppend = false
+        for lane in lanes where lane.canAcceptAppends {
+            attemptedAppend = true
+            if lane.publisher.append(sampleBuffer, track: track) {
+                didAcceptAppend = true
+            } else {
+                lane.status.state = .degraded
+                lane.status.failureDetail = Self.rtmpBackpressureDetail
+                lane.status.appendRejections += 1
+                lane.status.pendingAppends = max(lane.status.pendingAppends, lane.status.appendCapacity)
+            }
+        }
+        return attemptedAppend ? didAcceptAppend : true
     }
 
     private func publishAudio(_ sampleBuffer: CMSampleBuffer, track: UInt8) -> Bool {
@@ -2816,7 +3139,7 @@ public final class SystemMediaPipeline: NSObject, MediaPipeline, SCStreamOutput,
         mediaHealth = StreamHealth(
             bitrateKbps: 0,
             publishState: Self.initialPublishState(
-                hasPublisher: rtmpPublisher != nil,
+                hasPublisher: hasActiveRTMPPublisherOnQueue,
                 supportsPublishStatus: Self.capturesMediaForStreamTransport
             ),
             captureFPS: 0,
@@ -3371,7 +3694,7 @@ public final class SystemMediaPipeline: NSObject, MediaPipeline, SCStreamOutput,
         if Self.shouldPublishMicrophoneOutputSample(
             isPublishingOutput: isPublishingMicrophoneOutput(output)
                 || (publishingCaptureMode == .recordingOwned && output === microphoneOutput),
-            hasPublisher: rtmpPublisher != nil
+            hasPublisher: hasActiveRTMPPublisherOnQueue
         ), let track = publishingAudioTrackPlan.microphone {
             didAcceptAudio = publishAudio(sampleBuffer, track: track)
         }
@@ -3749,6 +4072,71 @@ private struct DedicatedPublishingCaptureSnapshot {
     }
 }
 
+final class RTMPPublisherLane: @unchecked Sendable {
+    let id: UUID
+    let destination: StreamDestination
+    let target: RTMPPublishTarget
+    var publisher: any RTMPPublisher
+    var status: StreamDestinationStatus
+    var eventTask: Task<Void, Never>?
+    var healthTask: Task<Void, Never>?
+    var reconnectTask: Task<Void, Never>?
+    var reconnectAttempts = 0
+    var lastByteCount: Int64?
+    var lastByteSampledAt: Date?
+    var isClosing = false
+    private let closeLock = NSLock()
+    private var publisherCloseTasks: [ObjectIdentifier: Task<Void, Never>] = [:]
+
+    init(
+        destination: StreamDestination,
+        target: RTMPPublishTarget,
+        publisher: any RTMPPublisher,
+        status: StreamDestinationStatus
+    ) {
+        self.id = destination.id
+        self.destination = destination
+        self.target = target
+        self.publisher = publisher
+        self.status = status
+    }
+
+    var canAcceptAppends: Bool {
+        status.state == .publishing || status.state == .degraded
+    }
+
+    func cancelObservation() {
+        eventTask?.cancel()
+        eventTask = nil
+        healthTask?.cancel()
+        healthTask = nil
+        reconnectTask?.cancel()
+        reconnectTask = nil
+    }
+
+    func closePublisherInBackgroundOnce(_ publisher: any RTMPPublisher) {
+        _ = closeTask(for: publisher)
+    }
+
+    func closePublisherOnce(_ publisher: any RTMPPublisher) async {
+        await closeTask(for: publisher).value
+    }
+
+    private func closeTask(for publisher: any RTMPPublisher) -> Task<Void, Never> {
+        let publisherID = ObjectIdentifier(publisher)
+        return closeLock.withLock {
+            if let task = publisherCloseTasks[publisherID] {
+                return task
+            }
+            let task = Task {
+                await publisher.close()
+            }
+            publisherCloseTasks[publisherID] = task
+            return task
+        }
+    }
+}
+
 private struct SharedScreenRouteResult {
     var didAppendRecording: Bool
     var didTryAppendRecording: Bool
@@ -3764,7 +4152,7 @@ private struct PublishingCaptureState {
     var shouldStopStream: Bool
     var shouldStopMicrophoneSession: Bool
     var shouldStopCameraSession: Bool
-    var publisher: (any RTMPPublisher)?
+    var publisherLanes: [RTMPPublisherLane]
 }
 
 private final class FirstPublishingVideoFrameCancellation: @unchecked Sendable {
@@ -4041,6 +4429,7 @@ extension RTMPPublisher {
 
     func currentByteCount() async -> Int64 { 0 }
     func appendQueueSnapshot() -> RTMPAppendQueueSnapshot { .empty }
+
 }
 
 final class RTMPAppendBackpressureGate: @unchecked Sendable {

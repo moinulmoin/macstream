@@ -20,7 +20,7 @@ screen or window with a webcam. The primary product promise is:
 3. Configure the canvas background, padding, source split, viewport, and preview cost.
 4. Preview Webcam, Screen + Webcam, Screen, or BRB.
 5. Optionally make a short local proof recording.
-6. Start RTMP/RTMPS publishing, optionally recording the same session locally.
+6. Start one or more RTMP/RTMPS destinations, optionally recording the same session locally.
 7. Monitor throughput, dropped frames, A/V drift, queue pressure, and recovery state.
 8. Stop cleanly and review the exported session diagnostics when needed.
 
@@ -30,7 +30,7 @@ MacStream is deliberately narrower than OBS:
 
 - streaming is the primary workflow;
 - recording is a companion capability, not an editing pipeline;
-- multi-destination publishing is planned but not implemented;
+- multi-destination publishing is intentionally capped at three simultaneous targets;
 - video editing and post-production are out of scope;
 - automatic camera effects are optional future enhancements;
 - AI features are deferred until long-session reliability and performance gates pass.

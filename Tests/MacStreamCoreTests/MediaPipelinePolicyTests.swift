@@ -1411,7 +1411,7 @@ func systemMediaPipelineClosesConnectedPublisherWhenStartIsCancelledBeforeRegist
     )
 
     let task = Task {
-        try await pipeline.startStream(destination: destination)
+        try await pipeline.startStream(destinations: [destination])
     }
 
     await publisher.waitUntilConnectStarted()
@@ -1454,8 +1454,96 @@ func systemMediaPipelineSharesMicrophoneCaptureWhenStreamingAndRecordingOverlap(
 func systemMediaPipelineStartsPreviewSessionWithoutEndpoint() async throws {
     let pipeline = SystemMediaPipeline()
 
-    try await pipeline.startStream(destination: StreamDestination())
+    try await pipeline.startStream(destinations: [StreamDestination()])
     await pipeline.stopStream()
+}
+
+@Test
+func systemMediaPipelineConnectsDestinationsConcurrently() async throws {
+    let barrier = RTMPConnectBarrier()
+    let firstPublisher = TestRTMPPublisher(connect: { await barrier.connect() })
+    let secondPublisher = TestRTMPPublisher(connect: { await barrier.connect() })
+    let publishers: [String: TestRTMPPublisher] = [
+        "first-key": firstPublisher,
+        "second-key": secondPublisher
+    ]
+    let pipeline = SystemMediaPipeline { target in
+        publishers[target.streamName]!
+    }
+    let destinations = [
+        StreamDestination(name: "First", rtmpURL: "rtmp://127.0.0.1/live/first-key"),
+        StreamDestination(name: "Second", rtmpURL: "rtmp://127.0.0.1/live/second-key")
+    ]
+
+    let startTask = Task {
+        try await pipeline.startStream(destinations: destinations)
+    }
+    for _ in 0..<20 where await barrier.startedCount < 2 {
+        try? await Task.sleep(for: .milliseconds(5))
+    }
+    let startedBeforeRelease = await barrier.startedCount
+    await barrier.releaseAll()
+    try await startTask.value
+    await pipeline.stopStream()
+
+    #expect(startedBeforeRelease == 2)
+    #expect(firstPublisher.closeCount == 1)
+    #expect(secondPublisher.closeCount == 1)
+}
+
+@Test
+func systemMediaPipelineKeepsHealthyDestinationLiveAfterPartialStartFailure() async throws {
+    let healthyPublisher = TestRTMPPublisher()
+    let failingPublisher = TestRTMPPublisher(connect: {
+        throw MediaPipelineError.unavailable("Failed URL includes failing-key")
+    })
+    let publishers: [String: TestRTMPPublisher] = [
+        "healthy-key": healthyPublisher,
+        "failing-key": failingPublisher
+    ]
+    let pipeline = SystemMediaPipeline { target in
+        publishers[target.streamName]!
+    }
+    let destinations = [
+        StreamDestination(name: "Healthy", rtmpURL: "rtmp://127.0.0.1/live/healthy-key"),
+        StreamDestination(name: "Failing", rtmpURL: "rtmp://127.0.0.1/live/failing-key")
+    ]
+
+    try await pipeline.startStream(destinations: destinations)
+    let statuses = pipeline.destinationStatuses
+
+    #expect(pipeline.streamFailureDetail == nil)
+    #expect(statuses.first(where: { $0.name == "Healthy" })?.state == .publishing)
+    #expect(statuses.first(where: { $0.name == "Failing" })?.state == .reconnecting)
+    #expect(statuses.first(where: { $0.name == "Failing" })?.failureDetail == "RTMP destination connection failed.")
+    #expect(!String(describing: statuses).contains("failing-key"))
+
+    await pipeline.stopStream()
+    #expect(healthyPublisher.closeCount == 1)
+    #expect(failingPublisher.closeCount == 1)
+}
+
+@Test
+func rtmpFanoutAcceptsWhenAnyDestinationAcceptsAndVisitsEveryLane() throws {
+    let acceptingPublisher = TestRTMPPublisher(acceptsAppends: true)
+    let saturatedPublisher = TestRTMPPublisher(acceptsAppends: false)
+    let acceptingDestination = StreamDestination(name: "Healthy", rtmpURL: "rtmp://127.0.0.1/live/healthy-key")
+    let saturatedDestination = StreamDestination(name: "Slow", rtmpURL: "rtmp://127.0.0.1/live/slow-key")
+    let lanes = [
+        try makePublishingLane(destination: acceptingDestination, publisher: acceptingPublisher),
+        try makePublishingLane(destination: saturatedDestination, publisher: saturatedPublisher)
+    ]
+    let sampleBuffer = try makeFanoutSampleBuffer()
+
+    let accepted = SystemMediaPipeline.fanOut(sampleBuffer, track: 0, lanes: lanes)
+
+    #expect(accepted)
+    #expect(acceptingPublisher.appendCount == 1)
+    #expect(saturatedPublisher.appendCount == 1)
+    #expect(lanes[0].status.state == .publishing)
+    #expect(lanes[1].status.state == .degraded)
+    #expect(lanes[1].status.appendRejections == 1)
+    #expect(lanes[1].status.failureDetail == "Destination is falling behind; media is being dropped.")
 }
 
 
@@ -1555,4 +1643,129 @@ private actor OrderedAppendBlocker {
         }
         startWaiters = pendingWaiters
     }
+}
+
+private actor RTMPConnectBarrier {
+    private(set) var startedCount = 0
+    private var isReleased = false
+    private var waiters: [CheckedContinuation<Void, Never>] = []
+
+    func connect() async {
+        startedCount += 1
+        guard !isReleased else { return }
+        await withCheckedContinuation { continuation in
+            waiters.append(continuation)
+        }
+    }
+
+    func releaseAll() {
+        isReleased = true
+        let pending = waiters
+        waiters.removeAll()
+        pending.forEach { $0.resume() }
+    }
+}
+
+private final class TestRTMPPublisher: RTMPPublisher, @unchecked Sendable {
+    typealias Connect = @Sendable () async throws -> Void
+
+    private let lock = NSLock()
+    private let connectOperation: Connect
+    private let acceptsAppends: Bool
+    private var storedAppendCount = 0
+    private var storedCloseCount = 0
+
+    init(
+        acceptsAppends: Bool = true,
+        connect: @escaping Connect = {}
+    ) {
+        self.acceptsAppends = acceptsAppends
+        self.connectOperation = connect
+    }
+
+    var appendCount: Int {
+        lock.withLock { storedAppendCount }
+    }
+
+    var closeCount: Int {
+        lock.withLock { storedCloseCount }
+    }
+
+    func connect() async throws {
+        try await connectOperation()
+    }
+
+    func append(_ sampleBuffer: CMSampleBuffer, track: UInt8) -> Bool {
+        lock.withLock {
+            storedAppendCount += 1
+        }
+        return acceptsAppends
+    }
+
+    func close() async {
+        lock.withLock {
+            storedCloseCount += 1
+        }
+    }
+}
+
+private func makePublishingLane(
+    destination: StreamDestination,
+    publisher: any RTMPPublisher
+) throws -> RTMPPublisherLane {
+    RTMPPublisherLane(
+        destination: destination,
+        target: try destination.rtmpPublishTarget(),
+        publisher: publisher,
+        status: StreamDestinationStatus(
+            id: destination.id,
+            name: destination.name,
+            state: .publishing
+        )
+    )
+}
+
+private func makeFanoutSampleBuffer() throws -> CMSampleBuffer {
+    var pixelBuffer: CVPixelBuffer?
+    let attributes: [CFString: Any] = [
+        kCVPixelBufferCGImageCompatibilityKey: true,
+        kCVPixelBufferCGBitmapContextCompatibilityKey: true
+    ]
+    let status = CVPixelBufferCreate(
+        kCFAllocatorDefault,
+        2,
+        2,
+        kCVPixelFormatType_32BGRA,
+        attributes as CFDictionary,
+        &pixelBuffer
+    )
+    guard status == kCVReturnSuccess, let pixelBuffer else {
+        throw MediaPipelineError.unavailable("Could not create test pixel buffer.")
+    }
+
+    var formatDescription: CMVideoFormatDescription?
+    guard CMVideoFormatDescriptionCreateForImageBuffer(
+        allocator: kCFAllocatorDefault,
+        imageBuffer: pixelBuffer,
+        formatDescriptionOut: &formatDescription
+    ) == noErr, let formatDescription else {
+        throw MediaPipelineError.unavailable("Could not create test video format.")
+    }
+
+    var timing = CMSampleTimingInfo(
+        duration: CMTime(value: 1, timescale: 30),
+        presentationTimeStamp: .zero,
+        decodeTimeStamp: .invalid
+    )
+    var sampleBuffer: CMSampleBuffer?
+    guard CMSampleBufferCreateReadyWithImageBuffer(
+        allocator: kCFAllocatorDefault,
+        imageBuffer: pixelBuffer,
+        formatDescription: formatDescription,
+        sampleTiming: &timing,
+        sampleBufferOut: &sampleBuffer
+    ) == noErr, let sampleBuffer else {
+        throw MediaPipelineError.unavailable("Could not create test sample buffer.")
+    }
+    return sampleBuffer
 }

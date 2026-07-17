@@ -74,8 +74,10 @@ settings so the configured output is represented before going live.
 ### Streaming And Recording
 
 - RTMP and RTMPS publishing with the HaishinKit release build
+- Up to three simultaneous RTMP/RTMPS destinations from one composed output
 - Destination presets for Twitch, YouTube, Facebook, X, Kick, and custom ingest
-- Stream keys stored in Keychain and redacted from UI, logs, and exports
+- Per-destination connection, throughput, queue, failure, and reconnect status
+- Stream keys stored per destination in Keychain and redacted from UI, logs, and exports
 - Automatic runtime reconnect with recovery outcome and downtime tracking
 - Optional record-while-streaming workflow
 - Local `.mov` recording for Screen and composited Screen + Webcam
@@ -103,7 +105,7 @@ on it for important broadcasts.
 | Streaming | Primary product workflow |
 | Recording | Optional local copy during or outside a stream |
 | Video editing | Out of scope |
-| Multi-destination streaming | Planned, not implemented |
+| Multi-destination streaming | Up to three independent RTMP/RTMPS targets |
 | Native camera effects | Under evaluation |
 | AI and transcription | Deferred roadmap work |
 | Intel Macs | Not currently targeted |

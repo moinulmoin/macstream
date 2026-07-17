@@ -50,6 +50,8 @@ struct StreamHealthView: View {
                 metric("Memory", "\(store.systemPressure.memoryUsedMB)", "MB")
             }
 
+            destinationStatusBreakdown
+
             resourceBreakdown
 
             if let efficiencyPressureDetail = store.systemPressure.efficiencyPressureDetail {
@@ -59,6 +61,23 @@ struct StreamHealthView: View {
             }
         }
         .studioCard()
+    }
+
+    @ViewBuilder
+    private var destinationStatusBreakdown: some View {
+        if !store.destinationStatuses.isEmpty {
+            VStack(alignment: .leading, spacing: StudioMetrics.xs) {
+                Text("Destinations")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+
+                ForEach(store.destinationStatuses) { status in
+                    destinationStatusRow(status)
+                }
+            }
+            .padding(StudioMetrics.sm)
+            .background(Color.primary.opacity(0.04), in: RoundedRectangle(cornerRadius: StudioMetrics.controlRadius, style: .continuous))
+        }
     }
 
     private var resourceBreakdown: some View {
@@ -102,6 +121,37 @@ struct StreamHealthView: View {
         }
         .padding(StudioMetrics.sm)
         .background(Color.primary.opacity(0.04), in: RoundedRectangle(cornerRadius: StudioMetrics.controlRadius, style: .continuous))
+    }
+
+    private func destinationStatusRow(_ status: StreamDestinationStatus) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: StudioMetrics.sm) {
+            Label(status.name.isEmpty ? "RTMP Destination" : status.name, systemImage: destinationStatusSymbol(status.state))
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(destinationStatusTint(status.state))
+                .lineLimit(1)
+                .frame(width: 150, alignment: .leading)
+
+            Text(status.state.title)
+                .font(.caption)
+                .foregroundStyle(destinationStatusTint(status.state))
+                .frame(width: 78, alignment: .leading)
+
+            Text("\(status.outboundBytesPerSecond) B/s")
+                .font(.system(.caption, design: .monospaced).weight(.semibold))
+                .frame(width: 92, alignment: .trailing)
+
+            Text("queue \(status.pendingAppends)/\(status.appendCapacity) · \(status.appendRejections) rejected")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+
+            if let failureDetail = status.failureDetail, !failureDetail.isEmpty {
+                Text(failureDetail)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
+        }
+        .accessibilityElement(children: .combine)
     }
 
 
@@ -154,6 +204,24 @@ struct StreamHealthView: View {
         case .preview: "play.circle"
         case .endpointValidation: "network"
         case .rtmpPublish: "antenna.radiowaves.left.and.right"
+        }
+    }
+
+    private func destinationStatusSymbol(_ state: StreamDestinationPublishState) -> String {
+        switch state {
+        case .publishing: "checkmark.circle.fill"
+        case .connecting, .degraded, .reconnecting: "arrow.triangle.2.circlepath"
+        case .failed: "exclamationmark.triangle.fill"
+        case .idle: "circle"
+        }
+    }
+
+    private func destinationStatusTint(_ state: StreamDestinationPublishState) -> Color {
+        switch state {
+        case .publishing: StudioPalette.success
+        case .connecting, .degraded, .reconnecting: StudioPalette.warning
+        case .failed: StudioPalette.live
+        case .idle: .secondary
         }
     }
 

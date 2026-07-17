@@ -7,6 +7,13 @@ and the project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- Added up to three simultaneous RTMP/RTMPS destinations from one shared capture and composition path.
+- Added per-destination connection, throughput, queue, failure, and reconnect status in the studio.
+- Added UUID-keyed destination metadata and per-destination Keychain secrets.
+- Added per-destination backpressure detection with visible degraded state and rejection counts.
+
 ### Changed
 
 - Licensed MacStream under GNU AGPL v3.0 only.
@@ -14,6 +21,8 @@ and the project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Made release documentation strict for every tag without release-specific exceptions.
 - Defined sequential v0.4, v0.5, and v0.6 core-product milestones.
 - Removed pre-current layout, background, and health-payload decoding branches.
+- Changed session reports to export every destination and its runtime state without endpoint URLs or stream keys.
+- Redacted RTMP transport failures and separated pasted publish URLs from stream keys before persistence.
 
 ## [0.3.0] - 2026-07-17
 

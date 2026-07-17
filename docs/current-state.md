@@ -4,9 +4,9 @@ MacStream is a personal-use macOS 26 prototype focused on Apple Silicon
 streaming performance and reliability.
 
 The current public release is
-[v0.4.0](https://github.com/moinulmoin/macstream/releases/tag/v0.4.0). See the
+[v0.5.0](https://github.com/moinulmoin/macstream/releases/tag/v0.5.0). See the
 [changelog](../CHANGELOG.md) for release history and the
-[versioned release notes](releases/v0.4.0.md) for user-facing highlights.
+[versioned release notes](releases/v0.5.0.md) for user-facing highlights.
 
 ## Implemented
 
@@ -15,6 +15,8 @@ The current public release is
 - ScreenCaptureKit display and window capture.
 - Configurable backgrounds, padding, source gap, split presets, corner radius,
   source zoom, and viewport positioning.
+- Full-screen content with native presenter cutout, edge presets, manual
+  placement, adjustable scale, and framed fallback.
 - Independent preview-cost and encoded-output settings.
 - Permission and source preflight with idle-only device rescans.
 - Local Screen and composited Screen + Webcam `.mov` recording.
@@ -59,14 +61,15 @@ Scope can change after each release based on real usage.
 - Keep publisher queues bounded so one slow destination cannot stall the others.
 - Provide clear start, partial-failure, retry, and stop behavior in the studio.
 
-### v0.5 - Presenter Composition (next)
+### v0.5 - Presenter Composition (shipped)
 
 - Add full-screen content with a movable presenter cutout overlay.
 - Provide left, right, top, and bottom placement presets plus manual positioning.
-- Keep preview, stream, and recording output visually identical.
+- Keep captured program preview, stream, and recording output visually identical;
+  use a framed fallback in the idle setup preview.
 - Fall back cleanly when person segmentation is unavailable or too expensive.
 
-### v0.6 - Workflow Polish And Measured Performance
+### v0.6 - Workflow Polish And Measured Performance (next)
 
 - Tighten first-run permissions, destination setup, and recovery guidance.
 - Evaluate native camera effects only where public macOS APIs provide reliable

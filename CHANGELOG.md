@@ -7,6 +7,21 @@ and the project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-07-17
+
+### Added
+
+- Added full-screen content with a native person-segmented presenter overlay.
+- Added left, right, top, bottom, and manual presenter placement with adjustable scale.
+- Added asynchronous, coalesced Vision segmentation capped at 12 FPS so inference cannot block capture or publishing.
+
+### Changed
+
+- Shared presenter geometry across setup preview, recording, and RTMP program output.
+- Kept camera zoom and pan independent from presenter placement and scale.
+- Fell back to a framed webcam overlay when a current segmentation matte is unavailable, stale, or mismatched with the latest camera frame.
+- Hot-applied presenter layout changes without restarting active screen or camera capture.
+
 ## [0.4.0] - 2026-07-17
 
 ### Added
@@ -93,7 +108,8 @@ and the project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Initial OpenCue macOS streaming prototype.
 - SwiftUI studio, capture pipeline, local recording, CI, and packaging support.
 
-[Unreleased]: https://github.com/moinulmoin/macstream/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/moinulmoin/macstream/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/moinulmoin/macstream/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/moinulmoin/macstream/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/moinulmoin/macstream/compare/v0.2.2...v0.3.0
 [0.2.2]: https://github.com/moinulmoin/macstream/compare/v0.2.1...v0.2.2

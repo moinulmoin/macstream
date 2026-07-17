@@ -62,14 +62,17 @@ permissions for the relevant sources.
 ### Layout
 
 - Side-by-side screen and webcam presets
+- Full-screen content with a movable native presenter cutout
+- Left, right, top, bottom, and manual presenter placement
 - Adjustable source split, gap, and canvas padding
 - Independent screen and webcam zoom and viewport positioning
 - Adjustable source corner radius
 - Preset colors, custom colors, and local background images
 - Preview quality controls independent from encoded output quality
 
-The program preview and the stream/recording compositor share the same layout
-settings so the configured output is represented before going live.
+The setup preview and program compositor share layout geometry. During
+recording or publishing, the program preview displays the same composited
+frames written locally or sent to streaming destinations.
 
 ### Streaming And Recording
 
@@ -188,7 +191,7 @@ Useful project documents:
 - [Contributing](CONTRIBUTING.md)
 - [License](LICENSE)
 - [Third-Party Notices](THIRD_PARTY_NOTICES.md)
-- [Release Notes](docs/releases/v0.4.0.md)
+- [Release Notes](docs/releases/v0.5.0.md)
 - [Architecture](docs/architecture.md)
 - [Current State](docs/current-state.md)
 - [Reliability Goal](docs/v0.3-reliability-goal.md)

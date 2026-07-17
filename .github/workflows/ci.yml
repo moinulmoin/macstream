@@ -113,7 +113,7 @@ jobs:
       - name: Package ad-hoc app bundle smoke
         shell: bash
         env:
-          MAC_STREAM_VERSION: 0.4.0
+          MAC_STREAM_VERSION: 0.5.0
           MAC_STREAM_BUILD_NUMBER: ${{ github.run_number }}
           MAC_STREAM_BUILD_CONFIGURATION: release
           MAC_STREAM_BUILD_ARCH: arm64

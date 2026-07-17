@@ -139,7 +139,7 @@ public release.
 > Source: [qa-checklist.md](qa-checklist.md), [architecture.md](architecture.md),
 > [current-state.md](current-state.md)
 
-This section is future work, not a v0.3 release gate. Existing provider
+This section is future work, not a release gate. Existing provider
 scaffolding must remain isolated from capture and may not delay core streaming
 reliability work.
 
@@ -210,7 +210,7 @@ reliability work.
 - [ ] README.md is complete and reflects all implemented features
 - [ ] Architecture doc matches current implementation (class names, file structure)
 - [ ] Product brief aligns with README feature claims
-- [ ] Reliability goal accurately separates in/out for v0.3.0
+- [ ] Reliability goal documents the foundational v0.3 scope and current limits
 - [ ] QA checklist covers all current features
 - [ ] Release process doc matches CI workflow reality
 - [ ] Launch readiness checklist (this document) is linked from README
@@ -254,16 +254,17 @@ dev build.
 
 | Gate | Why it's high risk |
 |------|--------------------|
-| Screen + Webcam RTMP live ingest with remote camera | First time composited RTMP has been proven against a real endpoint |
+| Screen + Webcam and multi-destination RTMP ingest | Composition and fan-out regressions must not reach a release |
 | Long-session A/V sync (30+ min) | Drift over time is the most common streaming bug class |
-| Fresh-Mac TCC flow with packaged app | Permission UX on a clean Mac hasn't been tested with the final bundle |
-| Developer ID → notarization → Gatekeeper | End-to-end release ceremony hasn't been exercised with real credentials |
+| Fresh-Mac TCC flow with packaged app | Permission recovery must be rechecked on clean macOS users or machines |
+| Developer ID → notarization → Gatekeeper | Every release must preserve the exercised signing and distribution chain |
 
 ### Once everything is checked
 
-Tag `v0.3.0` only after all v0.3 reliability gates pass, push the tag,
-and the release workflow ships a signed, notarized, Gatekeeper-accepted
-`MacStream.app`.
+Tag a release only after its implementation, review, automated gates, and
+release documentation are complete. Push the annotated tag and require the
+release workflow to ship a signed, notarized, Gatekeeper-accepted
+`MacStream.app` and DMG.
 
 Add a launch blog post or release announcement linking to the README, and
 you're live.

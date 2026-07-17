@@ -4,9 +4,9 @@ MacStream is a personal-use macOS 26 prototype focused on Apple Silicon
 streaming performance and reliability.
 
 The current public release is
-[v0.3.0](https://github.com/moinulmoin/macstream/releases/tag/v0.3.0). See the
+[v0.4.0](https://github.com/moinulmoin/macstream/releases/tag/v0.4.0). See the
 [changelog](../CHANGELOG.md) for release history and the
-[versioned release notes](releases/v0.3.0.md) for user-facing highlights.
+[versioned release notes](releases/v0.4.0.md) for user-facing highlights.
 
 ## Implemented
 
@@ -31,9 +31,9 @@ The current public release is
 - Sparkle updates through signed ZIP artifacts.
 - Developer ID, hardened runtime, notarization, and DMG release automation.
 
-## Post-v0.3 Validation
+## Ongoing Validation
 
-The automated v0.3 gate covers real RTMP ingest, encoded H.264 validation,
+The automated release gate covers real RTMP ingest, encoded H.264 validation,
 bounded queues, recovery behavior, signing, notarization, stapling, Gatekeeper,
 and artifact checksums. Ongoing manual confidence work includes:
 
@@ -51,7 +51,7 @@ MacStream works on one release goal at a time. The next milestone does not begin
 until the current milestone is implemented, reviewed, validated, and shipped.
 Scope can change after each release based on real usage.
 
-### v0.4 - Multi-Destination Streaming (implemented, release validation pending)
+### v0.4 - Multi-Destination Streaming (shipped)
 
 - Configure and persist multiple RTMP/RTMPS destinations.
 - Publish the same composed program output to selected destinations.
@@ -59,7 +59,7 @@ Scope can change after each release based on real usage.
 - Keep publisher queues bounded so one slow destination cannot stall the others.
 - Provide clear start, partial-failure, retry, and stop behavior in the studio.
 
-### v0.5 - Presenter Composition
+### v0.5 - Presenter Composition (next)
 
 - Add full-screen content with a movable presenter cutout overlay.
 - Provide left, right, top, and bottom placement presets plus manual positioning.

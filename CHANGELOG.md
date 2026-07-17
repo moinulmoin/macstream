@@ -7,6 +7,8 @@ and the project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-07-17
+
 ### Added
 
 - Added up to three simultaneous RTMP/RTMPS destinations from one shared capture and composition path.
@@ -91,7 +93,8 @@ and the project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Initial OpenCue macOS streaming prototype.
 - SwiftUI studio, capture pipeline, local recording, CI, and packaging support.
 
-[Unreleased]: https://github.com/moinulmoin/macstream/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/moinulmoin/macstream/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/moinulmoin/macstream/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/moinulmoin/macstream/compare/v0.2.2...v0.3.0
 [0.2.2]: https://github.com/moinulmoin/macstream/compare/v0.2.1...v0.2.2
 [0.2.1]: https://github.com/moinulmoin/macstream/compare/v0.2.0...v0.2.1

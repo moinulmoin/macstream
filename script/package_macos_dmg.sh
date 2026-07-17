@@ -28,7 +28,7 @@ fi
 VERSION="${VERSION#v}"
 
 if [[ ! "$VERSION" =~ ^[0-9]+(\.[0-9]+){1,2}$ ]]; then
-  echo "MAC_STREAM_VERSION must be a bundle version like 0.3.0 or v0.3.0; got '$VERSION'" >&2
+  echo "MAC_STREAM_VERSION must be a bundle version like 0.4.0 or v0.4.0; got '$VERSION'" >&2
   exit 2
 fi
 

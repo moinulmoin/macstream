@@ -86,8 +86,8 @@ Use this checklist before release promotion and after any media-pipeline change.
 
 ## Optional Provider Scaffolding
 
-These checks protect existing optional scaffolding. They are not a v0.3 feature
-gate and must not take priority over streaming reliability.
+These checks protect existing optional scaffolding. They are not a release gate
+and must not take priority over streaming reliability.
 
 - Confirm optional setup assistance is visible only while capture is idle.
 - Confirm capture never waits for or depends on a model provider.

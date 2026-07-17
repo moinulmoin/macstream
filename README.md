@@ -188,7 +188,7 @@ Useful project documents:
 - [Contributing](CONTRIBUTING.md)
 - [License](LICENSE)
 - [Third-Party Notices](THIRD_PARTY_NOTICES.md)
-- [Release Notes](docs/releases/v0.3.0.md)
+- [Release Notes](docs/releases/v0.4.0.md)
 - [Architecture](docs/architecture.md)
 - [Current State](docs/current-state.md)
 - [Reliability Goal](docs/v0.3-reliability-goal.md)

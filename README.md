@@ -10,6 +10,7 @@
 ![Swift 6](https://img.shields.io/badge/Swift-6.0-F05138?logo=swift&logoColor=white)
 ![Release](https://img.shields.io/github/v/release/moinulmoin/macstream?display_name=tag)
 ![CI](https://github.com/moinulmoin/macstream/actions/workflows/ci.yml/badge.svg)
+![License](https://img.shields.io/badge/License-AGPL--3.0--only-blue)
 
 <img src=".github/assets/macstream-studio.png" width="860" alt="MacStream Studio with the program preview and control room" />
 
@@ -38,9 +39,8 @@ until capture, publishing, performance, and long-session reliability are proven.
 ## Install
 
 Starting with v0.3, download the signed and notarized DMG from
-[GitHub Releases](https://github.com/moinulmoin/macstream/releases), open it,
-and drag `MacStream.app` to `Applications`. Legacy v0.2.x releases are ZIP-only;
-unzip the archive and move `MacStream.app` to `Applications`.
+[the latest GitHub Release](https://github.com/moinulmoin/macstream/releases/latest),
+open it, and drag `MacStream.app` to `Applications`.
 
 The ZIP asset on each release is used by Sparkle for in-app updates. First-time
 installations should use the DMG.
@@ -182,6 +182,11 @@ MAC_STREAM_ENABLE_HAISHINKIT=1 swift test
 
 Useful project documents:
 
+- [Changelog](CHANGELOG.md)
+- [Contributing](CONTRIBUTING.md)
+- [License](LICENSE)
+- [Third-Party Notices](THIRD_PARTY_NOTICES.md)
+- [Release Notes](docs/releases/v0.3.0.md)
 - [Architecture](docs/architecture.md)
 - [Current State](docs/current-state.md)
 - [Reliability Goal](docs/v0.3-reliability-goal.md)
@@ -191,3 +196,10 @@ Useful project documents:
 
 Issues and focused pull requests are welcome. Do not include stream keys,
 credentials, signed certificates, or generated build output.
+
+## License
+
+MacStream is free software licensed under the
+[GNU Affero General Public License v3.0 only](LICENSE). Redistribution and
+qualifying remote-network use of modified versions must follow its corresponding
+source requirements.

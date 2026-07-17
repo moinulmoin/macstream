@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: "Semver release tag or dry-run version, for example v0.2.0"
+        description: "Semver release tag or non-publishing build version, for example v0.3.1"
         required: true
         type: string
       publish_release:
@@ -77,6 +77,25 @@ jobs:
           set -euo pipefail
           git rev-parse --verify "refs/tags/${{ steps.version.outputs.release_version }}" >/dev/null
           git checkout --detach "refs/tags/${{ steps.version.outputs.release_version }}"
+
+      - name: Validate release documentation
+        shell: bash
+        env:
+          RELEASE_VERSION: ${{ steps.version.outputs.release_version }}
+        run: |
+          set -euo pipefail
+          notes_path="docs/releases/$RELEASE_VERSION.md"
+          changelog_version="${RELEASE_VERSION#v}"
+
+          if [[ ! -s "$notes_path" ]]; then
+            echo "Missing versioned release notes: $notes_path" >&2
+            exit 2
+          fi
+
+          if ! grep -Fq "## [$changelog_version] - " CHANGELOG.md; then
+            echo "CHANGELOG.md is missing a dated [$changelog_version] section" >&2
+            exit 2
+          fi
 
       - name: Show toolchain
         shell: bash
@@ -426,6 +445,12 @@ jobs:
       BUNDLE_ID: com.ideaplexa.macstream
       GH_REPO: ${{ github.repository }}
     steps:
+      - name: Check out release documentation
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        with:
+          ref: ${{ needs.macos.outputs.release_version }}
+          sparse-checkout: docs/releases
+
       - name: Download workflow artifact
         shell: bash
         env:
@@ -449,22 +474,18 @@ jobs:
           DMG_SHA256: ${{ needs.macos.outputs.dmg_sha256 }}
         run: |
           set -euo pipefail
+          source_notes="$GITHUB_WORKSPACE/docs/releases/$RELEASE_VERSION.md"
           notes_path="$RUNNER_TEMP/macstream-release-notes.md"
+
+          if [[ ! -s "$source_notes" ]]; then
+            echo "Missing versioned release notes: docs/releases/$RELEASE_VERSION.md" >&2
+            exit 2
+          fi
+
+          cp "$source_notes" "$notes_path"
           {
-            echo "## MacStream $RELEASE_VERSION"
             echo
-            echo "### Highlights"
-            echo
-            echo "- Hardened single-destination RTMP/RTMPS publishing with runtime reconnect health."
-            echo "- Reliable Screen + Webcam composition for preview, streaming, and local recording."
-            echo "- Optional record-while-streaming with explicit recording ownership."
-            echo "- A/V drift, dropped-frame, RTMP queue, throughput, and recovery observability."
-            echo "- Independent encoded-output and preview-quality controls for Apple Silicon Macs."
-            echo "- Signed, notarized, and stapled DMG for first-time installation."
-            echo
-            echo "MacStream remains a personal-use prototype. Validate important broadcasts with a private or test destination first."
-            echo
-            echo "### Downloads"
+            echo "## Downloads"
             echo
             echo "Signed, notarized, and stapled macOS artifacts:"
             echo
@@ -486,7 +507,7 @@ jobs:
             echo "spctl -a -vv --type execute \"MacStream.app\""
             echo "xcrun stapler validate \"MacStream.app\""
             echo "\`\`\`"
-          } >"$notes_path"
+          } >>"$notes_path"
           echo "notes_path=$notes_path" >>"$GITHUB_OUTPUT"
 
       - name: Publish GitHub Release

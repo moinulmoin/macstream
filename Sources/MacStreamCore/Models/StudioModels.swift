@@ -339,61 +339,6 @@ public struct StreamHealth: Codable, Equatable, Sendable {
         self.maxAbsoluteAVDriftMilliseconds = max(0, maxAbsoluteAVDriftMilliseconds)
     }
 
-    private enum CodingKeys: String, CodingKey {
-        case bitrateKbps
-        case outboundBytesPerSecond
-        case publishState
-        case droppedFrames
-        case captureFPS
-        case audioLevel
-        case roundTripMs
-        case audioDeliveryState
-        case microphoneDeliveryState
-        case rtmpAudioAppendRejections
-        case rtmpPendingAppends
-        case rtmpAppendCapacity
-        case avDriftMilliseconds
-        case maxAbsoluteAVDriftMilliseconds
-    }
-
-    public init(from decoder: any Decoder) throws {
-        let container = try decoder.container(keyedBy: CodingKeys.self)
-        bitrateKbps = try container.decode(Int.self, forKey: .bitrateKbps)
-        outboundBytesPerSecond = try container.decode(Int64.self, forKey: .outboundBytesPerSecond)
-        publishState = try container.decode(RTMPPublishState.self, forKey: .publishState)
-        droppedFrames = try container.decode(Int.self, forKey: .droppedFrames)
-        captureFPS = try container.decode(Int.self, forKey: .captureFPS)
-        audioLevel = try container.decode(Double.self, forKey: .audioLevel)
-        roundTripMs = try container.decode(Int.self, forKey: .roundTripMs)
-        audioDeliveryState = try container.decodeIfPresent(
-            AudioDeliveryState.self,
-            forKey: .audioDeliveryState
-        ) ?? .inactive
-        microphoneDeliveryState = try container.decodeIfPresent(
-            AudioDeliveryState.self,
-            forKey: .microphoneDeliveryState
-        ) ?? .inactive
-        rtmpAudioAppendRejections = try container.decodeIfPresent(
-            Int.self,
-            forKey: .rtmpAudioAppendRejections
-        ) ?? 0
-        rtmpPendingAppends = try container.decodeIfPresent(
-            Int.self,
-            forKey: .rtmpPendingAppends
-        ) ?? 0
-        rtmpAppendCapacity = try container.decodeIfPresent(
-            Int.self,
-            forKey: .rtmpAppendCapacity
-        ) ?? 0
-        avDriftMilliseconds = try container.decodeIfPresent(
-            Int.self,
-            forKey: .avDriftMilliseconds
-        ) ?? 0
-        maxAbsoluteAVDriftMilliseconds = try container.decodeIfPresent(
-            Int.self,
-            forKey: .maxAbsoluteAVDriftMilliseconds
-        ) ?? 0
-    }
 }
 
 public enum SystemPressureLevel: String, Codable, Sendable {
@@ -870,11 +815,6 @@ public enum StudioCanvasBackground: Codable, Equatable, Sendable {
     }
 
     public init(from decoder: any Decoder) throws {
-        if let legacyStyle = try? StudioBackgroundStyle(from: decoder) {
-            self = .preset(legacyStyle)
-            return
-        }
-
         let container = try decoder.container(keyedBy: CodingKeys.self)
         let kind = try container.decodeIfPresent(Kind.self, forKey: .kind) ?? .preset
         switch kind {
@@ -970,12 +910,9 @@ public struct StudioLayoutSettings: Codable, Equatable, Sendable {
     private enum CodingKeys: String, CodingKey {
         case preset
         case background
-        case backgroundStyle
         case canvasPadding
         case screenViewport
         case webcamViewport
-        case screenZoom
-        case webcamZoom
         case sourceGap
         case sourceCornerRadius
     }
@@ -1031,24 +968,18 @@ public struct StudioLayoutSettings: Codable, Equatable, Sendable {
         let canvasPadding = Self.normalizedCanvasPadding(
             try container.decodeIfPresent(Double.self, forKey: .canvasPadding) ?? 0.04
         )
-        let background: StudioCanvasBackground
-        if let decodedBackground = try container.decodeIfPresent(StudioCanvasBackground.self, forKey: .background) {
-            background = decodedBackground
-        } else {
-            background = .preset(try container.decodeIfPresent(StudioBackgroundStyle.self, forKey: .backgroundStyle) ?? .black)
-        }
+        let background = try container.decodeIfPresent(
+            StudioCanvasBackground.self,
+            forKey: .background
+        ) ?? .preset(.black)
         let screenViewport = try container.decodeIfPresent(
             StudioSourceViewportSettings.self,
             forKey: .screenViewport
-        ) ?? StudioSourceViewportSettings(
-            zoom: try container.decodeIfPresent(Double.self, forKey: .screenZoom) ?? 1
-        )
+        ) ?? StudioSourceViewportSettings()
         let webcamViewport = try container.decodeIfPresent(
             StudioSourceViewportSettings.self,
             forKey: .webcamViewport
-        ) ?? StudioSourceViewportSettings(
-            zoom: try container.decodeIfPresent(Double.self, forKey: .webcamZoom) ?? 1
-        )
+        ) ?? StudioSourceViewportSettings()
         self.init(
             preset: try container.decodeIfPresent(StudioLayoutPreset.self, forKey: .preset) ?? .pictureInPicture,
             background: background,
@@ -1065,9 +996,6 @@ public struct StudioLayoutSettings: Codable, Equatable, Sendable {
         var container = encoder.container(keyedBy: CodingKeys.self)
         try container.encode(preset, forKey: .preset)
         try container.encode(background, forKey: .background)
-        if let backgroundStyle = background.presetStyle {
-            try container.encode(backgroundStyle, forKey: .backgroundStyle)
-        }
         try container.encode(canvasPadding, forKey: .canvasPadding)
         try container.encode(screenViewport, forKey: .screenViewport)
         try container.encode(webcamViewport, forKey: .webcamViewport)

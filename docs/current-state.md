@@ -3,6 +3,11 @@
 MacStream is a personal-use macOS 26 prototype focused on Apple Silicon
 streaming performance and reliability.
 
+The current public release is
+[v0.3.0](https://github.com/moinulmoin/macstream/releases/tag/v0.3.0). See the
+[changelog](../CHANGELOG.md) for release history and the
+[versioned release notes](releases/v0.3.0.md) for user-facing highlights.
+
 ## Implemented
 
 - Native SwiftUI studio with Webcam, Screen + Webcam, Screen, and BRB scenes.
@@ -24,23 +29,51 @@ streaming performance and reliability.
 - Sparkle updates through signed ZIP artifacts.
 - Developer ID, hardened runtime, notarization, and DMG release automation.
 
-## v0.3 Release Gates
+## Post-v0.3 Validation
 
-- Complete long-duration RTMP and RTMP-plus-recording runs.
-- Validate short and sustained network interruption recovery.
-- Collect CPU, memory, and thread-count evidence under representative capture.
-- Confirm acceptable A/V drift and no unbounded RTMP queue growth.
-- Test packaged permission recovery on a clean macOS user or machine.
-- Prove the final signed, notarized, and stapled DMG through Gatekeeper.
+The automated v0.3 gate covers real RTMP ingest, encoded H.264 validation,
+bounded queues, recovery behavior, signing, notarization, stapling, Gatekeeper,
+and artifact checksums. Ongoing manual confidence work includes:
 
-The detailed budgets and scenarios are in
+- repeated 60-minute RTMP and RTMP-plus-recording sessions;
+- short and sustained network interruption recovery on real destinations;
+- CPU, memory, thermal, thread-count, and A/V drift comparisons across Macs;
+- packaged permission recovery on clean macOS users or machines.
+
+The detailed budgets, scenarios, and evidence requirements remain in
 [v0.3-reliability-goal.md](v0.3-reliability-goal.md).
+
+## Sequential Roadmap
+
+MacStream works on one release goal at a time. The next milestone does not begin
+until the current milestone is implemented, reviewed, validated, and shipped.
+Scope can change after each release based on real usage.
+
+### v0.4 - Multi-Destination Streaming
+
+- Configure and persist multiple RTMP/RTMPS destinations.
+- Publish the same composed program output to selected destinations.
+- Track connection, throughput, failure, and reconnect state independently.
+- Keep publisher queues bounded so one slow destination cannot stall the others.
+- Provide clear start, partial-failure, retry, and stop behavior in the studio.
+
+### v0.5 - Presenter Composition
+
+- Add full-screen content with a movable presenter cutout overlay.
+- Provide left, right, top, and bottom placement presets plus manual positioning.
+- Keep preview, stream, and recording output visually identical.
+- Fall back cleanly when person segmentation is unavailable or too expensive.
+
+### v0.6 - Workflow Polish And Measured Performance
+
+- Tighten first-run permissions, destination setup, and recovery guidance.
+- Evaluate native camera effects only where public macOS APIs provide reliable
+  control.
+- Optimize CPU, memory, and latency from measured real-session bottlenecks
+  instead of speculative micro-optimization.
 
 ## Deferred
 
-- Multi-destination simultaneous streaming.
-- Presenter cutout and green-screen-style webcam composition.
-- Native camera effects such as Center Stage, Portrait, and Studio Light control.
 - Video editing and post-production.
 - AI setup, transcription, summaries, and cue explanations.
 

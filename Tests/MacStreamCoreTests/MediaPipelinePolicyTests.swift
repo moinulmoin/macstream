@@ -307,33 +307,6 @@ func systemMediaPipelineRecordsRecordingSystemAudioCallbacksBeforeWriterSessionS
 }
 
 @Test
-func streamHealthDecodesLegacyPayloadWithInactiveAudioDelivery() throws {
-    let payload = Data(
-        """
-        {
-          "bitrateKbps": 4500,
-          "outboundBytesPerSecond": 562500,
-          "publishState": "publishing",
-          "droppedFrames": 2,
-          "captureFPS": 30,
-          "audioLevel": 0.4,
-          "roundTripMs": 24
-        }
-        """.utf8
-    )
-
-    let health = try JSONDecoder().decode(StreamHealth.self, from: payload)
-
-    #expect(health.audioDeliveryState == .inactive)
-    #expect(health.microphoneDeliveryState == .inactive)
-    #expect(health.rtmpAudioAppendRejections == 0)
-    #expect(health.rtmpPendingAppends == 0)
-    #expect(health.rtmpAppendCapacity == 0)
-    #expect(health.avDriftMilliseconds == 0)
-    #expect(health.maxAbsoluteAVDriftMilliseconds == 0)
-}
-
-@Test
 func streamHealthRoundTripsAudioDeliveryFields() throws {
     let health = StreamHealth(
         audioDeliveryState: .stalled,

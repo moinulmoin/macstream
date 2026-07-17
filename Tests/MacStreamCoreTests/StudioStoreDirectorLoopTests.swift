@@ -197,14 +197,14 @@ func studioPreferencesClampCountdownSeconds() throws {
 
     #expect(preferences.directorCountdownSeconds == 1)
 
-    let legacyPreferences = """
+    let partialPreferences = """
     {
       "recordWhileStreaming": true,
       "directorCountdownSeconds": 99,
       "performanceMode": "responsive"
     }
     """
-    let decoded = try JSONDecoder().decode(StudioPreferences.self, from: Data(legacyPreferences.utf8))
+    let decoded = try JSONDecoder().decode(StudioPreferences.self, from: Data(partialPreferences.utf8))
 
     #expect(decoded.recordWhileStreaming)
     #expect(decoded.directorCountdownSeconds == 5)
@@ -265,7 +265,12 @@ func outputAndLayoutPreferencesNormalizeAndPersist() throws {
     #expect(decoded.layoutSettings == layoutSettings)
 
     let persistedLayout = """
-    {"preset":"evenSplit","backgroundStyle":"warm","screenZoom":0.1,"webcamZoom":4.2}
+    {
+      "preset":"evenSplit",
+      "background":{"kind":"preset","style":"warm"},
+      "screenViewport":{"zoom":0.1},
+      "webcamViewport":{"zoom":4.2}
+    }
     """
     let decodedLayout = try JSONDecoder().decode(
         StudioLayoutSettings.self,
@@ -304,14 +309,12 @@ func sourceViewportSettingsNormalizeZoomAndPan() {
 }
 
 @Test
-func layoutSettingsDecodeNewViewportFieldsAheadOfLegacyZooms() throws {
+func layoutSettingsDecodeCurrentViewportFields() throws {
     let persistedLayout = """
     {
       "preset": "screen70Webcam30",
-      "backgroundStyle": "stage",
+      "background": { "kind": "preset", "style": "stage" },
       "canvasPadding": 0.046,
-      "screenZoom": 0.8,
-      "webcamZoom": 1.8,
       "screenViewport": { "zoom": 1.257, "panX": 0.331, "panY": -0.777 },
       "webcamViewport": { "zoom": 1.112, "panX": -0.252, "panY": 0.244 },
       "sourceGap": 0.0316,
@@ -356,17 +359,14 @@ func layoutSettingsRoundTripPersistsCanonicalCanvasValues() throws {
 }
 
 @Test
-func canvasBackgroundSupportsLegacyPresetCustomColorAndLocalImage() throws {
-    let legacyBackground = try JSONDecoder().decode(
-        StudioCanvasBackground.self,
-        from: Data(#""warm""#.utf8)
-    )
+func canvasBackgroundSupportsPresetCustomColorAndLocalImage() throws {
+    let preset = StudioCanvasBackground.preset(.warm)
     let customColor = StudioCanvasBackground.color(
         StudioRGBAColor(red: -1, green: 0.3336, blue: .infinity, alpha: .nan)
     )
     let localImage = StudioCanvasBackground.localImage(path: "/tmp/canvas-bg.png")
 
-    #expect(legacyBackground == .preset(.warm))
+    #expect(try JSONDecoder().decode(StudioCanvasBackground.self, from: JSONEncoder().encode(preset)) == preset)
     #expect(customColor == .color(StudioRGBAColor(red: 0, green: 0.334, blue: 1, alpha: 1)))
     #expect(try JSONDecoder().decode(StudioCanvasBackground.self, from: JSONEncoder().encode(customColor)) == customColor)
     #expect(try JSONDecoder().decode(StudioCanvasBackground.self, from: JSONEncoder().encode(localImage)) == localImage)

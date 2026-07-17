@@ -21,6 +21,8 @@ DIST_DIR="${MAC_STREAM_DIST_DIR:-$ROOT_DIR/dist}"
 ENTITLEMENTS="${MAC_STREAM_ENTITLEMENTS:-$ROOT_DIR/Resources/Entitlements/MacStream.Release.entitlements}"
 INFO_TEMPLATE="${MAC_STREAM_INFO_PLIST_TEMPLATE:-$ROOT_DIR/Resources/Info.plist}"
 APP_ICON="${MAC_STREAM_APP_ICON:-$ROOT_DIR/Resources/AppIcon/MacStream.icns}"
+PROJECT_LICENSE="${MAC_STREAM_LICENSE:-$ROOT_DIR/LICENSE}"
+THIRD_PARTY_NOTICES="${MAC_STREAM_THIRD_PARTY_NOTICES:-$ROOT_DIR/THIRD_PARTY_NOTICES.md}"
 APP_BUNDLE="$DIST_DIR/$APP_NAME.app"
 APP_CONTENTS="$APP_BUNDLE/Contents"
 APP_MACOS="$APP_CONTENTS/MacOS"
@@ -67,6 +69,16 @@ fi
 
 if [[ ! -f "$APP_ICON" ]]; then
   echo "App icon not found: $APP_ICON" >&2
+  exit 2
+fi
+
+if [[ ! -f "$PROJECT_LICENSE" ]]; then
+  echo "Project license not found: $PROJECT_LICENSE" >&2
+  exit 2
+fi
+
+if [[ ! -f "$THIRD_PARTY_NOTICES" ]]; then
+  echo "Third-party notices not found: $THIRD_PARTY_NOTICES" >&2
   exit 2
 fi
 
@@ -139,6 +151,31 @@ copy_runtime_frameworks() {
   fi
 }
 
+copy_license_notices() {
+  local dependency_license_dir="$APP_RESOURCES/ThirdPartyLicenses"
+  local checkouts_dir="$ROOT_DIR/.build/checkouts"
+  local license_file
+  local dependency_name
+
+  cp "$PROJECT_LICENSE" "$APP_RESOURCES/LICENSE"
+  cp "$THIRD_PARTY_NOTICES" "$APP_RESOURCES/THIRD_PARTY_NOTICES.md"
+  mkdir -p "$dependency_license_dir"
+
+  if [[ ! -d "$checkouts_dir" ]]; then
+    return
+  fi
+
+  while IFS= read -r license_file; do
+    dependency_name="$(basename "$(dirname "$license_file")")"
+    cp "$license_file" "$dependency_license_dir/$dependency_name-$(basename "$license_file")"
+  done < <(find "$checkouts_dir" -mindepth 2 -maxdepth 2 -type f \( \
+    -iname 'LICENSE' -o \
+    -iname 'LICENSE.md' -o \
+    -iname 'LICENSE.txt' -o \
+    -iname 'NOTICE' \
+  \))
+}
+
 build_app() {
   local swift_build_args=(-c "$CONFIGURATION")
   if [[ -n "$BUILD_ARCH" ]]; then
@@ -154,6 +191,7 @@ build_app() {
   mkdir -p "$APP_MACOS" "$APP_RESOURCES" "$APP_FRAMEWORKS"
   cp "$build_binary" "$APP_BINARY"
   cp "$APP_ICON" "$APP_RESOURCES/MacStream.icns"
+  copy_license_notices
   chmod +x "$APP_BINARY"
   copy_runtime_frameworks "$build_products_dir"
   xattr -cr "$APP_BUNDLE" >/dev/null 2>&1 || true
@@ -341,6 +379,9 @@ verify_app() {
   fi
   test -f "$APP_RESOURCES/MacStream.icns"
   test -f "$BUILD_VARIANT_PLIST"
+  test -f "$APP_RESOURCES/LICENSE"
+  test -f "$APP_RESOURCES/THIRD_PARTY_NOTICES.md"
+  test -n "$(find "$APP_RESOURCES/ThirdPartyLicenses" -type f -print -quit)"
 }
 
 emit_github_outputs() {

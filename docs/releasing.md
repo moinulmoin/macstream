@@ -22,10 +22,10 @@ Pull requests and pushes to `main` run `.github/workflows/ci.yml` on macOS 26 ar
 Tagged releases are built by `.github/workflows/release.yml` on macOS 26 arm64 runners. The workflow:
 
 1. Runs the Swift test suite.
-2. Runs the real HaishinKit publisher against a localhost FFmpeg RTMP ingest and verifies the decoded H.264 stream.
+2. Runs the real HaishinKit publisher against a local RTMP ingest and uses FFmpeg to verify the decoded H.264 stream.
 3. Builds the default, HaishinKit, MLX, and combined compile configurations.
 4. Imports the Developer ID certificate into a temporary keychain.
-5. Packages `MacStream.app` with `MAC_STREAM_ENABLE_HAISHINKIT=1`, versioned `Info.plist` values from the tag, and release-only guards for the Sparkle public key and HaishinKit variant.
+5. Packages `MacStream.app` with `MAC_STREAM_ENABLE_HAISHINKIT=1`, versioned `Info.plist` values from the tag, project and dependency license notices, and release-only guards for the Sparkle public key and HaishinKit variant.
 6. Signs with hardened runtime and release entitlements.
 7. Submits the app zip to Apple notarization with `xcrun notarytool`.
 8. Staples and validates the notarization ticket.
@@ -55,6 +55,20 @@ Developer ID Application: Ideaplexa LLC (53P98M92V7)
 `MAC_STREAM_MACOS_CERTIFICATE_P12_BASE64` is the base64-encoded `.p12` Developer ID Application certificate. `MAC_STREAM_APP_SPECIFIC_PASSWORD` is an Apple app-specific password for the Apple ID that can submit notarization requests for `MAC_STREAM_APPLE_TEAM_ID`.
 
 MacStream ships Sparkle auto-updates. The EdDSA-signed ZIP is the Sparkle update payload. The signed, notarized, and stapled DMG is the first-time installer. Both formats and their SHA256 checksums are published on GitHub Releases.
+
+## Release Documentation
+
+Every release has two checked-in documentation updates:
+
+1. Move notable entries from `CHANGELOG.md` under `Unreleased` into a dated
+   `vX.Y.Z` section and refresh the comparison links.
+2. Add user-facing notes at `docs/releases/vX.Y.Z.md`.
+
+The GitHub release workflow reads the versioned notes from the release tag and
+appends artifact names, checksums, and verification commands. This keeps the
+GitHub Release body reviewable in git and prevents one release's highlights
+from being reused for a later version. Every tag is treated the same: the
+workflow fails before building when either release document is missing.
 
 ## Sparkle Auto-Updates
 
@@ -95,9 +109,13 @@ codesign --verify --strict dist/MacStream.app
 Confirm:
 
 - the working tree is clean,
+- `CHANGELOG.md` contains the version and release date,
+- `docs/releases/vX.Y.Z.md` exists and describes the shipped version,
 - `MacStream.app` launches,
 - the bundle identifier is `com.ideaplexa.macstream`,
 - the app icon appears in Finder,
+- the packaged app contains `LICENSE`, `THIRD_PARTY_NOTICES.md`, and fetched
+  dependency license files under `Contents/Resources`,
 - the expected signing identity is present,
 - packaged Camera, Microphone, and Screen Recording permission recovery works,
 - local `Screen` and composited `Screen + Webcam` recordings play back correctly,
@@ -132,7 +150,11 @@ git push origin main
 git push origin vX.Y.Z
 ```
 
-Manual dry runs are available from the `Release` workflow in GitHub Actions. Manual publishing requires `publish_release=true` and an existing matching tag.
+Manual non-publishing release builds are available from the `Release` workflow
+in GitHub Actions. They still use production signing credentials, submit the app
+and DMG to Apple notarization, and sign the Sparkle update; they only skip the
+GitHub Release and appcast publication steps. Manual publishing requires
+`publish_release=true` and an existing matching tag.
 
 ## Artifacts
 
@@ -206,6 +228,7 @@ That release simulation intentionally fails while `Resources/Info.plist` still c
 14. Verify RTMP destination persistence and redaction in events/exports.
 15. Export clip markers and session report twice in quick succession; confirm filenames do not collide.
 16. Confirm the Sparkle ZIP remains downloadable and matches the enclosure URL and signature in `appcast.xml`.
+17. Confirm the packaged app contains the AGPL text and third-party license notices.
 
 ## Rollback
 

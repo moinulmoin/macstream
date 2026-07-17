@@ -245,6 +245,41 @@ public enum RecordingState: Equatable, Sendable {
     }
 }
 
+public enum OperatorRecoveryGuidanceKind: String, Codable, Equatable, Sendable {
+    case failedStart
+    case reconnecting
+    case recoveryFailed
+    case backpressure
+}
+
+public enum OperatorRecoveryAction: String, Codable, Equatable, Sendable {
+    case retryStream
+    case waitForRecovery
+    case checkDestination
+    case reduceOutputCost
+}
+
+public struct OperatorRecoveryGuidance: Identifiable, Codable, Equatable, Sendable {
+    public var kind: OperatorRecoveryGuidanceKind
+    public var title: String
+    public var detail: String
+    public var action: OperatorRecoveryAction
+
+    public var id: String { kind.rawValue }
+
+    public init(
+        kind: OperatorRecoveryGuidanceKind,
+        title: String,
+        detail: String,
+        action: OperatorRecoveryAction
+    ) {
+        self.kind = kind
+        self.title = title
+        self.detail = detail
+        self.action = action
+    }
+}
+
 public enum RTMPPublishState: String, Codable, Equatable, Sendable {
     case disconnected
     case handshaking

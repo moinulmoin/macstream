@@ -4,6 +4,8 @@ import MacStreamCore
 
 struct DestinationView: View {
     var store: StudioStore
+    @Environment(\.openSettings) private var openSettings
+    @AppStorage(StudioSettingsTab.storageKey) private var selectedSettingsTabRaw = StudioSettingsTab.general.rawValue
 
     var body: some View {
         VStack(alignment: .leading, spacing: StudioMetrics.md) {
@@ -15,7 +17,10 @@ struct DestinationView: View {
                 HStack(spacing: StudioMetrics.sm) {
                     StudioBadge(title: destinationStatusTitle, systemImage: store.destinationMode.symbolName, tint: destinationDetailTint)
 
-                    SettingsLink {
+                    Button {
+                        selectedSettingsTabRaw = StudioSettingsTab.destination.rawValue
+                        openSettings()
+                    } label: {
                         Label("Configure", systemImage: "gearshape")
                             .labelStyle(.titleAndIcon)
                     }

@@ -4,6 +4,8 @@ import MacStreamCore
 struct SourceRackView: View {
     var store: StudioStore
     @SceneStorage("MacStream.SourceRackView.showMoreSources") private var showMoreSources = false
+    @SceneStorage("MacStream.SourceRackView.showNativeCameraEffects") private var showNativeCameraEffects = false
+    @StateObject private var nativeCameraEffectsController = NativeCameraEffectsController()
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -13,7 +15,10 @@ struct SourceRackView: View {
                 subtitle: "Choose the inputs you want armed before output starts."
             ) {
                 HStack(spacing: 8) {
-                    StudioBadge(title: "\(primarySources.count) primary", systemImage: "switch.2", tint: .secondary)
+                    StudioBadge(title: "\(primarySources.count)", systemImage: "switch.2", tint: .secondary)
+                        .help("\(primarySources.count) primary sources")
+                        .accessibilityLabel(Text("Primary sources"))
+                        .accessibilityValue(Text("\(primarySources.count)"))
                     refreshDevicesButton
                 }
             }
@@ -118,6 +123,17 @@ struct SourceRackView: View {
                 }
 
                 if source.kind == .camera, source.isEnabled {
+                    NativeCameraEffectsStatusView(
+                        controller: nativeCameraEffectsController,
+                        isExpanded: $showNativeCameraEffects
+                    )
+                        .onAppear {
+                            nativeCameraEffectsController.updateSelectedCameraDevice(id: store.selectedCameraDeviceID)
+                        }
+                        .onChange(of: store.selectedCameraDeviceID) { _, newID in
+                            nativeCameraEffectsController.updateSelectedCameraDevice(id: newID)
+                        }
+
                     CameraEnhancementControls(
                         settings: Binding(
                             get: { store.preferences.cameraEnhancements },
@@ -169,7 +185,7 @@ struct SourceRackView: View {
                 ProgressView()
                     .controlSize(.small)
             } else {
-                Label("Refresh", systemImage: "arrow.clockwise")
+                Image(systemName: "arrow.clockwise")
             }
         }
         .buttonStyle(.bordered)
@@ -256,6 +272,77 @@ struct SourceRackView: View {
 private struct DeviceOption: Identifiable {
     let id: String
     let name: String
+}
+
+private struct NativeCameraEffectsStatusView: View {
+    @ObservedObject var controller: NativeCameraEffectsController
+    @Binding var isExpanded: Bool
+
+    var body: some View {
+        DisclosureGroup(isExpanded: $isExpanded) {
+            VStack(alignment: .leading, spacing: StudioMetrics.sm) {
+                ForEach(controller.status.rows) { row in
+                    HStack(spacing: 6) {
+                        Image(systemName: row.systemImage)
+                            .font(.caption)
+                            .foregroundStyle(tint(for: row.tone))
+                            .frame(width: 16)
+
+                        Text(row.title)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+
+                        Spacer(minLength: StudioMetrics.sm)
+
+                        Text(row.value)
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(tint(for: row.tone))
+                            .lineLimit(1)
+                    }
+                }
+
+                HStack(spacing: StudioMetrics.sm) {
+                    Button {
+                        controller.refresh()
+                    } label: {
+                        Image(systemName: "arrow.clockwise")
+                    }
+                    .buttonStyle(.bordered)
+                    .help("Refresh status after changing Apple Video Effects")
+                    .accessibilityLabel(Text("Refresh camera effect status"))
+
+                    Button {
+                        controller.openSystemVideoEffects()
+                    } label: {
+                        Label("Video Effects", systemImage: "slider.horizontal.3")
+                    }
+                    .buttonStyle(.bordered)
+                    .help("Open Apple's Video Effects controls, then use Refresh to update status")
+                }
+                .controlSize(.small)
+            }
+            .padding(.top, StudioMetrics.sm)
+        } label: {
+            Label("Apple Video Effects", systemImage: "wand.and.stars")
+                .font(.caption.weight(.semibold))
+        }
+        .onChange(of: isExpanded) { _, expanded in
+            if expanded {
+                controller.refresh()
+            }
+        }
+    }
+
+    private func tint(for tone: NativeCameraEffectsStatusTone) -> Color {
+        switch tone {
+        case .active:
+            StudioPalette.success
+        case .available:
+            StudioPalette.info
+        case .muted:
+            .secondary
+        }
+    }
 }
 
 private struct CameraEnhancementControls: View {

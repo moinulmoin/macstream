@@ -15,12 +15,14 @@ public struct PreflightAdvice: Identifiable, Equatable, Sendable {
 }
 
 public enum PreflightAdviceAction: Equatable, Sendable {
+    case requestCapturePermission(CaptureDeviceKind)
     case openCaptureSettings(CaptureDeviceKind)
     case rescanCapture
     case selectScreenCaptureTarget(ScreenCaptureTarget)
     case selectCameraDevice(String)
     case selectMicrophoneDevice(String)
     case fixSelectedSceneSources
+    case openDestinationSetup
     case usePreviewDestination
 }
 
@@ -33,6 +35,32 @@ public enum PreflightCoach {
         selectedCameraDeviceID: String?,
         selectedMicrophoneDeviceID: String?,
         destination: StreamDestination,
+        hasRunInitialCaptureScan: Bool,
+        isScanningCapture: Bool
+    ) -> [PreflightAdvice] {
+        advice(
+            report: report,
+            sources: sources,
+            selectedScene: selectedScene,
+            selectedScreenCaptureTarget: selectedScreenCaptureTarget,
+            selectedCameraDeviceID: selectedCameraDeviceID,
+            selectedMicrophoneDeviceID: selectedMicrophoneDeviceID,
+            destination: destination,
+            destinationValidationError: destination.validationError,
+            hasRunInitialCaptureScan: hasRunInitialCaptureScan,
+            isScanningCapture: isScanningCapture
+        )
+    }
+
+    public static func advice(
+        report: CapturePreflightReport,
+        sources: [StudioSource],
+        selectedScene: SceneKind,
+        selectedScreenCaptureTarget: ScreenCaptureTarget?,
+        selectedCameraDeviceID: String?,
+        selectedMicrophoneDeviceID: String?,
+        destination: StreamDestination,
+        destinationValidationError: String?,
         hasRunInitialCaptureScan: Bool,
         isScanningCapture: Bool
     ) -> [PreflightAdvice] {
@@ -76,7 +104,7 @@ public enum PreflightCoach {
                     id: "permission-\(settingsKind.id)",
                     title: "Grant \(permissionTitle(for: settingsKind)) access",
                     detail: permissionDetail(for: settingsKind, report: report),
-                    action: .openCaptureSettings(settingsKind)
+                    action: permissionAction(for: settingsKind, report: report)
                 )
             }
         }
@@ -121,13 +149,13 @@ public enum PreflightCoach {
             ]
         }
 
-        if !destination.isReadyToStart {
+        if let destinationValidationError {
             return [
                 PreflightAdvice(
-                    id: "destination-preview",
-                    title: "Use preview destination",
-                    detail: destination.validationError ?? "Destination is not ready.",
-                    action: .usePreviewDestination
+                    id: "destination-rtmp-setup",
+                    title: "Finish RTMP setup",
+                    detail: destinationValidationError,
+                    action: .openDestinationSetup
                 )
             ]
         }
@@ -222,23 +250,32 @@ public enum PreflightCoach {
     }
 
     private static func requiredCapturePermissionKinds(for sceneKind: SceneKind, sources: [StudioSource]) -> [CaptureDeviceKind] {
+        var kinds: [CaptureDeviceKind] = []
         switch sceneKind {
         case .face:
-            return sourceIsReady(SourceKind.camera, sources: sources) ? [CaptureDeviceKind.camera] : []
+            if sourceIsReady(SourceKind.camera, sources: sources) {
+                kinds.append(CaptureDeviceKind.camera)
+            }
         case .screenAndFace:
-            var kinds: [CaptureDeviceKind] = []
             if sourceIsReady(SourceKind.screen, sources: sources) {
                 kinds.append(CaptureDeviceKind.display)
             }
             if sourceIsReady(SourceKind.camera, sources: sources) {
                 kinds.append(CaptureDeviceKind.camera)
             }
-            return kinds
         case .screenOnly:
-            return sourceIsReady(SourceKind.screen, sources: sources) ? [CaptureDeviceKind.display] : []
+            if sourceIsReady(SourceKind.screen, sources: sources) {
+                kinds.append(CaptureDeviceKind.display)
+            }
         case .brb:
-            return []
+            break
         }
+
+        if sceneKind != .brb, sourceIsReady(SourceKind.microphone, sources: sources) {
+            kinds.append(CaptureDeviceKind.microphone)
+        }
+
+        return kinds
     }
 
     private static func sceneUsesScreenCaptureVideo(_ sceneKind: SceneKind) -> Bool {
@@ -274,11 +311,24 @@ public enum PreflightCoach {
             case .denied:
                 return "\(title) permission was denied. Open System Settings to grant access."
             case .notDetermined:
-                return "\(title) permission has not been granted yet. Use the permission action or open System Settings."
+                if kind.requiresRestartAfterPermissionGrant {
+                    return "\(title) permission has not been granted yet. Open System Settings, then reopen MacStream."
+                }
+                return "\(title) permission has not been granted yet. Ask macOS for access."
             case .unknown:
                 return "\(title) permission status is unavailable. Open System Settings to verify access."
             }
         }
         return "\(permissionTitle(for: kind)) hardware was not found. Check hardware, then scan again."
+    }
+
+    private static func permissionAction(for kind: CaptureDeviceKind, report: CapturePreflightReport) -> PreflightAdviceAction {
+        guard report.permissionState(for: kind) == .notDetermined,
+              !kind.requiresRestartAfterPermissionGrant
+        else {
+            return .openCaptureSettings(kind)
+        }
+
+        return .requestCapturePermission(kind)
     }
 }

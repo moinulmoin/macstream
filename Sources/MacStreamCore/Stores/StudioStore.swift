@@ -101,6 +101,7 @@ public final class StudioStore {
     @ObservationIgnored private var streamStartTask: Task<Void, Never>?
     @ObservationIgnored private var streamStartID: UUID?
     @ObservationIgnored private var streamRecoveryStartedAt: ContinuousClock.Instant?
+    @ObservationIgnored private var lastStreamFailureWasRecovery = false
     @ObservationIgnored private var streamStopTask: Task<Void, Never>?
     @ObservationIgnored private var setupGenerationTask: Task<Void, Never>?
     @ObservationIgnored private var setupGenerationID: UUID?
@@ -431,6 +432,7 @@ public final class StudioStore {
             selectedCameraDeviceID: selectedCameraDeviceID,
             selectedMicrophoneDeviceID: selectedMicrophoneDeviceID,
             destination: destination,
+            destinationValidationError: destinationValidationError,
             hasRunInitialCaptureScan: hasRunInitialCaptureScan,
             isScanningCapture: isScanningCapture
         )
@@ -800,6 +802,63 @@ public final class StudioStore {
         }
     }
 
+    public var operatorRecoveryGuidance: OperatorRecoveryGuidance? {
+        if lastStreamFailureWasRecovery,
+           case .failed = streamState {
+            return OperatorRecoveryGuidance(
+                kind: .recoveryFailed,
+                title: "Recovery failed",
+                detail: "Reconnect retries ended. Check the destination, then retry.",
+                action: .checkDestination
+            )
+        }
+
+        if case .failed = streamState {
+            return OperatorRecoveryGuidance(
+                kind: .failedStart,
+                title: "Start failed",
+                detail: "Check RTMP setup and the destination status, then retry.",
+                action: .retryStream
+            )
+        }
+
+        if isStreamConnecting, streamRecoveryStartedAt != nil {
+            return OperatorRecoveryGuidance(
+                kind: .reconnecting,
+                title: "Reconnecting",
+                detail: "MacStream is retrying the RTMP session with the existing destination setup.",
+                action: .waitForRecovery
+            )
+        }
+
+        if hasAllLaneBackpressure {
+            return OperatorRecoveryGuidance(
+                kind: .backpressure,
+                title: "Output queues full",
+                detail: "All RTMP lanes are falling behind. Switch to Efficiency mode, or stop before lowering FPS or resolution.",
+                action: .reduceOutputCost
+            )
+        }
+
+        return nil
+    }
+
+    private var hasAllLaneBackpressure: Bool {
+        guard streamTransport == .rtmpPublish, streamState.isLive else { return false }
+
+        let enabledDestinationIDs = Set(enabledDestinations.map(\.id))
+        let activeStatuses = destinationStatuses.filter { enabledDestinationIDs.contains($0.id) }
+        if !activeStatuses.isEmpty,
+           activeStatuses.allSatisfy({ status in
+               status.state == .degraded
+                   || (status.appendCapacity > 0 && status.pendingAppends >= status.appendCapacity)
+           }) {
+            return true
+        }
+
+        return health.rtmpAppendCapacity > 0 && health.rtmpPendingAppends >= health.rtmpAppendCapacity
+    }
+
     public func selectScene(_ scene: StudioScene) {
         guard let scene = scenes.first(where: { $0.id == scene.id }) else { return }
         guard scene.id != selectedSceneID else { return }
@@ -922,6 +981,7 @@ public final class StudioStore {
 
     public func startStream() {
         guard canStartStream else { return }
+        lastStreamFailureWasRecovery = false
         let startID = UUID()
         let startDestinations = enabledDestinations
         let startDestination = destination
@@ -982,6 +1042,7 @@ public final class StudioStore {
                 streamStartTask = nil
                 streamStartID = nil
                 streamState = .failed(error.localizedDescription)
+                lastStreamFailureWasRecovery = false
                 applyPerformanceConfiguration()
                 releaseOutputCaptureSettingsIfIdle()
                 health = StreamHealth()
@@ -1964,6 +2025,7 @@ public final class StudioStore {
         streamStartAttempt = 1
         streamStartMaxAttempts = retryPolicy.maxAttempts
         streamState = .connecting
+        lastStreamFailureWasRecovery = false
         health = StreamHealth()
         resetCaptureHealthPressure()
         cancelPendingAutoCue()
@@ -1986,6 +2048,7 @@ public final class StudioStore {
                 streamStartTask = nil
                 streamStartID = nil
                 streamState = .live
+                lastStreamFailureWasRecovery = false
                 finishStreamRecovery(outcome: .succeeded)
                 applyPerformanceConfiguration()
                 health = mediaPipeline.currentHealth ?? StreamHealth(
@@ -2002,6 +2065,7 @@ public final class StudioStore {
                 streamStartTask = nil
                 streamStartID = nil
                 streamState = .failed(error.localizedDescription)
+                lastStreamFailureWasRecovery = true
                 finishStreamRecovery(outcome: .failed)
                 applyPerformanceConfiguration()
                 health = StreamHealth()
@@ -2437,6 +2501,11 @@ public final class StudioStore {
             break
         }
 
+        if selectedSceneKind != .brb,
+           isSourceEnabled(.microphone),
+           sourceLevel(.microphone) > 0 {
+            kinds.append(.microphone)
+        }
 
         return kinds
     }

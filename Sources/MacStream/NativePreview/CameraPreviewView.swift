@@ -214,18 +214,11 @@ struct CameraPreviewView: NSViewRepresentable {
         }
 
         private static func resolveDevice(matching id: String?) -> AVCaptureDevice? {
-            if let id {
-                let discovery = AVCaptureDevice.DiscoverySession(
-                    deviceTypes: [.builtInWideAngleCamera, .external],
-                    mediaType: .video,
-                    position: .unspecified
-                )
-                if let match = discovery.devices.first(where: { CaptureDeviceInfo.cameraID(uniqueID: $0.uniqueID) == id }) {
-                    return match
-                }
+            if let id,
+               let match = SystemCaptureDeviceProvider.cameraDevice(matchingCaptureDeviceID: id) {
+                return match
             }
-            return AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: .unspecified)
-                ?? AVCaptureDevice.default(for: .video)
+            return SystemCaptureDeviceProvider.defaultCameraDevice()
         }
 
         private func applyRequestedPreset() {

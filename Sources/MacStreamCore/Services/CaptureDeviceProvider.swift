@@ -75,11 +75,7 @@ public struct SystemCaptureDeviceProvider: CaptureDeviceProvider {
 
     private func cameraDevices() -> [CaptureDeviceInfo] {
         let permission = permissionState(for: AVCaptureDevice.authorizationStatus(for: .video))
-        let session = AVCaptureDevice.DiscoverySession(
-            deviceTypes: [.builtInWideAngleCamera, .external],
-            mediaType: .video,
-            position: .unspecified
-        )
+        let session = Self.cameraDiscoverySession()
 
         return session.devices.map { device in
             CaptureDeviceInfo(
@@ -148,6 +144,35 @@ public struct SystemCaptureDeviceProvider: CaptureDeviceProvider {
         case .notDetermined: .notDetermined
         @unknown default: .unknown
         }
+    }
+
+    public static func cameraDiscoveryDeviceTypes() -> [AVCaptureDevice.DeviceType] {
+        [
+            .builtInWideAngleCamera,
+            .external,
+            .continuityCamera,
+            .deskViewCamera
+        ]
+    }
+
+    public static func cameraDiscoverySession() -> AVCaptureDevice.DiscoverySession {
+        AVCaptureDevice.DiscoverySession(
+            deviceTypes: cameraDiscoveryDeviceTypes(),
+            mediaType: .video,
+            position: .unspecified
+        )
+    }
+
+    public static func cameraDevice(matchingCaptureDeviceID id: String) -> AVCaptureDevice? {
+        cameraDiscoverySession().devices.first {
+            CaptureDeviceInfo.cameraID(uniqueID: $0.uniqueID) == id
+        }
+    }
+
+    public static func defaultCameraDevice() -> AVCaptureDevice? {
+        AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: .unspecified)
+            ?? AVCaptureDevice.default(for: .video)
+            ?? cameraDiscoverySession().devices.first
     }
 }
 

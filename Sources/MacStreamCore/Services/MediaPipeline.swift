@@ -499,6 +499,7 @@ public final class SystemMediaPipeline: NSObject, MediaPipeline, SCStreamOutput,
     private var recordingUsesPublishingMicrophoneSession = false
     private var mediaHealth = StreamHealth()
     private let microphoneLevelMeter = ReusableAudioLevelMeter()
+    private var lastMicrophoneLevelMeasurementAtNanoseconds: UInt64?
     private var audioDeliveryHealthTracker = AudioDeliveryHealthTracker()
     private var avTimingHealthTracker = AVTimingHealthTracker()
     private var frameWindowStartedAtNanoseconds = DispatchTime.now().uptimeNanoseconds
@@ -598,6 +599,7 @@ public final class SystemMediaPipeline: NSObject, MediaPipeline, SCStreamOutput,
     private static let firstPublishingVideoFrameTimeout: Duration = .seconds(8)
     private static let cameraFirstFrameRetryDelay: DispatchTimeInterval = .seconds(1)
     private static let cameraFirstFrameFailureDelay: DispatchTimeInterval = .seconds(2)
+    private static let microphoneLevelMeasurementIntervalNanoseconds: UInt64 = 66_666_667
     private static let rtmpReconnectLimit = 3
     private static let rtmpConnectionFailureDetail = "RTMP destination connection failed."
     private static let rtmpBackpressureDetail = "Destination is falling behind; media is being dropped."
@@ -626,6 +628,7 @@ public final class SystemMediaPipeline: NSObject, MediaPipeline, SCStreamOutput,
             )
             if !Self.shouldProcessMicrophoneAudioSample(configuration: configuration) {
                 self.microphoneLevelMeter.reset()
+                self.lastMicrophoneLevelMeasurementAtNanoseconds = nil
                 self.mediaHealth.audioLevel = 0
             }
             self.mediaHealth.audioDeliveryState = self.audioDeliveryHealthTracker.state(at: now)
@@ -1508,18 +1511,11 @@ public final class SystemMediaPipeline: NSObject, MediaPipeline, SCStreamOutput,
     }
 
     private static func videoCaptureDevice(matching id: String?) -> AVCaptureDevice? {
-        if let id {
-            let discovery = AVCaptureDevice.DiscoverySession(
-                deviceTypes: [.builtInWideAngleCamera, .external],
-                mediaType: .video,
-                position: .unspecified
-            )
-            if let match = discovery.devices.first(where: { CaptureDeviceInfo.cameraID(uniqueID: $0.uniqueID) == id }) {
-                return match
-            }
+        if let id,
+           let match = SystemCaptureDeviceProvider.cameraDevice(matchingCaptureDeviceID: id) {
+            return match
         }
-        return AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: .unspecified)
-            ?? AVCaptureDevice.default(for: .video)
+        return SystemCaptureDeviceProvider.defaultCameraDevice()
     }
 
     private static func audioCaptureDevice(matching id: String?) -> AVCaptureDevice? {
@@ -2031,9 +2027,6 @@ public final class SystemMediaPipeline: NSObject, MediaPipeline, SCStreamOutput,
             shouldPublish: shouldPublish
         )
         handleSharedScreenRouteResult(result, outputType: .screen, writer: writer)
-        if result.didPublish {
-            markFirstPublishingVideoFrameIfNeeded()
-        }
     }
 
     static func shouldEmitCameraDrivenComposedFrame(
@@ -2687,18 +2680,41 @@ public final class SystemMediaPipeline: NSObject, MediaPipeline, SCStreamOutput,
     }
 
     private func updateAggregateRTMPHealthOnQueue() {
-        let statuses = rtmpPublisherLanes.map(\.status)
-        let outboundBytesPerSecond = statuses.reduce(Int64(0)) { $0 + $1.outboundBytesPerSecond }
-        mediaHealth.outboundBytesPerSecond = outboundBytesPerSecond
-        mediaHealth.bitrateKbps = Self.outboundBitrateKbps(bytesPerSecond: outboundBytesPerSecond)
-        mediaHealth.rtmpPendingAppends = statuses.reduce(0) { $0 + $1.pendingAppends }
-        mediaHealth.rtmpAppendCapacity = statuses.reduce(0) { $0 + $1.appendCapacity }
-        if statuses.contains(where: { $0.state == .publishing || $0.state == .degraded }) {
-            mediaHealth.publishState = .publishing
-        } else if statuses.contains(where: { $0.state == .connecting || $0.state == .reconnecting }) {
-            mediaHealth.publishState = .handshaking
+        Self.updateAggregateRTMPHealth(&mediaHealth, lanes: rtmpPublisherLanes)
+    }
+
+    private static func updateAggregateRTMPHealth(
+        _ health: inout StreamHealth,
+        lanes: [RTMPPublisherLane]
+    ) {
+        var outboundBytesPerSecond: Int64 = 0
+        var pendingAppends = 0
+        var appendCapacity = 0
+        var hasPublishingLane = false
+        var hasConnectingLane = false
+        for lane in lanes {
+            outboundBytesPerSecond += lane.status.outboundBytesPerSecond
+            pendingAppends += lane.status.pendingAppends
+            appendCapacity += lane.status.appendCapacity
+            switch lane.status.state {
+            case .publishing, .degraded:
+                hasPublishingLane = true
+            case .connecting, .reconnecting:
+                hasConnectingLane = true
+            case .idle, .failed:
+                break
+            }
+        }
+        health.outboundBytesPerSecond = outboundBytesPerSecond
+        health.bitrateKbps = Self.outboundBitrateKbps(bytesPerSecond: outboundBytesPerSecond)
+        health.rtmpPendingAppends = pendingAppends
+        health.rtmpAppendCapacity = appendCapacity
+        if hasPublishingLane {
+            health.publishState = .publishing
+        } else if hasConnectingLane {
+            health.publishState = .handshaking
         } else {
-            mediaHealth.publishState = .disconnected
+            health.publishState = .disconnected
         }
     }
 
@@ -2810,7 +2826,9 @@ public final class SystemMediaPipeline: NSObject, MediaPipeline, SCStreamOutput,
     }
 
     private func publish(_ sampleBuffer: CMSampleBuffer, track: UInt8 = 0) -> Bool {
-        Self.fanOut(sampleBuffer, track: track, lanes: rtmpPublisherLanes)
+        let didPublish = Self.fanOut(sampleBuffer, track: track, lanes: rtmpPublisherLanes)
+        updateAggregateRTMPHealthOnQueue()
+        return didPublish
     }
 
     static func fanOut(
@@ -2831,7 +2849,84 @@ public final class SystemMediaPipeline: NSObject, MediaPipeline, SCStreamOutput,
                 lane.status.pendingAppends = max(lane.status.pendingAppends, lane.status.appendCapacity)
             }
         }
-        return attemptedAppend ? didAcceptAppend : true
+        return attemptedAppend && didAcceptAppend
+    }
+
+    static func routeSharedCompositedFrame<Frame>(
+        lanes: [RTMPPublisherLane],
+        health: inout StreamHealth,
+        isRecordingRequested: Bool,
+        canAppendRecording: Bool,
+        shouldPublish: Bool,
+        render: () -> Frame?,
+        appendRecording: (Frame) -> Bool,
+        publish: (Frame) -> Bool
+    ) -> SharedScreenRouteResult {
+        let hasPublishAdmission = shouldPublish
+            && refreshRTMPVideoAdmission(lanes, health: &health)
+        let shouldAppendRecording = isRecordingRequested && canAppendRecording
+        guard shouldAppendRecording || hasPublishAdmission else {
+            return SharedScreenRouteResult(
+                didAppendRecording: false,
+                wasRecordingRequested: isRecordingRequested,
+                didPublish: false,
+                wasPublishingRequested: shouldPublish,
+                didFailComposition: false
+            )
+        }
+        guard let frame = render() else {
+            return SharedScreenRouteResult(
+                didAppendRecording: false,
+                wasRecordingRequested: isRecordingRequested,
+                didPublish: false,
+                wasPublishingRequested: shouldPublish,
+                didFailComposition: true
+            )
+        }
+
+        let didAppendRecording = shouldAppendRecording && appendRecording(frame)
+        let didPublish = hasPublishAdmission && publish(frame)
+        updateAggregateRTMPHealth(&health, lanes: lanes)
+        return SharedScreenRouteResult(
+            didAppendRecording: didAppendRecording,
+            wasRecordingRequested: isRecordingRequested,
+            didPublish: didPublish,
+            wasPublishingRequested: shouldPublish,
+            didFailComposition: false
+        )
+    }
+
+    private static func refreshRTMPVideoAdmission(
+        _ lanes: [RTMPPublisherLane],
+        health: inout StreamHealth
+    ) -> Bool {
+        var hasActiveLane = false
+        var hasReadyLane = false
+        for lane in lanes where lane.canAcceptAppends {
+            hasActiveLane = true
+            let snapshot = lane.publisher.appendQueueSnapshot()
+            lane.status.pendingAppends = max(0, snapshot.pendingCount)
+            lane.status.appendCapacity = max(0, snapshot.capacity)
+            if lane.status.appendCapacity == 0
+                || lane.status.pendingAppends < lane.status.appendCapacity {
+                hasReadyLane = true
+                if lane.status.state == .degraded,
+                   lane.status.failureDetail == rtmpBackpressureDetail {
+                    lane.status.state = .publishing
+                    lane.status.failureDetail = nil
+                }
+            }
+        }
+
+        if hasActiveLane, !hasReadyLane {
+            for lane in lanes where lane.canAcceptAppends {
+                lane.status.state = .degraded
+                lane.status.failureDetail = rtmpBackpressureDetail
+                lane.status.appendRejections += 1
+            }
+        }
+        updateAggregateRTMPHealth(&health, lanes: lanes)
+        return hasReadyLane
     }
 
     private func publishAudio(_ sampleBuffer: CMSampleBuffer, track: UInt8) -> Bool {
@@ -2865,15 +2960,35 @@ public final class SystemMediaPipeline: NSObject, MediaPipeline, SCStreamOutput,
         audioDeliveryHealthTracker.recordMicrophoneCallback(at: now)
         mediaHealth.audioDeliveryState = audioDeliveryHealthTracker.state(at: now)
         mediaHealth.microphoneDeliveryState = audioDeliveryHealthTracker.microphoneState(at: now)
+        guard Self.shouldMeasureMicrophoneLevel(
+            now: now,
+            lastMeasurementAt: lastMicrophoneLevelMeasurementAtNanoseconds
+        ) else {
+            return
+        }
+        lastMicrophoneLevelMeasurementAtNanoseconds = now
         if let measurement = microphoneLevelMeter.measure(sampleBuffer) {
             mediaHealth.audioLevel = measurement.level
         }
+    }
+
+    static func shouldMeasureMicrophoneLevel(
+        now: UInt64,
+        lastMeasurementAt: UInt64?,
+        minimumIntervalNanoseconds: UInt64 = microphoneLevelMeasurementIntervalNanoseconds
+    ) -> Bool {
+        guard let lastMeasurementAt else { return true }
+        return now < lastMeasurementAt || now - lastMeasurementAt >= minimumIntervalNanoseconds
     }
 
     private func publishCompositedVideoSample(
         _ sampleBuffer: CMSampleBuffer,
         presentationTime: CMTime
     ) -> Bool {
+        guard Self.refreshRTMPVideoAdmission(rtmpPublisherLanes, health: &mediaHealth) else {
+            return false
+        }
+
         guard let outputPixelBuffer = makeCompositedPixelBuffer(
             sampleBuffer,
             pixelBufferPool: publishingPixelBufferPool,
@@ -2931,91 +3046,61 @@ public final class SystemMediaPipeline: NSObject, MediaPipeline, SCStreamOutput,
         shouldAppendRecording: Bool,
         shouldPublish: Bool
     ) -> SharedScreenRouteResult {
-        guard shouldAppendRecording || shouldPublish else {
-            return SharedScreenRouteResult(
-                didAppendRecording: false,
-                didTryAppendRecording: false,
-                didPublish: true,
-                didTryPublish: false,
-                didFailComposition: false
-            )
-        }
-
-        guard let outputPixelBuffer = makeCompositedPixelBuffer(
-            sampleBuffer,
-            pixelBufferPool: videoPixelBufferAdaptor?.pixelBufferPool,
-            videoCompositor: videoCompositor,
-            cameraFrame: recordingCameraFrame()
-        ) else {
-            return SharedScreenRouteResult(
-                didAppendRecording: false,
-                didTryAppendRecording: shouldAppendRecording,
-                didPublish: !shouldPublish,
-                didTryPublish: shouldPublish,
-                didFailComposition: true
-            )
-        }
-
-        let didAppendRecording: Bool
-        if shouldAppendRecording,
-           let videoPixelBufferAdaptor {
-            didAppendRecording = videoPixelBufferAdaptor.append(outputPixelBuffer, withPresentationTime: presentationTime)
-        } else {
-            didAppendRecording = false
-        }
-
-        if didAppendRecording, !shouldPublish {
-            lastRecordingComposedPresentationTime = presentationTime
-            recordAcceptedVideoPresentationTime(presentationTime)
-            mediaPreviewFrameSource?.publishIfDue(at: presentationTime) {
-                self.makeVideoSampleBuffer(
+        var outputPixelBuffer: CVPixelBuffer?
+        var compositedSampleBuffer: CMSampleBuffer?
+        var routeHealth = mediaHealth
+        let result = Self.routeSharedCompositedFrame(
+            lanes: rtmpPublisherLanes,
+            health: &routeHealth,
+            isRecordingRequested: true,
+            canAppendRecording: shouldAppendRecording,
+            shouldPublish: shouldPublish,
+            render: {
+                let rendered = makeCompositedPixelBuffer(
+                    sampleBuffer,
+                    pixelBufferPool: videoPixelBufferAdaptor?.pixelBufferPool,
+                    videoCompositor: videoCompositor,
+                    cameraFrame: recordingCameraFrame()
+                )
+                outputPixelBuffer = rendered
+                return rendered
+            },
+            appendRecording: { outputPixelBuffer in
+                videoPixelBufferAdaptor?.append(
+                    outputPixelBuffer,
+                    withPresentationTime: presentationTime
+                ) ?? false
+            },
+            publish: { outputPixelBuffer in
+                guard let createdSampleBuffer = makeVideoSampleBuffer(
                     pixelBuffer: outputPixelBuffer,
                     sourceSampleBuffer: sampleBuffer,
                     presentationTime: presentationTime
-                )
+                ) else {
+                    return false
+                }
+                compositedSampleBuffer = createdSampleBuffer
+                return Self.fanOut(createdSampleBuffer, track: 0, lanes: rtmpPublisherLanes)
             }
-        }
+        )
+        mediaHealth = routeHealth
 
-        guard shouldPublish else {
-            return SharedScreenRouteResult(
-                didAppendRecording: didAppendRecording,
-                didTryAppendRecording: shouldAppendRecording,
-                didPublish: true,
-                didTryPublish: false,
-                didFailComposition: false
-            )
-        }
-
-        guard let compositedSampleBuffer = makeVideoSampleBuffer(
-            pixelBuffer: outputPixelBuffer,
-            sourceSampleBuffer: sampleBuffer,
-            presentationTime: presentationTime
-        ) else {
-            return SharedScreenRouteResult(
-                didAppendRecording: didAppendRecording,
-                didTryAppendRecording: shouldAppendRecording,
-                didPublish: false,
-                didTryPublish: true,
-                didFailComposition: false
-            )
-        }
-
-        let didPublish = publish(compositedSampleBuffer)
-        if didPublish {
-            markFirstPublishingVideoFrameIfNeeded()
-        }
-        if didAppendRecording || didPublish {
+        if result.didAppendRecording || result.didPublish {
             lastRecordingComposedPresentationTime = presentationTime
             recordAcceptedVideoPresentationTime(presentationTime)
-            mediaPreviewFrameSource?.publish(compositedSampleBuffer)
+            if let compositedSampleBuffer {
+                mediaPreviewFrameSource?.publish(compositedSampleBuffer)
+            } else if let outputPixelBuffer {
+                mediaPreviewFrameSource?.publishIfDue(at: presentationTime) {
+                    self.makeVideoSampleBuffer(
+                        pixelBuffer: outputPixelBuffer,
+                        sourceSampleBuffer: sampleBuffer,
+                        presentationTime: presentationTime
+                    )
+                }
+            }
         }
-        return SharedScreenRouteResult(
-            didAppendRecording: didAppendRecording,
-            didTryAppendRecording: shouldAppendRecording,
-            didPublish: didPublish,
-            didTryPublish: true,
-            didFailComposition: false
-        )
+        return result
     }
 
     private func handleSharedScreenRouteResult(
@@ -3023,13 +3108,15 @@ public final class SystemMediaPipeline: NSObject, MediaPipeline, SCStreamOutput,
         outputType: SCStreamOutputType,
         writer: AVAssetWriter
     ) {
-        if result.didAppendRecording,
-           result.didPublish {
+        if result.didPublish {
+            markFirstPublishingVideoFrameIfNeeded()
+        }
+        if result.didSatisfyRequestedConsumers {
             return
         }
 
         recordDroppedFrameIfNeeded(outputType)
-        if result.didTryAppendRecording, !result.didAppendRecording {
+        if result.wasRecordingRequested, !result.didAppendRecording {
             recordWriterFailureIfNeeded(writer, context: "composited-video-append")
         }
     }
@@ -3144,6 +3231,7 @@ public final class SystemMediaPipeline: NSObject, MediaPipeline, SCStreamOutput,
     private func resetHealth(using configuration: MediaPipelineConfiguration) {
         let now = DispatchTime.now().uptimeNanoseconds
         microphoneLevelMeter.reset()
+        lastMicrophoneLevelMeasurementAtNanoseconds = nil
         avTimingHealthTracker.reset()
         audioDeliveryHealthTracker.reset(
             expectsSystemAudio: Self.shouldProcessSystemAudioSample(configuration: configuration),
@@ -4156,12 +4244,17 @@ final class RTMPPublisherLane: @unchecked Sendable {
     }
 }
 
-private struct SharedScreenRouteResult {
+struct SharedScreenRouteResult {
     var didAppendRecording: Bool
-    var didTryAppendRecording: Bool
+    var wasRecordingRequested: Bool
     var didPublish: Bool
-    var didTryPublish: Bool
+    var wasPublishingRequested: Bool
     var didFailComposition: Bool
+
+    var didSatisfyRequestedConsumers: Bool {
+        (!wasRecordingRequested || didAppendRecording)
+            && (!wasPublishingRequested || didPublish)
+    }
 }
 
 private struct PublishingCaptureState {

@@ -34,6 +34,8 @@
   <true/>
   <key>NSCameraUsageDescription</key>
   <string>MacStream uses the camera for live stream preview and broadcast scenes.</string>
+  <key>NSCameraUseContinuityCameraDeviceType</key>
+  <true/>
   <key>NSMicrophoneUsageDescription</key>
   <string>MacStream uses the microphone to monitor speech and broadcast audio.</string>
   <key>NSAudioCaptureUsageDescription</key>

@@ -2,6 +2,14 @@ import SwiftUI
 import AppKit
 import MacStreamCore
 
+enum StudioSettingsTab: String {
+    static let storageKey = "MacStream.Settings.selectedTab"
+
+    case general
+    case destination
+    case about
+}
+
 struct SettingsView: View {
     @Bindable var store: StudioStore
     var updater: SparkleUpdater
@@ -13,6 +21,7 @@ struct SettingsView: View {
     @AppStorage("previewRenderQuality") private var previewRenderQualityRaw = StudioPreviewRenderQuality.automatic.rawValue
     @AppStorage("defaultSceneKind") private var defaultSceneKindRaw = SceneKind.brb.rawValue
     @AppStorage("setupPrompt") private var setupPrompt = StudioStore.defaultSetupPrompt
+    @AppStorage(StudioSettingsTab.storageKey) private var selectedTabRaw = StudioSettingsTab.general.rawValue
     @AppStorage("localIntelligenceProviderKind") private var localIntelligenceProviderKindRaw = LocalIntelligenceProviderKind.rules.rawValue
     @AppStorage("openAICompatibleBaseURL") private var openAICompatibleBaseURL = OpenAICompatibleProviderConfiguration.defaultBaseURL.absoluteString
     @AppStorage("openAICompatibleModel") private var openAICompatibleModel = OpenAICompatibleProviderConfiguration.defaultModel
@@ -26,18 +35,21 @@ struct SettingsView: View {
     @State private var restoreEndpointMessage: String?
 
     var body: some View {
-        TabView {
+        TabView(selection: $selectedTabRaw) {
             generalTab
+                .tag(StudioSettingsTab.general.rawValue)
                 .tabItem {
                     Label("General", systemImage: "gearshape")
                 }
 
             destinationTab
+                .tag(StudioSettingsTab.destination.rawValue)
                 .tabItem {
                     Label("Destination", systemImage: "dot.radiowaves.left.and.right")
                 }
 
             aboutTab
+                .tag(StudioSettingsTab.about.rawValue)
                 .tabItem {
                     Label("About", systemImage: "info.circle")
                 }

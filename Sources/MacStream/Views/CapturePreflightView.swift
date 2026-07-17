@@ -4,6 +4,8 @@ import MacStreamCore
 
 struct CapturePreflightView: View {
     var store: StudioStore
+    @Environment(\.openSettings) private var openSettings
+    @AppStorage(StudioSettingsTab.storageKey) private var selectedSettingsTabRaw = StudioSettingsTab.general.rawValue
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -55,7 +57,7 @@ struct CapturePreflightView: View {
 
             let rows = CapturePermissionRow.rows(from: store.captureReport.devices)
             if !rows.isEmpty {
-                permissionRows(rows)
+                permissionRows(rows, suppressingActionsFor: advisedPermissionKinds(in: advice))
             }
         }
         .studioCard()
@@ -92,6 +94,17 @@ struct CapturePreflightView: View {
     @ViewBuilder
     private func adviceAction(for advice: PreflightAdvice) -> some View {
         switch advice.action {
+        case let .requestCapturePermission(kind):
+            Button {
+                CapturePermissionActions.requestAccess(for: kind, store: store)
+            } label: {
+                Label("Ask", systemImage: kind.symbolName)
+                    .font(.caption.weight(.semibold))
+            }
+            .buttonStyle(.borderedProminent)
+            .controlSize(.small)
+            .tint(.orange)
+            .help("Ask macOS for \(kind.title.lowercased()) access")
         case let .openCaptureSettings(kind):
             Button {
                 CapturePermissionActions.openSettings(for: kind)
@@ -153,6 +166,17 @@ struct CapturePreflightView: View {
             .buttonStyle(.borderedProminent)
             .controlSize(.small)
             .help("Enable or raise needed sources")
+        case .openDestinationSetup:
+            Button {
+                selectedSettingsTabRaw = StudioSettingsTab.destination.rawValue
+                openSettings()
+            } label: {
+                Label("Set Up", systemImage: "gearshape")
+                    .font(.caption.weight(.semibold))
+            }
+            .buttonStyle(.borderedProminent)
+            .controlSize(.small)
+            .help("Open destination setup")
         case .usePreviewDestination:
             Button {
                 store.setDestinationMode(.preview)
@@ -168,6 +192,8 @@ struct CapturePreflightView: View {
 
     private func adviceSymbol(for action: PreflightAdviceAction) -> String {
         switch action {
+        case .requestCapturePermission:
+            "hand.raised"
         case .openCaptureSettings:
             "gearshape"
         case .rescanCapture:
@@ -180,12 +206,17 @@ struct CapturePreflightView: View {
             "mic"
         case .fixSelectedSceneSources:
             "slider.horizontal.3"
+        case .openDestinationSetup:
+            "point.3.connected.trianglepath.dotted"
         case .usePreviewDestination:
             "play.rectangle"
         }
     }
 
-    private func permissionRows(_ rows: [CapturePermissionRow]) -> some View {
+    private func permissionRows(
+        _ rows: [CapturePermissionRow],
+        suppressingActionsFor advisedKinds: Set<CaptureDeviceKind>
+    ) -> some View {
         VStack(spacing: 10) {
             ForEach(rows) { row in
                 HStack(alignment: .top, spacing: 10) {
@@ -208,13 +239,15 @@ struct CapturePreflightView: View {
                             Text(recoveryHint)
                                 .font(.caption)
                                 .foregroundStyle(.orange)
-                                .lineLimit(2)
+                                .fixedSize(horizontal: false, vertical: true)
                         }
                     }
 
                     Spacer(minLength: 8)
 
-                    permissionAction(for: row)
+                    if !advisedKinds.contains(row.requestKind) {
+                        permissionAction(for: row)
+                    }
                 }
             }
         }
@@ -263,6 +296,17 @@ struct CapturePreflightView: View {
         case .display, .window:
             return false
         }
+    }
+
+    private func advisedPermissionKinds(in advice: [PreflightAdvice]) -> Set<CaptureDeviceKind> {
+        Set(advice.compactMap { item in
+            switch item.action {
+            case let .requestCapturePermission(kind), let .openCaptureSettings(kind):
+                kind
+            default:
+                nil
+            }
+        })
     }
 
     private func permissionTint(_ permission: CapturePermissionState) -> Color {

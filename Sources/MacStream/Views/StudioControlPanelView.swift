@@ -3,6 +3,8 @@ import MacStreamCore
 
 struct StudioControlPanelView: View {
     @Bindable var store: StudioStore
+    @Environment(\.openSettings) private var openSettings
+    @AppStorage(StudioSettingsTab.storageKey) private var selectedSettingsTabRaw = StudioSettingsTab.general.rawValue
     @AppStorage("performanceMode") private var performanceModeRaw = StudioPerformanceMode.balanced.rawValue
     @AppStorage("outputResolution") private var outputResolutionRaw = StreamOutputResolution.automatic.rawValue
     @AppStorage("outputFrameRate") private var outputFrameRateRaw = StreamFrameRate.automatic.rawValue
@@ -36,6 +38,29 @@ struct StudioControlPanelView: View {
                     .fixedSize(horizontal: false, vertical: true)
                     .padding(StudioMetrics.md)
                     .background(.orange.opacity(0.10), in: RoundedRectangle(cornerRadius: StudioMetrics.controlRadius, style: .continuous))
+            }
+
+            if let guidance = store.operatorRecoveryGuidance {
+                HStack(alignment: .center, spacing: StudioMetrics.md) {
+                    Label {
+                        Text("\(guidance.title): \(guidance.detail)")
+                            .lineLimit(2)
+                            .fixedSize(horizontal: false, vertical: true)
+                    } icon: {
+                        Image(systemName: recoverySymbol(for: guidance.action))
+                    }
+                    .accessibilityElement(children: .combine)
+                    .accessibilityLabel(Text(guidance.title))
+                    .accessibilityValue(Text(guidance.detail))
+
+                    Spacer(minLength: StudioMetrics.sm)
+
+                    recoveryAction(for: guidance)
+                }
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(recoveryTint(for: guidance.kind))
+                .padding(StudioMetrics.md)
+                .background(recoveryTint(for: guidance.kind).opacity(0.10), in: RoundedRectangle(cornerRadius: StudioMetrics.controlRadius, style: .continuous))
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -435,7 +460,7 @@ struct StudioControlPanelView: View {
             if let startBlockedReason = store.streamStartBlockedReason {
                 return startBlockedReason
             }
-            if let validationError = store.destination.validationError {
+            if let validationError = store.destinationValidationError {
                 return validationError
             }
         }
@@ -446,5 +471,55 @@ struct StudioControlPanelView: View {
         }
 
         return nil
+    }
+
+    private func recoverySymbol(for action: OperatorRecoveryAction) -> String {
+        switch action {
+        case .retryStream: "arrow.clockwise"
+        case .waitForRecovery: "arrow.triangle.2.circlepath"
+        case .checkDestination: "point.3.connected.trianglepath.dotted"
+        case .reduceOutputCost: "speedometer"
+        }
+    }
+
+    @ViewBuilder
+    private func recoveryAction(for guidance: OperatorRecoveryGuidance) -> some View {
+        switch guidance.action {
+        case .retryStream:
+            Button("Retry") {
+                store.startStream()
+            }
+            .buttonStyle(.bordered)
+            .disabled(!store.canStartStream)
+            .help(store.streamStartBlockedReason ?? "Retry streaming")
+        case .waitForRecovery:
+            ProgressView()
+                .controlSize(.small)
+                .accessibilityLabel(Text("Reconnect in progress"))
+        case .checkDestination:
+            Button("Destination") {
+                selectedSettingsTabRaw = StudioSettingsTab.destination.rawValue
+                openSettings()
+            }
+            .buttonStyle(.bordered)
+            .help("Open destination setup")
+        case .reduceOutputCost:
+            Button("Efficiency") {
+                performanceModeRaw = StudioPerformanceMode.efficiency.rawValue
+                var preferences = store.preferences
+                preferences.performanceMode = .efficiency
+                store.updatePreferences(preferences)
+            }
+            .buttonStyle(.bordered)
+            .disabled(store.preferences.performanceMode == .efficiency)
+            .help("Use Efficiency performance mode")
+        }
+    }
+
+    private func recoveryTint(for kind: OperatorRecoveryGuidanceKind) -> Color {
+        switch kind {
+        case .failedStart, .recoveryFailed: StudioPalette.live
+        case .reconnecting, .backpressure: StudioPalette.warning
+        }
     }
 }

@@ -1095,7 +1095,6 @@ func pendingRecordingStartupSuppressesStreamStart() async {
     let store = StudioStore(mediaPipeline: pipeline)
 
     store.startRecording()
-    try? await Task.sleep(for: .milliseconds(10))
 
     #expect(store.isRecordingStarting)
     #expect(!store.canStartStream)
@@ -1104,13 +1103,19 @@ func pendingRecordingStartupSuppressesStreamStart() async {
 
     #expect(pipeline.startStreamCount == 0)
 
-    try? await Task.sleep(for: .milliseconds(120))
+    for _ in 0..<200 {
+        guard store.recordingState != .recording else { break }
+        try? await Task.sleep(for: .milliseconds(5))
+    }
 
     #expect(store.recordingState == .recording)
     #expect(store.canStartStream)
 
     store.startStream()
-    try? await Task.sleep(for: .milliseconds(50))
+    for _ in 0..<200 {
+        guard pipeline.startStreamCount == 0 else { break }
+        try? await Task.sleep(for: .milliseconds(5))
+    }
 
     #expect(pipeline.startStreamCount == 1)
 }

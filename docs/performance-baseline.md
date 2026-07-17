@@ -27,6 +27,23 @@ Memory is informational because macOS compression and framework reclamation
 make short samples noisy. CPU, frame cadence, dropped frames, and capture
 topology are the primary comparison points.
 
+### v0.6 packaged idle sample
+
+The v0.6 release candidate was also sampled from the packaged, release-mode,
+HaishinKit-enabled QA app on July 17, 2026. The app remained on the BRB scene
+with capture idle for 30 seconds after launch.
+
+| Samples | CPU | Resident memory | Threads |
+| ---: | ---: | ---: | ---: |
+| 16 | 0.0% reported average and maximum | 139.7-140.7 MB | 7 |
+
+The raw samples are committed in
+[`benchmarks/v0.6.0-packaged-idle.csv`](../benchmarks/v0.6.0-packaged-idle.csv).
+This sample proves that the packaged idle scene settles without periodic CPU
+work or thread growth. It does not replace device and destination smoke tests;
+capture FPS, dropped frames, queue pressure, and A/V drift must be checked with
+the operator's granted camera, microphone, display, and RTMP destination.
+
 ## Baseline worst-case topology
 
 With preview, RTMP, recording, and director sampling active at once, the

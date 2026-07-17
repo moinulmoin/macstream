@@ -55,6 +55,8 @@ permissions for the relevant sources.
 - Webcam, Screen + Webcam, Screen, and BRB scenes
 - Display and individual-window capture
 - Explicit camera, microphone, display, and window selection
+- Continuity Camera and Desk View discovery
+- Native camera-effect status with a shortcut to Apple's Video Effects controls
 - Live microphone input meter
 - Preflight checks for permissions, sources, and stream destination
 - Tabbed Live, Layout, Sources, and Health controls
@@ -109,7 +111,7 @@ on it for important broadcasts.
 | Recording | Optional local copy during or outside a stream |
 | Video editing | Out of scope |
 | Multi-destination streaming | Up to three independent RTMP/RTMPS targets |
-| Native camera effects | Under evaluation |
+| Native camera effects | Public status plus Apple-owned Video Effects controls |
 | AI and transcription | Deferred roadmap work |
 | Intel Macs | Not currently targeted |
 
@@ -191,10 +193,11 @@ Useful project documents:
 - [Contributing](CONTRIBUTING.md)
 - [License](LICENSE)
 - [Third-Party Notices](THIRD_PARTY_NOTICES.md)
-- [Release Notes](docs/releases/v0.5.0.md)
+- [Release Notes](docs/releases/v0.6.0.md)
 - [Architecture](docs/architecture.md)
 - [Current State](docs/current-state.md)
 - [Reliability Goal](docs/v0.3-reliability-goal.md)
+- [v0.6 Goal](docs/v0.6-workflow-performance-goal.md)
 - [QA Checklist](docs/qa-checklist.md)
 - [Release Process](docs/releasing.md)
 - [Launch Readiness](docs/launch-readiness.md)

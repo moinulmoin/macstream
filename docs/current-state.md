@@ -4,9 +4,11 @@ MacStream is a personal-use macOS 26 prototype focused on Apple Silicon
 streaming performance and reliability.
 
 The current public release is
-[v0.5.0](https://github.com/moinulmoin/macstream/releases/tag/v0.5.0). See the
-[changelog](../CHANGELOG.md) for release history and the
-[versioned release notes](releases/v0.5.0.md) for user-facing highlights.
+[v0.5.0](https://github.com/moinulmoin/macstream/releases/tag/v0.5.0). The
+[v0.6.0 release candidate](releases/v0.6.0.md) is implemented and passing its
+local validation matrix; it becomes current only after signed publication and
+public artifact verification succeed. See the [changelog](../CHANGELOG.md) for
+release history.
 
 ## Implemented
 
@@ -19,6 +21,9 @@ The current public release is
   placement, adjustable scale, and framed fallback.
 - Independent preview-cost and encoded-output settings.
 - Permission and source preflight with idle-only device rescans.
+- Native Camera and Microphone permission requests plus Screen Recording relaunch guidance.
+- Continuity Camera and Desk View discovery across setup, preview, and program capture.
+- Public native camera-effect status with access to Apple's Video Effects interface.
 - Local Screen and composited Screen + Webcam `.mov` recording.
 - Optional record-while-streaming behavior.
 - RTMP/RTMPS endpoint validation in the dependency-light build.
@@ -69,13 +74,16 @@ Scope can change after each release based on real usage.
   use a framed fallback in the idle setup preview.
 - Fall back cleanly when person segmentation is unavailable or too expensive.
 
-### v0.6 - Workflow Polish And Measured Performance (next)
+### [v0.6 - Workflow Polish And Measured Performance](v0.6-workflow-performance-goal.md) (release candidate)
 
 - Tighten first-run permissions, destination setup, and recovery guidance.
-- Evaluate native camera effects only where public macOS APIs provide reliable
-  control.
+- Report native camera-effect status and open system-owned controls only where
+  public macOS APIs provide reliable support.
 - Optimize CPU, memory, and latency from measured real-session bottlenecks
   instead of speculative micro-optimization.
+
+The next milestone will be selected from real streaming evidence after v0.6,
+rather than stacking speculative roadmap work before this release is used.
 
 ## Deferred
 

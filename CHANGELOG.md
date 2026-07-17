@@ -7,6 +7,29 @@ and the project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-07-17
+
+### Added
+
+- Added direct first-run Camera and Microphone permission requests with precise System Settings and Screen Recording relaunch guidance.
+- Added public AVFoundation status for Continuity Camera, Center Stage, Portrait, Studio Light, Background Replacement, and Reactions.
+- Added a shortcut to Apple's system-owned Video Effects interface without private APIs or simulated app controls.
+- Added operator guidance for failed starts, reconnecting streams, recovery failure, and current RTMP backpressure.
+
+### Changed
+
+- Validated every enabled RTMP destination during preflight while preserving the user's explicit RTMP intent.
+- Unified camera discovery across setup, preview, effects status, recording, and publishing, including Continuity Camera and Desk View.
+- Reduced microphone meter processing to a human-visible cadence while preserving every audio delivery callback.
+- Skipped shared video composition when every active RTMP lane is currently saturated and no local recording needs the frame.
+- Refreshed RTMP queue and aggregate health from current publisher state before render admission.
+
+### Fixed
+
+- Prevented local recording success from being mistaken for delivery of the first RTMP video frame.
+- Prevented cumulative rejection and recovery counters from leaving stale operator guidance after a lane or later stream attempt recovered.
+- Removed duplicate permission actions and routed destination setup actions to the correct Settings tab.
+
 ## [0.5.0] - 2026-07-17
 
 ### Added
@@ -108,7 +131,8 @@ and the project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Initial OpenCue macOS streaming prototype.
 - SwiftUI studio, capture pipeline, local recording, CI, and packaging support.
 
-[Unreleased]: https://github.com/moinulmoin/macstream/compare/v0.5.0...HEAD
+[Unreleased]: https://github.com/moinulmoin/macstream/compare/v0.6.0...HEAD
+[0.6.0]: https://github.com/moinulmoin/macstream/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/moinulmoin/macstream/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/moinulmoin/macstream/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/moinulmoin/macstream/compare/v0.2.2...v0.3.0

@@ -1,171 +1,147 @@
 <div align="center">
 
-<img src=".github/assets/macstream-logo.png" width="148" height="148" alt="MacStream icon" />
+<img src=".github/assets/macstream-logo.png" width="144" height="144" alt="MacStream app icon" />
 
 # MacStream
 
-### A native Apple Silicon studio for screen and webcam livestreams.
+**A focused, Mac-native studio for screen and camera livestreams.**
 
-![macOS 26](https://img.shields.io/badge/macOS-26-111?logo=apple&logoColor=white)
-![Swift 6](https://img.shields.io/badge/Swift-6.0-F05138?logo=swift&logoColor=white)
-![Release](https://img.shields.io/github/v/release/moinulmoin/macstream?display_name=tag)
-![CI](https://github.com/moinulmoin/macstream/actions/workflows/ci.yml/badge.svg)
-![License](https://img.shields.io/badge/License-AGPL--3.0--only-blue)
+[![Latest release](https://img.shields.io/github/v/release/moinulmoin/macstream?label=download)](https://github.com/moinulmoin/macstream/releases/latest)
+[![CI](https://github.com/moinulmoin/macstream/actions/workflows/ci.yml/badge.svg)](https://github.com/moinulmoin/macstream/actions/workflows/ci.yml)
+[![macOS 26](https://img.shields.io/badge/macOS-26%2B-black?logo=apple)](https://github.com/moinulmoin/macstream/releases/latest)
+[![AGPL-3.0](https://img.shields.io/badge/license-AGPL--3.0-blue)](LICENSE)
 
-<img src=".github/assets/macstream-studio.png" width="960" alt="MacStream Studio with the program preview and layout inspector" />
+<img src=".github/assets/macstream-studio.png" width="960" alt="MacStream studio showing a screen and webcam composition" />
+
+**[Download MacStream](https://github.com/moinulmoin/macstream/releases/latest)**
 
 </div>
 
-MacStream is a focused livestreaming app for solo creators on Apple Silicon.
-It combines a display or window, webcam, microphone, and multiple RTMP
-destinations in one native macOS workflow.
+MacStream brings source setup, layout, streaming controls, and live health into
+one native macOS workspace. Compose a screen or window with your camera and
+microphone, then send exactly what you see in the preview to one or more
+streaming services.
 
-> **Project status:** MacStream is a personal-use prototype shared for testing.
-> Validate important broadcasts with a private destination before relying on it
-> in production.
+> **Early release:** MacStream is under active development and uses `0.x`
+> versioning. Test your complete setup with a private stream before an important
+> broadcast, and keep a fallback available for critical events.
 
-## Install
+## Features
 
-Download the signed and notarized DMG from the
-[latest GitHub Release](https://github.com/moinulmoin/macstream/releases/latest),
-open it, and drag `MacStream.app` to `Applications`.
+- **Native capture:** Stream a display or individual window alongside built-in,
+  external, or Continuity cameras.
+- **Flexible layouts:** Use split-screen presets, picture-in-picture, or a
+  freely positioned presenter overlay.
+- **Presenter Cutout:** Use on-device person segmentation to remove the webcam
+  background and place the presenter over shared content. Cutout is experimental;
+  edge quality depends on the camera, lighting, movement, and background.
+- **Direct canvas editing:** Select, drag, resize, crop, zoom, and pan sources in
+  the preview.
+- **Custom scenes:** Adjust source framing, padding, gaps, corner radius,
+  background colors, and background images.
+- **Multi-destination streaming:** Publish the same output to as many as three
+  RTMP or RTMPS destinations simultaneously.
+- **Local recording:** Save the composed output while streaming, or record it
+  independently.
+- **Output controls:** Choose resolution, frame rate, preview quality, and a
+  capture-performance profile.
+- **Live diagnostics:** Monitor microphone level, connection state, network
+  throughput, dropped frames, audio/video timing, and reconnect attempts.
+- **Private credentials:** Stream keys are stored in the macOS Keychain and
+  redacted from the interface, logs, and exported reports.
 
-The DMG is the first-time installer. The ZIP published beside it is the signed
-Sparkle payload used for in-app updates.
+## Compatibility
 
-MacStream requires:
-
-- an Apple Silicon Mac;
-- macOS 26 or later;
-- Camera, Microphone, and Screen Recording permission for the sources you use.
-
-## Highlights
-
-### Compose The Stream
-
-- Webcam, Screen + Webcam, Screen, and BRB scenes.
-- Display and individual-window capture through ScreenCaptureKit.
-- Built-in, external, Continuity Camera, and Desk View discovery.
-- Side-by-side 70/30, 50/50, and 30/70 layouts plus framed picture-in-picture.
-- Native Vision presenter Cutout with left, right, top, bottom, and free placement.
-- Direct canvas editing: select, drag, resize, zoom, pan, and reset screen or webcam content.
-- Independent source framing, canvas padding, gap, corner radius, colors, and background images.
-- Focused Compose, Canvas, and Framing inspector modes.
-
-The setup preview, recording path, and RTMP publisher share the same composition
-geometry. What appears in the program preview is the output MacStream records or
-publishes.
-
-### Publish And Record
-
-- RTMP and RTMPS publishing in official release builds.
-- Up to three simultaneous destinations from one composed output.
-- Twitch, YouTube, Facebook, X, Kick, and custom ingest presets.
-- Independent connection, queue, throughput, failure, and reconnect state per destination.
-- Keychain-backed stream keys, redacted from the UI, logs, and exported reports.
-- Optional record-while-streaming and standalone local `.mov` recording.
-- Configurable output resolution, frame rate, preview quality, and performance mode.
-- Signed Sparkle updates, notarized DMGs, and artifact checksums.
-
-### Operate Long Sessions
-
-- Permission, source, and destination preflight checks.
-- Live microphone input metering.
-- Automatic RTMP reconnect with downtime and recovery outcomes.
-- A/V drift, dropped-frame, queue, throughput, and backpressure telemetry.
-- Adaptive response to capture pressure, thermal state, memory pressure, and Low Power Mode.
-- Redacted session reports and long-session CPU, memory, and thread-count tooling.
-- Public native camera-effect status with access to Apple's Video Effects controls.
-
-## Current Scope
-
-| Area | Direction |
+| Area | Current support |
 | --- | --- |
-| Livestreaming | Primary product workflow |
-| Recording | Optional local copy during or outside a stream |
-| Multi-destination | Up to three independent RTMP/RTMPS targets |
-| Video editing | Out of scope |
-| AI and transcription | Deferred until the live core is proven |
-| Native camera effects | Public status and Apple-owned controls only |
-| Intel Macs | Not currently targeted |
+| Streaming | RTMP and RTMPS using a server URL and stream key |
+| Service presets | Twitch, YouTube, Facebook, Kick, X, and custom RTMP |
+| Video | H.264 at 720p, 1080p, 2K, or 4K |
+| Frame rate | 24, 30, or 60 FPS |
+| Audio | AAC |
+| Recording | QuickTime `.mov` with the same composed output |
 
-MacStream is not a video editor and does not aim to reproduce every OBS feature.
-The current priority is reliable capture, composition, publishing, recovery, and
-long-session performance.
+Available resolution and frame rate combinations are not a guarantee that every
+Mac, camera, network, or streaming service can sustain them. MacStream currently
+uses stream keys and does not sign in to streaming-platform accounts.
+
+## Getting Started
+
+1. Download the latest `.dmg` from [GitHub Releases](https://github.com/moinulmoin/macstream/releases/latest).
+2. Open the disk image and drag `MacStream.app` into `Applications`.
+3. Launch MacStream and grant access to the camera, microphone, and screen
+   sources you intend to use. Denied permissions can be changed later in
+   **System Settings > Privacy & Security**.
+4. Choose your sources and arrange the output from the **Layout** tab.
+5. Add the server URL and stream key supplied by your streaming service, run a
+   private test, and go live.
+
+Official releases are signed with Developer ID, notarized by Apple, and include
+published SHA-256 checksums. MacStream can install subsequent signed updates
+through its built-in updater.
+
+## Requirements
+
+- Apple silicon Mac
+- macOS 26 or later
+- Camera, Microphone, and Screen Recording permissions as required by your setup
+- An RTMP or RTMPS server URL and stream key for livestreaming
+
+MacStream currently targets the macOS 26 SDK and APIs. Earlier macOS versions
+and Intel Macs are not supported.
+
+## Privacy
+
+- Camera, microphone, and screen capture are processed on the Mac.
+- Captured media is sent only to the streaming servers you configure.
+- MacStream has no account system, advertising SDK, product analytics, or
+  telemetry service.
+- Stream keys are stored in the macOS Keychain. macOS may request Keychain
+  approval when a key is first saved or accessed.
+- Recordings and exported reports are written under `~/Movies/MacStream`.
+- Update checks read the public MacStream update feed hosted on GitHub.
+
+## Project Scope
+
+The project is focused on live capture, composition, publishing, and optional
+recording. It is not a post-production video editor or a replacement for a
+full broadcast automation suite.
+
+Bug reports and focused contributions are welcome in
+[GitHub Issues](https://github.com/moinulmoin/macstream/issues).
 
 ## Build From Source
 
-Install Xcode with the macOS 26 SDK and Swift 6, then run from the repository root:
+Building MacStream requires Xcode with Swift 6 and the macOS 26 SDK.
 
 ```bash
 git clone https://github.com/moinulmoin/macstream.git
 cd macstream
 
-swift build
+MAC_STREAM_ENABLE_HAISHINKIT=1 swift build
 swift test
-./script/build_and_run.sh
+MAC_STREAM_ENABLE_HAISHINKIT=1 ./script/build_and_run.sh
 ```
 
-The packaged app is written to `dist/MacStream.app`.
+Running `swift build` without the environment variable creates a smaller
+development build without the RTMP publishing dependency. Official downloads
+include RTMP publishing.
 
-### Build Variants
+To create a local application bundle:
 
 ```bash
-# Dependency-light development build.
-swift build
-
-# Real RTMP/RTMPS publishing.
-MAC_STREAM_ENABLE_HAISHINKIT=1 swift build
-
-# Experimental adapter compile check; not part of the live path.
-MAC_STREAM_ENABLE_MLX=1 swift build
-
-# Package an app and create a local DMG.
-./script/package_macos_app.sh
-./script/package_macos_dmg.sh
+MAC_STREAM_ENABLE_HAISHINKIT=1 ./script/package_macos_app.sh
 ```
 
-Official releases are built on GitHub Actions with HaishinKit enabled, Developer
-ID signing, hardened runtime, Apple notarization, stapled tickets, Gatekeeper
-validation, checksums, and Sparkle signatures.
-
-## Architecture
-
-```text
-Sources/
-  MacStream/           SwiftUI application and native preview adapters
-  MacStreamCore/       Models, StudioStore, capture, composition, and publishing
-Tests/
-  MacStreamCoreTests/  Swift Testing suites and injected system fakes
-Resources/             Info.plist, entitlements, icons, and bundled notices
-script/                Build, packaging, release, and reliability tooling
-```
-
-Core constraints:
-
-- `StudioStore` is the single `@MainActor @Observable` source of truth.
-- `MediaPipeline` implementations own capture, recording, and publishing state.
-- Sample-buffer hot paths avoid per-frame allocations and main-thread hops.
-- Stream keys remain in Keychain and are redacted from every exported surface.
-- Optional model output cannot control live switching or enter the capture hot path.
-
-## Project Documents
+## Documentation
 
 - [Changelog](CHANGELOG.md)
-- [v0.7.0 Release Notes](docs/releases/v0.7.0.md)
-- [Current State](docs/current-state.md)
-- [Architecture](docs/architecture.md)
-- [QA Checklist](docs/qa-checklist.md)
-- [Release Process](docs/releasing.md)
 - [Contributing](CONTRIBUTING.md)
-- [Third-Party Notices](THIRD_PARTY_NOTICES.md)
-
-Issues and focused pull requests are welcome. Never include stream keys,
-credentials, signing certificates, or generated build output.
+- [Architecture](docs/architecture.md)
+- [QA checklist](docs/qa-checklist.md)
+- [Release process](docs/releasing.md)
+- [Third-party notices](THIRD_PARTY_NOTICES.md)
 
 ## License
 
-MacStream is free software licensed under the
-[GNU Affero General Public License v3.0 only](LICENSE). Redistribution and
-qualifying remote-network use of modified versions must follow its corresponding
-source requirements.
+MacStream is licensed under the [GNU Affero General Public License v3.0](LICENSE).

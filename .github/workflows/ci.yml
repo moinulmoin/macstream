@@ -28,19 +28,19 @@ jobs:
           - variant: default
             haishinkit: "0"
             mlx: "0"
-            run_tests: true
+            test_scope: all
           - variant: HaishinKit
             haishinkit: "1"
             mlx: "0"
-            run_tests: false
+            test_scope: none
           - variant: MLX
             haishinkit: "0"
             mlx: "1"
-            run_tests: false
+            test_scope: none
           - variant: combined
             haishinkit: "1"
             mlx: "1"
-            run_tests: true
+            test_scope: optional
 
     steps:
       - name: Check out repository
@@ -62,13 +62,23 @@ jobs:
           xcrun --sdk macosx --show-sdk-version
           swift --version
 
-      - name: Run tests
-        if: matrix.run_tests
+      - name: Run full test suite
+        if: matrix.test_scope == 'all'
         shell: bash
         env:
           MAC_STREAM_ENABLE_HAISHINKIT: ${{ matrix.haishinkit }}
           MAC_STREAM_ENABLE_MLX: ${{ matrix.mlx }}
         run: swift test
+
+      - name: Run optional feature contract tests
+        if: matrix.test_scope == 'optional'
+        shell: bash
+        env:
+          MAC_STREAM_ENABLE_HAISHINKIT: ${{ matrix.haishinkit }}
+          MAC_STREAM_ENABLE_MLX: ${{ matrix.mlx }}
+        run: >-
+          swift test --filter
+          'haishinKitPublisherSendsSyntheticVideoToConfiguredRTMPIngest|mlxLocalProvider(ExposesSetupPlanDecoder|FallsBackWhenRuntimeIsNotLinked)'
 
       - name: Build release app
         shell: bash

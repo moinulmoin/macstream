@@ -906,6 +906,41 @@ func activeStreamStagesOutputChangesButAppliesLayoutImmediately() async throws {
     #expect(pipeline.lastConfiguration?.framesPerSecond == 60)
 }
 
+@Test
+@MainActor
+func transientCanvasLayoutUpdatesPipelineWithoutPersistingPreferences() {
+    let pipeline = ConfigurableMediaPipeline()
+    let store = StudioStore(mediaPipeline: pipeline)
+    let persistedLayout = store.preferences.layoutSettings
+    var transientLayout = StudioLayoutSettings(
+        preset: .pictureInPicture,
+        presenterComposition: StudioPresenterCompositionSettings(
+            mode: .presenterOverlay,
+            placement: .manual,
+            manualPosition: StudioNormalizedPoint(x: 0.2, y: 0.8),
+            scale: 0.35
+        )
+    )
+    transientLayout.screenViewport = StudioSourceViewportSettings(zoom: 1.4, panX: 0.5, panY: -0.25)
+    transientLayout.webcamViewport = StudioSourceViewportSettings(zoom: 1.2)
+
+    store.previewLayoutSettings(transientLayout)
+
+    #expect(store.preferences.layoutSettings == persistedLayout)
+    #expect(pipeline.lastConfiguration?.layoutSettings == transientLayout)
+
+    store.previewLayoutSettings(nil)
+
+    #expect(store.preferences.layoutSettings == persistedLayout)
+    #expect(pipeline.lastConfiguration?.layoutSettings == persistedLayout)
+
+    store.previewLayoutSettings(transientLayout)
+    store.commitLayoutSettings(transientLayout)
+
+    #expect(store.preferences.layoutSettings == transientLayout)
+    #expect(pipeline.lastConfiguration?.layoutSettings == transientLayout)
+}
+
 @MainActor
 private func waitForStudioState(_ predicate: @MainActor () -> Bool) async {
     for _ in 0..<200 {

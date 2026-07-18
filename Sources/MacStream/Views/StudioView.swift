@@ -71,6 +71,12 @@ private struct PreviewColumnView: View {
                 shouldUseMediaOutputPreview: store.shouldUseMediaOutputPreview,
                 onCameraPreviewFailure: { detail in
                     store.notePreviewSetupIssue(detail)
+                },
+                onLayoutSettingsPreview: { layoutSettings in
+                    store.previewLayoutSettings(layoutSettings)
+                },
+                onLayoutSettingsChange: { layoutSettings in
+                    store.commitLayoutSettings(layoutSettings)
                 }
             )
             .frame(maxWidth: .infinity, maxHeight: .infinity)

@@ -7,6 +7,24 @@ and the project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- Added direct canvas editing: select screen or webcam in the preview, drag to move a floating presenter or pan a cropped source, pinch or use icon controls to resize and zoom, and reset the selected adjustment. Pinch zoom preserves the content beneath the gesture.
+
+### Changed
+
+- Made framed PiP and Cutout share persisted manual placement and scale while keeping split presets fixed.
+- Shared aspect-fill geometry and actual screen/camera source dimensions across the editor and program compositor so drag, crop, and zoom adjustments match stream output.
+- Raised native Vision presenter segmentation from fast to balanced quality in Cutout contexts for cleaner edges.
+- Capped presenter matte updates at 8 FPS and bounded idle Cutout capture/rendering to 10 FPS at a 320-pixel maximum display frame, reducing measured 1080p/60 local-preview CPU from about 50% to about 20% on the validation Mac.
+
+### Fixed
+
+- Made the idle Screen + Webcam preview render the actual person-segmented Cutout instead of a framed camera substitute.
+- Paired each presenter matte with the exact camera frame that produced it, eliminating stale-mask background slivers during motion.
+- Prevented a delayed or failed presenter matte from exposing the raw camera background in preview, recording, or RTMP output; Cutout briefly holds the last safe frame before hiding the presenter.
+- Removed PiP border, rounded-frame, and shadow decoration from Cutout mode so only the presenter remains over the screen.
+
 ## [0.6.0] - 2026-07-17
 
 ### Added

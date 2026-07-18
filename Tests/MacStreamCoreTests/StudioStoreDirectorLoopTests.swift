@@ -232,6 +232,14 @@ func cameraEnhancementSettingsNormalizeAndPersist() throws {
     #expect(CameraPreviewRotation.degrees90.isSideways)
     #expect(CameraPreviewRotation.degrees270.isSideways)
     #expect(!CameraPreviewRotation.degrees0.isSideways)
+    #expect(
+        CameraPreviewRotation.degrees90.orientedSourceSize(CGSize(width: 1_920, height: 1_080))
+            == CGSize(width: 1_080, height: 1_920)
+    )
+    #expect(
+        CameraPreviewRotation.degrees180.orientedSourceSize(CGSize(width: 1_920, height: 1_080))
+            == CGSize(width: 1_920, height: 1_080)
+    )
 }
 
 @Test

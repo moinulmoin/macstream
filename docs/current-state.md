@@ -16,8 +16,13 @@ release history.
 - ScreenCaptureKit display and window capture.
 - Configurable backgrounds, padding, source gap, split presets, corner radius,
   source zoom, and viewport positioning.
+- Direct preview-canvas editing for selecting, moving, resizing, pointer-anchored
+  zooming, panning, and resetting screen or webcam composition without sidebar
+  sliders. Editor and program output share aspect-fill math and live source dimensions.
 - Full-screen content with native presenter cutout, edge presets, manual
-  placement, adjustable scale, and framed fallback.
+  placement, adjustable scale, and strict background removal.
+- Balanced Vision person segmentation with an 8 FPS matte budget; each mask is
+  paired with its source camera frame while the screen keeps the selected output cadence.
 - Independent preview-cost and encoded-output settings.
 - Permission and source preflight with idle-only device rescans.
 - Native Camera and Microphone permission requests plus Screen Recording relaunch guidance.
@@ -69,9 +74,9 @@ Scope can change after each release based on real usage.
 
 - Add full-screen content with a movable presenter cutout overlay.
 - Provide left, right, top, and bottom placement presets plus manual positioning.
-- Keep captured program preview, stream, and recording output visually identical;
-  use a framed fallback in the idle setup preview.
-- Fall back cleanly when person segmentation is unavailable or too expensive.
+- Keep idle preview, captured program preview, stream, and recording output
+  visually identical.
+- Never expose the raw camera background when a current person mask is unavailable.
 
 ### [v0.6 - Workflow Polish And Measured Performance](v0.6-workflow-performance-goal.md) (shipped)
 

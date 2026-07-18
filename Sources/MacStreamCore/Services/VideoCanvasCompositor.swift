@@ -107,30 +107,20 @@ struct VideoCanvasRenderPlan: Equatable, Sendable {
             return .identity
         }
 
-        let normalizedViewport = StudioSourceViewportSettings(
-            zoom: viewport.zoom,
-            panX: viewport.panX,
-            panY: viewport.panY
+        let geometry = StudioSourceViewportGeometry(
+            sourceSize: sourceExtent.size,
+            targetSize: targetRect.size,
+            viewport: viewport
         )
-        let baseScale = max(
-            targetRect.width / sourceExtent.width,
-            targetRect.height / sourceExtent.height
-        )
-        let scale = baseScale * normalizedViewport.zoom
-        let scaledWidth = sourceExtent.width * scale
-        let scaledHeight = sourceExtent.height * scale
-        let maxPanX = max(0, (scaledWidth - targetRect.width) / 2)
-        let maxPanY = max(0, (scaledHeight - targetRect.height) / 2)
-        let contentShiftX = -normalizedViewport.panX * maxPanX
-        let contentShiftY = normalizedViewport.panY * maxPanY
+        let scale = geometry.scaledSourceSize.width / sourceExtent.width
 
         return CGAffineTransform(
             a: scale,
             b: 0,
             c: 0,
             d: scale,
-            tx: targetRect.midX - (sourceExtent.midX * scale) + contentShiftX,
-            ty: targetRect.midY - (sourceExtent.midY * scale) + contentShiftY
+            tx: targetRect.midX - (sourceExtent.midX * scale) + geometry.contentOffset.width,
+            ty: targetRect.midY - (sourceExtent.midY * scale) + geometry.contentOffset.height
         )
     }
 
@@ -233,15 +223,17 @@ final class VideoCanvasCompositor {
         )
             .composited(over: composed)
         if plan.mode != .screenOnly {
-            let cameraLayer = if plan.mode == .presenterOverlay,
-                                 let cameraImage,
-                                 let cameraMatteImage {
-                renderPresenter(
-                    cameraImage,
-                    matteImage: cameraMatteImage,
-                    in: plan.cameraRect,
-                    viewport: plan.cameraViewport
-                )
+            let cameraLayer = if plan.mode == .presenterOverlay {
+                if let cameraImage, let cameraMatteImage {
+                    renderPresenter(
+                        cameraImage,
+                        matteImage: cameraMatteImage,
+                        in: plan.cameraRect,
+                        viewport: plan.cameraViewport
+                    )
+                } else {
+                    CIImage.empty()
+                }
             } else {
                 renderCamera(
                     cameraImage,

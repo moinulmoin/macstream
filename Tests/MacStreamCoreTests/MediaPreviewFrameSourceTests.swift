@@ -47,6 +47,18 @@ func staleMediaPreviewFrameSubscriptionCannotClearReplacement() async throws {
 }
 
 @Test
+func mediaPreviewFrameSourceTracksLiveCameraDimensions() {
+    let source = MediaPreviewFrameSource()
+
+    #expect(source.currentCameraSourceSize == nil)
+    source.updateCameraSourceSize(CGSize(width: 640, height: 480))
+    #expect(source.currentCameraSourceSize == CGSize(width: 640, height: 480))
+
+    source.updateCameraSourceSize(.zero)
+    #expect(source.currentCameraSourceSize == CGSize(width: 640, height: 480))
+}
+
+@Test
 @MainActor
 func studioStoreUsesPipelineOutputPreviewOnlyDuringRealCapture() async {
     let pipeline = PreviewFrameMediaPipeline()

@@ -10,11 +10,12 @@ func presenterSegmentationSubmitDoesNotSynchronouslyRunClient() throws {
     let client = FakePresenterSegmentationClient()
     let release = DispatchSemaphore(value: 0)
     let matte = try makePixelBuffer(width: 2, height: 2, pixelFormat: kCVPixelFormatType_OneComponent8)
+    let source = try makePixelBuffer(width: 3, height: 2)
     client.enqueue(.blocked(release: release, matte: matte))
     let processor = PresenterSegmentationProcessor(client: client, clock: clock.processorClock)
 
     processor.submit(
-        try makePixelBuffer(width: 2, height: 2),
+        source,
         presentationTime: CMTime(seconds: 1, preferredTimescale: 600)
     )
 
@@ -27,6 +28,7 @@ func presenterSegmentationSubmitDoesNotSynchronouslyRunClient() throws {
 
     #expect(client.waitForCompletedCallCount(1))
     #expect(processor.latestMatte()?.presentationTime.seconds == 1)
+    #expect(processor.latestMatte().map { CVPixelBufferGetWidth($0.sourcePixelBuffer) } == 3)
 }
 
 @Test

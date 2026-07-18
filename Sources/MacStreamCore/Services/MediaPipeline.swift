@@ -1473,6 +1473,9 @@ public final class SystemMediaPipeline: NSObject, MediaPipeline, SCStreamOutput,
             frameSlot: frameSlot,
             onFrame: {
                 compositionSignal.add(data: 1)
+            },
+            onSourceSizeChange: { [weak mediaPreviewFrameSource] size in
+                mediaPreviewFrameSource?.updateCameraSourceSize(size)
             }
         )
         if let pixelFormat = Self.preferredCameraPixelFormat(
@@ -4324,7 +4327,10 @@ private struct CameraCapture {
 
 private final class CameraFrameSlot: @unchecked Sendable {
     private let lock = NSLock()
-    private let presenterSegmentationProcessor = PresenterSegmentationProcessor()
+    private let presenterSegmentationProcessor = PresenterSegmentationProcessor(
+        client: VisionPresenterSegmentationClient(quality: .balanced),
+        maximumFramesPerSecond: 8
+    )
     private var latestPixelBuffer: CVPixelBuffer?
     private var latestPresentationTime: CMTime?
     private var didObserveCallback = false
@@ -4334,19 +4340,21 @@ private final class CameraFrameSlot: @unchecked Sendable {
     func store(_ pixelBuffer: CVPixelBuffer?, presentationTime: CMTime?) -> Bool {
         lock.lock()
         let isFirstCallback = !didObserveCallback
-        let shouldSubmitPresenterFrame = isPresenterSegmentationEnabled && pixelBuffer != nil
+        let presenterFrame = isPresenterSegmentationEnabled
+            ? pixelBuffer.map { ($0, presentationTime ?? .invalid) }
+            : nil
         didObserveCallback = true
         if let pixelBuffer {
             latestPixelBuffer = pixelBuffer
             latestPresentationTime = presentationTime
         }
-        if shouldSubmitPresenterFrame, let pixelBuffer {
+        lock.unlock()
+        if let presenterFrame {
             presenterSegmentationProcessor.submit(
-                pixelBuffer,
-                presentationTime: presentationTime ?? .invalid
+                presenterFrame.0,
+                presentationTime: presenterFrame.1
             )
         }
-        lock.unlock()
         return isFirstCallback
     }
 
@@ -4362,18 +4370,27 @@ private final class CameraFrameSlot: @unchecked Sendable {
         let pixelBuffer = latestPixelBuffer
         let presentationTime = latestPresentationTime
         let shouldUsePresenterMatte = isPresenterSegmentationEnabled
-        let didResolveFirstFrame = pixelBuffer != nil && !didResolveFrame
-        if didResolveFirstFrame {
-            didResolveFrame = true
-        }
         lock.unlock()
-        let presenterMattePixelBuffer = shouldUsePresenterMatte
-            ? presenterSegmentationProcessor.latestMatte(matching: presentationTime)?.pixelBuffer
+        let presenterMatte = shouldUsePresenterMatte
+            ? presenterSegmentationProcessor.latestMatte(maximumAge: .milliseconds(500))
             : nil
+        let resolvedPixelBuffer = shouldUsePresenterMatte
+            ? presenterMatte?.sourcePixelBuffer
+            : pixelBuffer
+        let resolvedPresentationTime = presenterMatte?.presentationTime ?? presentationTime
+        let presenterMattePixelBuffer = presenterMatte?.pixelBuffer
+        let hasUsableFrame = shouldUsePresenterMatte
+            ? presenterMatte != nil
+            : resolvedPixelBuffer != nil
+        let didResolveFirstFrame = lock.withLock {
+            guard hasUsableFrame, !didResolveFrame else { return false }
+            didResolveFrame = true
+            return true
+        }
         return CameraFrameLookup(
-            pixelBuffer: pixelBuffer,
+            pixelBuffer: resolvedPixelBuffer,
             presenterMattePixelBuffer: presenterMattePixelBuffer,
-            presentationTime: presentationTime,
+            presentationTime: resolvedPresentationTime,
             didResolveFirstFrame: didResolveFirstFrame
         )
     }
@@ -4404,10 +4421,18 @@ private final class CameraFrameReceiver: NSObject, AVCaptureVideoDataOutputSampl
     private static let logger = Logger(subsystem: "com.ideaplexa.macstream", category: "capture")
     private let frameSlot: CameraFrameSlot
     private let onFrame: @Sendable () -> Void
+    private let onSourceSizeChange: @Sendable (CGSize) -> Void
+    private var lastSourceWidth = 0
+    private var lastSourceHeight = 0
 
-    init(frameSlot: CameraFrameSlot, onFrame: @escaping @Sendable () -> Void) {
+    init(
+        frameSlot: CameraFrameSlot,
+        onFrame: @escaping @Sendable () -> Void,
+        onSourceSizeChange: @escaping @Sendable (CGSize) -> Void
+    ) {
         self.frameSlot = frameSlot
         self.onFrame = onFrame
+        self.onSourceSizeChange = onSourceSizeChange
     }
 
     nonisolated func captureOutput(
@@ -4416,6 +4441,15 @@ private final class CameraFrameReceiver: NSObject, AVCaptureVideoDataOutputSampl
         from connection: AVCaptureConnection
     ) {
         let imageBuffer = sampleBuffer.isValid ? sampleBuffer.imageBuffer : nil
+        if let imageBuffer {
+            let width = CVPixelBufferGetWidth(imageBuffer)
+            let height = CVPixelBufferGetHeight(imageBuffer)
+            if width != lastSourceWidth || height != lastSourceHeight {
+                lastSourceWidth = width
+                lastSourceHeight = height
+                onSourceSizeChange(CGSize(width: width, height: height))
+            }
+        }
         if frameSlot.store(
             imageBuffer,
             presentationTime: sampleBuffer.presentationTimeStampIfValid

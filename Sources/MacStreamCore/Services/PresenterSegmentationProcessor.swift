@@ -15,15 +15,18 @@ public struct PresenterSegmentationFrame: @unchecked Sendable {
 
 public struct PresenterSegmentationMatte: @unchecked Sendable {
     public let pixelBuffer: CVPixelBuffer
+    public let sourcePixelBuffer: CVPixelBuffer
     public let presentationTime: CMTime
     public let processedAtUptimeNanoseconds: UInt64
 
     public init(
         pixelBuffer: CVPixelBuffer,
+        sourcePixelBuffer: CVPixelBuffer,
         presentationTime: CMTime,
         processedAtUptimeNanoseconds: UInt64
     ) {
         self.pixelBuffer = pixelBuffer
+        self.sourcePixelBuffer = sourcePixelBuffer
         self.presentationTime = presentationTime
         self.processedAtUptimeNanoseconds = processedAtUptimeNanoseconds
     }
@@ -33,13 +36,21 @@ public protocol PresenterSegmentationClient: Sendable {
     func makePersonSegmentationMatte(for frame: PresenterSegmentationFrame) throws -> CVPixelBuffer?
 }
 
+public enum PresenterSegmentationQuality: Sendable {
+    case fast
+    case balanced
+}
+
 public final class VisionPresenterSegmentationClient: PresenterSegmentationClient, @unchecked Sendable {
     private let request: VNGeneratePersonSegmentationRequest
     private let sequenceHandler = VNSequenceRequestHandler()
 
-    public init() {
+    public init(quality: PresenterSegmentationQuality = .fast) {
         let request = VNGeneratePersonSegmentationRequest()
-        request.qualityLevel = .fast
+        request.qualityLevel = switch quality {
+        case .fast: .fast
+        case .balanced: .balanced
+        }
         request.outputPixelFormat = kCVPixelFormatType_OneComponent8
         self.request = request
     }
@@ -181,6 +192,7 @@ public final class PresenterSegmentationProcessor: @unchecked Sendable {
                 return .success(
                     PresenterSegmentationMatte(
                         pixelBuffer: pixelBuffer,
+                        sourcePixelBuffer: pending.frame.pixelBuffer,
                         presentationTime: pending.frame.presentationTime,
                         processedAtUptimeNanoseconds: clock.nowUptimeNanoseconds()
                     )

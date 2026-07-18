@@ -784,6 +784,135 @@ public struct StudioSourceViewportSettings: Codable, Equatable, Sendable {
     }
 }
 
+public struct StudioSourceViewportGeometry: Equatable, Sendable {
+    public var sourceSize: CGSize
+    public var targetSize: CGSize
+    public var scale: CGFloat
+    public var scaledSourceSize: CGSize
+    public var contentOffset: CGSize
+    public var maximumContentOffset: CGSize
+
+    public init(
+        sourceSize: CGSize,
+        targetSize: CGSize,
+        viewport: StudioSourceViewportSettings
+    ) {
+        let safeSourceSize = CGSize(
+            width: Self.safeDimension(sourceSize.width),
+            height: Self.safeDimension(sourceSize.height)
+        )
+        let safeTargetSize = CGSize(
+            width: Self.safeDimension(targetSize.width),
+            height: Self.safeDimension(targetSize.height)
+        )
+        let normalizedViewport = StudioSourceViewportSettings(
+            zoom: viewport.zoom,
+            panX: viewport.panX,
+            panY: viewport.panY
+        )
+        let baseScale = max(
+            safeTargetSize.width / safeSourceSize.width,
+            safeTargetSize.height / safeSourceSize.height
+        )
+        let scale = baseScale * normalizedViewport.zoom
+        let scaledWidth = safeSourceSize.width * scale
+        let scaledHeight = safeSourceSize.height * scale
+        let maxPanX = max(0, (scaledWidth - safeTargetSize.width) / 2)
+        let maxPanY = max(0, (scaledHeight - safeTargetSize.height) / 2)
+
+        self.sourceSize = safeSourceSize
+        self.targetSize = safeTargetSize
+        self.scale = scale
+        self.scaledSourceSize = CGSize(width: scaledWidth, height: scaledHeight)
+        self.maximumContentOffset = CGSize(width: maxPanX, height: maxPanY)
+        self.contentOffset = CGSize(
+            width: -normalizedViewport.panX * maxPanX,
+            height: normalizedViewport.panY * maxPanY
+        )
+    }
+
+    public func viewport(
+        applyingCanvasTranslation translation: CGSize,
+        to viewport: StudioSourceViewportSettings
+    ) -> StudioSourceViewportSettings {
+        StudioSourceViewportSettings(
+            zoom: viewport.zoom,
+            panX: Self.translatedPan(
+                viewport.panX,
+                translation: translation.width,
+                maximumOffset: maximumContentOffset.width
+            ),
+            panY: Self.translatedPan(
+                viewport.panY,
+                translation: translation.height,
+                maximumOffset: maximumContentOffset.height
+            )
+        )
+    }
+
+    public func viewport(
+        settingZoom zoom: Double,
+        preservingCanvasPoint canvasPoint: CGPoint,
+        in viewport: StudioSourceViewportSettings
+    ) -> StudioSourceViewportSettings {
+        let nextViewport = StudioSourceViewportSettings(
+            zoom: zoom,
+            panX: viewport.panX,
+            panY: viewport.panY
+        )
+        let nextGeometry = StudioSourceViewportGeometry(
+            sourceSize: sourceSize,
+            targetSize: targetSize,
+            viewport: nextViewport
+        )
+        let currentVisualOffset = CGSize(
+            width: contentOffset.width,
+            height: -contentOffset.height
+        )
+        let sourcePoint = CGPoint(
+            x: (canvasPoint.x - currentVisualOffset.width) / scale,
+            y: (canvasPoint.y - currentVisualOffset.height) / scale
+        )
+        let nextVisualOffset = CGSize(
+            width: canvasPoint.x - sourcePoint.x * nextGeometry.scale,
+            height: canvasPoint.y - sourcePoint.y * nextGeometry.scale
+        )
+
+        return StudioSourceViewportSettings(
+            zoom: nextViewport.zoom,
+            panX: Self.pan(
+                forVisualOffset: nextVisualOffset.width,
+                maximumOffset: nextGeometry.maximumContentOffset.width
+            ),
+            panY: Self.pan(
+                forVisualOffset: nextVisualOffset.height,
+                maximumOffset: nextGeometry.maximumContentOffset.height
+            )
+        )
+    }
+
+    private static func translatedPan(
+        _ pan: Double,
+        translation: CGFloat,
+        maximumOffset: CGFloat
+    ) -> Double {
+        guard maximumOffset > 0 else { return 0 }
+        return pan - Double(translation / maximumOffset)
+    }
+
+    private static func pan(
+        forVisualOffset visualOffset: CGFloat,
+        maximumOffset: CGFloat
+    ) -> Double {
+        guard maximumOffset > 0 else { return 0 }
+        return -Double(visualOffset / maximumOffset)
+    }
+
+    private static func safeDimension(_ dimension: CGFloat) -> CGFloat {
+        dimension.isFinite ? max(1, dimension) : 1
+    }
+}
+
 public struct StudioRGBAColor: Codable, Equatable, Sendable {
     public var red: Double {
         didSet {
@@ -1294,13 +1423,31 @@ public struct StudioCanvasLayout: Equatable, Sendable {
 
     public var pictureInPictureRect: CGRect {
         let margin = max(18, contentRect.width * 0.018)
-        let width = min(contentRect.width * 0.28, 360)
-        let height = width * 9 / 16
-        return CGRect(
+        let presenterSettings = settings.presenterComposition
+        let width = min(
+            max(1, contentRect.width - (margin * 2)),
+            max(1, contentRect.width * presenterSettings.scale)
+        )
+        let height = min(
+            max(1, contentRect.height - (margin * 2)),
+            max(1, width * 9 / 16)
+        )
+        let defaultOrigin = CGPoint(
             x: contentRect.maxX - width - margin,
-            y: contentRect.minY + margin,
+            y: contentRect.minY + margin
+        )
+        let origin = presenterSettings.placement == .manual
+            ? manualPresenterOrigin(
+                size: CGSize(width: width, height: height),
+                margin: margin
+            )
+            : defaultOrigin
+
+        return CGRect(
+            x: origin.x,
+            y: origin.y,
             width: width,
-            height: min(height, max(1, contentRect.height - (margin * 2)))
+            height: height
         )
     }
 
@@ -1348,6 +1495,34 @@ public struct StudioCanvasLayout: Equatable, Sendable {
         )
     }
 
+    public func normalizedContentPoint(forOutputPoint point: CGPoint) -> StudioNormalizedPoint {
+        StudioNormalizedPoint(
+            x: (point.x - contentRect.minX) / max(1, contentRect.width),
+            y: (point.y - contentRect.minY) / max(1, contentRect.height)
+        )
+    }
+
+    public func manualPresenterPosition(
+        resizingFrom startRect: CGRect,
+        to resizedSize: CGSize,
+        preservingUnitAnchor anchor: StudioNormalizedPoint
+    ) -> StudioNormalizedPoint {
+        let anchorOutputPoint = CGPoint(
+            x: startRect.minX + (startRect.width * anchor.x),
+            y: startRect.minY + (startRect.height * anchor.y)
+        )
+        let resizedAnchorOffset = CGSize(
+            width: (anchor.x - 0.5) * resizedSize.width,
+            height: (anchor.y - 0.5) * resizedSize.height
+        )
+        return normalizedContentPoint(
+            forOutputPoint: CGPoint(
+                x: anchorOutputPoint.x - resizedAnchorOffset.width,
+                y: anchorOutputPoint.y - resizedAnchorOffset.height
+            )
+        )
+    }
+
     private func presenterOverlayOrigin(size: CGSize, margin: CGFloat) -> CGPoint {
         let clampedMinX = contentRect.minX + margin
         let clampedMaxX = contentRect.maxX - margin - size.width
@@ -1370,14 +1545,27 @@ public struct StudioCanvasLayout: Equatable, Sendable {
         case .bottom:
             return CGPoint(x: centeredX, y: safeMinY)
         case .manual:
-            let position = settings.presenterComposition.manualPosition
-            let x = contentRect.minX + (contentRect.width * position.x) - (size.width / 2)
-            let y = contentRect.minY + (contentRect.height * position.y) - (size.height / 2)
-            return CGPoint(
-                x: min(max(x, safeMinX), safeMaxX),
-                y: min(max(y, safeMinY), safeMaxY)
-            )
+            return manualPresenterOrigin(size: size, margin: margin)
         }
+    }
+
+    private func manualPresenterOrigin(size: CGSize, margin: CGFloat) -> CGPoint {
+        let position = settings.presenterComposition.manualPosition
+        let minX = contentRect.minX + margin
+        let maxX = contentRect.maxX - margin - size.width
+        let minY = contentRect.minY + margin
+        let maxY = contentRect.maxY - margin - size.height
+        let safeMinX = min(minX, maxX)
+        let safeMaxX = max(minX, maxX)
+        let safeMinY = min(minY, maxY)
+        let safeMaxY = max(minY, maxY)
+        let x = contentRect.minX + (contentRect.width * position.x) - (size.width / 2)
+        let y = contentRect.minY + (contentRect.height * position.y) - (size.height / 2)
+
+        return CGPoint(
+            x: min(max(x, safeMinX), safeMaxX),
+            y: min(max(y, safeMinY), safeMaxY)
+        )
     }
 
     private static func safeDimension(_ dimension: CGFloat) -> CGFloat {
@@ -1418,6 +1606,11 @@ public enum CameraPreviewRotation: Int, CaseIterable, Codable, Identifiable, Sen
 
     public var isSideways: Bool {
         self == .degrees90 || self == .degrees270
+    }
+
+    public func orientedSourceSize(_ size: CGSize) -> CGSize {
+        guard isSideways else { return size }
+        return CGSize(width: size.height, height: size.width)
     }
 }
 
@@ -1895,16 +2088,32 @@ public struct ScreenCaptureTarget: Equatable, Hashable, Codable, Identifiable, S
     public var kind: ScreenCaptureTargetKind
     public var name: String
     public var detail: String
+    public var pixelWidth: Int?
+    public var pixelHeight: Int?
 
-    public init(id: String, kind: ScreenCaptureTargetKind, name: String, detail: String = "") {
+    public init(
+        id: String,
+        kind: ScreenCaptureTargetKind,
+        name: String,
+        detail: String = "",
+        pixelWidth: Int? = nil,
+        pixelHeight: Int? = nil
+    ) {
         self.id = id
         self.kind = kind
         self.name = name
         self.detail = detail
+        self.pixelWidth = pixelWidth.flatMap { $0 > 0 ? $0 : nil }
+        self.pixelHeight = pixelHeight.flatMap { $0 > 0 ? $0 : nil }
     }
 
     public var title: String {
         detail.isEmpty ? name : "\(name) - \(detail)"
+    }
+
+    public var sourceSize: CGSize? {
+        guard let pixelWidth, let pixelHeight else { return nil }
+        return CGSize(width: pixelWidth, height: pixelHeight)
     }
 }
 
@@ -1930,19 +2139,25 @@ public struct CaptureDeviceInfo: Identifiable, Equatable, Sendable {
     public var name: String
     public var detail: String
     public var permission: CapturePermissionState
+    public var pixelWidth: Int?
+    public var pixelHeight: Int?
 
     public init(
         id: String,
         kind: CaptureDeviceKind,
         name: String,
         detail: String = "",
-        permission: CapturePermissionState
+        permission: CapturePermissionState,
+        pixelWidth: Int? = nil,
+        pixelHeight: Int? = nil
     ) {
         self.id = id
         self.kind = kind
         self.name = name
         self.detail = detail
         self.permission = permission
+        self.pixelWidth = pixelWidth
+        self.pixelHeight = pixelHeight
     }
 
     public static func cameraID(uniqueID: String) -> String { "camera-\(uniqueID)" }
@@ -1951,9 +2166,23 @@ public struct CaptureDeviceInfo: Identifiable, Equatable, Sendable {
     public var screenCaptureTarget: ScreenCaptureTarget? {
         switch kind {
         case .display:
-            ScreenCaptureTarget(id: id, kind: .display, name: name, detail: detail)
+            ScreenCaptureTarget(
+                id: id,
+                kind: .display,
+                name: name,
+                detail: detail,
+                pixelWidth: pixelWidth,
+                pixelHeight: pixelHeight
+            )
         case .window:
-            ScreenCaptureTarget(id: id, kind: .window, name: name, detail: detail)
+            ScreenCaptureTarget(
+                id: id,
+                kind: .window,
+                name: name,
+                detail: detail,
+                pixelWidth: pixelWidth,
+                pixelHeight: pixelHeight
+            )
         case .camera, .microphone:
             nil
         }

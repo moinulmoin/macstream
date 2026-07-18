@@ -17,19 +17,47 @@ struct PreviewCanvasView: View {
     var mediaPreviewFrameSource: MediaPreviewFrameSource?
     var shouldUseMediaOutputPreview = false
     var onCameraPreviewFailure: (@MainActor (String) -> Void)? = nil
+    var onLayoutSettingsPreview: (@MainActor (StudioLayoutSettings?) -> Void)? = nil
+    var onLayoutSettingsChange: (@MainActor (StudioLayoutSettings) -> Void)? = nil
+
+    @State private var draftLayoutSettings: StudioLayoutSettings?
+    @State private var observedCameraSourceSize: CGSize?
 
     var body: some View {
         previewContent
             .aspectRatio(16.0 / 9.0, contentMode: .fit)
+            .overlay {
+                if let onLayoutSettingsChange {
+                    CanvasInteractionOverlayView(
+                        scene: scene,
+                        persistedSettings: layoutSettings,
+                        draftSettings: $draftLayoutSettings,
+                        sourceSize: { source in
+                            source == .camera ? cameraSourceSize : screenSourceSize
+                        },
+                        onPreview: onLayoutSettingsPreview ?? { _ in },
+                        onCommit: onLayoutSettingsChange
+                    )
+                }
+            }
             .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
             .overlay {
                 RoundedRectangle(cornerRadius: 18, style: .continuous)
                     .strokeBorder(.white.opacity(0.12), lineWidth: 1)
             }
             .shadow(color: .black.opacity(0.22), radius: 24, y: 12)
-            .accessibilityElement(children: .combine)
+            .accessibilityElement(children: onLayoutSettingsChange == nil ? .combine : .contain)
             .accessibilityLabel(Text("\(scene.title) preview"))
             .accessibilityValue(Text(previewAccessibilityValue))
+            .onChange(of: cameraDeviceID) { _, _ in
+                observedCameraSourceSize = nil
+            }
+            .onChange(of: usesPresenterCutout) { _, _ in
+                observedCameraSourceSize = nil
+            }
+            .onChange(of: previewConfiguration) { _, _ in
+                observedCameraSourceSize = nil
+            }
     }
 
     @ViewBuilder
@@ -47,7 +75,7 @@ struct PreviewCanvasView: View {
 
     private var offlinePreview: some View {
         GeometryReader { proxy in
-            let canvasLayout = StudioCanvasLayout(size: proxy.size, settings: layoutSettings)
+            let canvasLayout = StudioCanvasLayout(size: proxy.size, settings: activeLayoutSettings)
 
             ZStack {
                 canvasBackground(in: proxy.size)
@@ -109,7 +137,7 @@ struct PreviewCanvasView: View {
     }
 
     private var zoomedScreenFill: some View {
-        sourceViewport(layoutSettings.screenViewport) {
+        sourceViewport(activeLayoutSettings.screenViewport, sourceSize: screenSourceSize) {
             screenFill
         }
     }
@@ -149,14 +177,21 @@ struct PreviewCanvasView: View {
                     configuration: previewConfiguration,
                     cameraEnhancements: cameraEnhancements,
                     cameraDeviceID: cameraDeviceID,
-                    onSetupFailure: onCameraPreviewFailure
+                    usesPresenterCutout: usesPresenterCutout,
+                    onSetupFailure: onCameraPreviewFailure,
+                    onSourceSizeChange: { size in
+                        guard size.width > 0, size.height > 0,
+                              observedCameraSourceSize != size
+                        else { return }
+                        observedCameraSourceSize = size
+                    }
                 )
             }
         }
     }
 
     private var zoomedCameraFill: some View {
-        sourceViewport(layoutSettings.webcamViewport) {
+        sourceViewport(activeLayoutSettings.webcamViewport, sourceSize: cameraSourceSize) {
             cameraFill
         }
     }
@@ -192,36 +227,44 @@ struct PreviewCanvasView: View {
         }
     }
 
+    @ViewBuilder
     private func presenterPreviewFrame(in rect: CGRect, layout: StudioCanvasLayout) -> some View {
-        let isFloating = !layoutSettings.preset.isSplit
-            || layoutSettings.presenterComposition.mode == .presenterOverlay
-        let cornerRadius = presenterCornerRadius(for: rect, layout: layout)
-
-        return sourceFrame(cornerRadius: cornerRadius) {
-            sourceViewport(layoutSettings.webcamViewport) {
+        if usesPresenterCutout {
+            sourceViewport(activeLayoutSettings.webcamViewport, sourceSize: cameraSourceSize) {
                 pictureInPictureCamera
             }
-        }
-        .frame(width: rect.width, height: rect.height)
-        .overlay {
-            if isFloating {
-                RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-                    .stroke(.white.opacity(0.24), lineWidth: 1)
+            .frame(width: rect.width, height: rect.height)
+        } else {
+            let isFloating = !activeLayoutSettings.preset.isSplit
+            let cornerRadius = layout.sourceCornerRadius
+
+            sourceFrame(cornerRadius: cornerRadius) {
+                sourceViewport(activeLayoutSettings.webcamViewport, sourceSize: cameraSourceSize) {
+                    pictureInPictureCamera
+                }
             }
+            .frame(width: rect.width, height: rect.height)
+            .overlay {
+                if isFloating {
+                    RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                        .stroke(.white.opacity(0.24), lineWidth: 1)
+                }
+            }
+            .shadow(
+                color: isFloating ? .black.opacity(0.35) : .clear,
+                radius: isFloating ? 18 : 0,
+                y: isFloating ? 8 : 0
+            )
         }
-        .shadow(
-            color: isFloating ? .black.opacity(0.35) : .clear,
-            radius: isFloating ? 18 : 0,
-            y: isFloating ? 8 : 0
-        )
     }
 
-    private func presenterCornerRadius(for rect: CGRect, layout: StudioCanvasLayout) -> CGFloat {
-        guard layoutSettings.presenterComposition.mode == .presenterOverlay else {
-            return layout.sourceCornerRadius
-        }
+    private var usesPresenterCutout: Bool {
+        scene.kind == .screenAndFace
+            && activeLayoutSettings.presenterComposition.mode == .presenterOverlay
+    }
 
-        return max(layout.sourceCornerRadius, min(rect.width, rect.height) * 0.08)
+    private var activeLayoutSettings: StudioLayoutSettings {
+        draftLayoutSettings ?? layoutSettings
     }
 
     private func swiftUIPosition(for rect: CGRect, in layout: StudioCanvasLayout) -> CGPoint {
@@ -230,21 +273,50 @@ struct PreviewCanvasView: View {
 
     private func sourceViewport<Content: View>(
         _ viewport: StudioSourceViewportSettings,
+        sourceSize: CGSize,
         @ViewBuilder content: @escaping () -> Content
     ) -> some View {
         GeometryReader { proxy in
-            let zoom = StudioLayoutSettings.normalizedSourceZoom(viewport.zoom)
-            let panX = StudioLayoutSettings.normalizedSourcePan(viewport.panX)
-            let panY = StudioLayoutSettings.normalizedSourcePan(viewport.panY)
-            let maxPanX = max(0, proxy.size.width * (zoom - 1) / 2)
-            let maxPanY = max(0, proxy.size.height * (zoom - 1) / 2)
+            let geometry = StudioSourceViewportGeometry(
+                sourceSize: sourceSize,
+                targetSize: proxy.size,
+                viewport: viewport
+            )
 
             content()
-                .scaleEffect(zoom)
-                .offset(x: -CGFloat(panX) * maxPanX, y: -CGFloat(panY) * maxPanY)
+                .frame(
+                    width: geometry.scaledSourceSize.width,
+                    height: geometry.scaledSourceSize.height
+                )
+                .offset(
+                    x: geometry.contentOffset.width,
+                    y: -geometry.contentOffset.height
+                )
                 .frame(width: proxy.size.width, height: proxy.size.height)
                 .clipped()
         }
+    }
+
+    private var screenSourceSize: CGSize {
+        screenCaptureTarget?.sourceSize ?? CGSize(width: 16, height: 9)
+    }
+
+    private var cameraSourceSize: CGSize {
+        let rawSize: CGSize
+        if shouldUseMediaOutputPreview,
+           let liveSourceSize = mediaPreviewFrameSource?.currentCameraSourceSize {
+            rawSize = liveSourceSize
+        } else if let observedCameraSourceSize {
+            rawSize = observedCameraSourceSize
+        } else if usesPresenterCutout
+            || previewConfiguration.framesPerSecond <= 8
+            || previewConfiguration.maxDisplayWidth <= 960 {
+            rawSize = CGSize(width: 4, height: 3)
+        } else {
+            rawSize = CGSize(width: 16, height: 9)
+        }
+
+        return cameraEnhancements.rotation.orientedSourceSize(rawSize)
     }
 
     private func sourceFrame<Content: View>(
@@ -258,7 +330,7 @@ struct PreviewCanvasView: View {
 
     @ViewBuilder
     private func canvasBackground(in size: CGSize) -> some View {
-        switch layoutSettings.background {
+        switch activeLayoutSettings.background {
         case let .localImage(path):
             if let image = LocalCanvasBackgroundImageCache.shared.image(for: path) {
                 Image(nsImage: image)

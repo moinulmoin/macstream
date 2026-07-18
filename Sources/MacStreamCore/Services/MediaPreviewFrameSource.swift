@@ -20,8 +20,20 @@ public final class MediaPreviewFrameSource: @unchecked Sendable {
     private var lastPresentationTime = CMTime.invalid
     private var pendingSampleBuffer: CMSampleBuffer?
     private var isDeliveryScheduled = false
+    private var cameraSourceSize: CGSize?
 
     public init() {}
+
+    public var currentCameraSourceSize: CGSize? {
+        lock.withLock { cameraSourceSize }
+    }
+
+    func updateCameraSourceSize(_ size: CGSize) {
+        guard size.width > 0, size.height > 0 else { return }
+        lock.withLock {
+            cameraSourceSize = size
+        }
+    }
 
     @discardableResult
     public func subscribe(

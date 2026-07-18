@@ -125,6 +125,7 @@ public final class StudioStore {
     @ObservationIgnored private var hasOpenCaptureSession = false
     @ObservationIgnored private var lastAppliedSignalConfiguration: SignalSamplingConfiguration?
     @ObservationIgnored private var lastAppliedMediaConfiguration: MediaPipelineConfiguration?
+    @ObservationIgnored private var transientLayoutSettings: StudioLayoutSettings?
     @ObservationIgnored private var isSignalProviderActive = false
     @ObservationIgnored private var activeOutputCaptureSettings: OutputCaptureSettings?
     private static let requiredCaptureHealthRecoverySamples = 2
@@ -1703,6 +1704,7 @@ public final class StudioStore {
     }
 
     public func updatePreferences(_ preferences: StudioPreferences) {
+        transientLayoutSettings = nil
         self.preferences = preferences
         updateEffectivePerformanceMode()
         applyPerformanceConfiguration()
@@ -1713,6 +1715,24 @@ public final class StudioStore {
         } else {
             cancelPendingAutoCue()
         }
+    }
+
+    public func previewLayoutSettings(_ layoutSettings: StudioLayoutSettings?) {
+        guard transientLayoutSettings != layoutSettings else { return }
+        transientLayoutSettings = layoutSettings
+        applyPerformanceConfiguration()
+    }
+
+    public func commitLayoutSettings(_ layoutSettings: StudioLayoutSettings) {
+        transientLayoutSettings = nil
+        guard preferences.layoutSettings != layoutSettings else {
+            applyPerformanceConfiguration()
+            return
+        }
+
+        var nextPreferences = preferences
+        nextPreferences.layoutSettings = layoutSettings
+        updatePreferences(nextPreferences)
     }
 
     public func updateCameraEnhancements(_ cameraEnhancements: CameraEnhancementSettings) {
@@ -2266,7 +2286,7 @@ public final class StudioStore {
         mediaConfiguration.sceneKind = selectedSceneKind
         mediaConfiguration.screenCaptureTarget = selectedScreenCaptureTarget
         mediaConfiguration.cameraEnhancements = preferences.cameraEnhancements
-        mediaConfiguration.layoutSettings = preferences.layoutSettings
+        mediaConfiguration.layoutSettings = transientLayoutSettings ?? preferences.layoutSettings
         mediaConfiguration.cameraDeviceID = selectedCameraDeviceID
         mediaConfiguration.microphoneDeviceID = selectedMicrophoneDeviceID
         mediaConfiguration = Self.mediaConfiguration(

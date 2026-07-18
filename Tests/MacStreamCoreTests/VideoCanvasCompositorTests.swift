@@ -144,7 +144,43 @@ func videoCanvasCompositorUsesPresenterMatteWhenAvailable() throws {
 }
 
 @Test
-func videoCanvasCompositorFallsBackToFramedPresenterWithoutFreshMatte() throws {
+func videoCanvasCompositorRendersPresenterInsideOpaqueMatte() throws {
+    let output = try makeSolidPixelBuffer(width: 160, height: 90, bgra: (0, 0, 0, 255))
+    let screen = try makeSolidPixelBuffer(width: 160, height: 90, bgra: (0, 0, 255, 255))
+    let camera = try makeSolidPixelBuffer(width: 160, height: 90, bgra: (0, 255, 0, 255))
+    let opaqueMatte = try makeSolidMattePixelBuffer(width: 160, height: 90, value: 255)
+    let settings = StudioLayoutSettings(
+        canvasPadding: 0,
+        sourceGap: 0,
+        sourceCornerRadius: 0,
+        presenterComposition: StudioPresenterCompositionSettings(
+            mode: .presenterOverlay,
+            placement: .manual,
+            manualPosition: StudioNormalizedPoint(x: 0.5, y: 0.5),
+            scale: 0.5
+        )
+    )
+    let compositor = VideoCanvasCompositor(
+        outputWidth: 160,
+        outputHeight: 90,
+        cameraEnhancements: CameraEnhancementSettings(mirrorsPreview: false),
+        layoutSettings: settings,
+        sceneKind: .screenAndFace
+    )
+
+    compositor.render(
+        screenPixelBuffer: screen,
+        cameraPixelBuffer: camera,
+        cameraMattePixelBuffer: opaqueMatte,
+        to: output
+    )
+
+    #expect(pixel(in: output, x: 80, y: 45) == Pixel(b: 0, g: 255, r: 0, a: 255))
+    #expect(pixel(in: output, x: 8, y: 8) == Pixel(b: 0, g: 0, r: 255, a: 255))
+}
+
+@Test
+func videoCanvasCompositorDoesNotExposeCameraBackgroundWithoutFreshPresenterMatte() throws {
     let output = try makeSolidPixelBuffer(width: 160, height: 90, bgra: (0, 0, 0, 255))
     let screen = try makeSolidPixelBuffer(width: 160, height: 90, bgra: (0, 0, 255, 255))
     let camera = try makeSolidPixelBuffer(width: 160, height: 90, bgra: (0, 255, 0, 255))
@@ -169,7 +205,7 @@ func videoCanvasCompositorFallsBackToFramedPresenterWithoutFreshMatte() throws {
 
     compositor.render(screenPixelBuffer: screen, cameraPixelBuffer: camera, to: output)
 
-    #expect(pixel(in: output, x: 80, y: 45) == Pixel(b: 0, g: 255, r: 0, a: 255))
+    #expect(pixel(in: output, x: 80, y: 45) == Pixel(b: 0, g: 0, r: 255, a: 255))
     #expect(pixel(in: output, x: 8, y: 8) == Pixel(b: 0, g: 0, r: 255, a: 255))
 }
 

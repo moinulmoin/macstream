@@ -20,7 +20,9 @@ struct ScreenCaptureKitContentListing: ScreenCaptureContentListing {
                 kind: .display,
                 name: "Display \(display.displayID)",
                 detail: "\(display.width)x\(display.height)",
-                permission: permission
+                permission: permission,
+                pixelWidth: display.width,
+                pixelHeight: display.height
             )
         }
 
@@ -34,7 +36,9 @@ struct ScreenCaptureKitContentListing: ScreenCaptureContentListing {
                     kind: .window,
                     name: title,
                     detail: appName,
-                    permission: permission
+                    permission: permission,
+                    pixelWidth: Int(window.frame.width.rounded()),
+                    pixelHeight: Int(window.frame.height.rounded())
                 )
             }
 

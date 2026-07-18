@@ -13,6 +13,7 @@ and the project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- Reorganized layout controls into persistent Compose, Canvas, and Framing inspector modes, with focused screen or webcam framing controls instead of one long sidebar stack.
 - Made framed PiP and Cutout share persisted manual placement and scale while keeping split presets fixed.
 - Shared aspect-fill geometry and actual screen/camera source dimensions across the editor and program compositor so drag, crop, and zoom adjustments match stream output.
 - Raised native Vision presenter segmentation from fast to balanced quality in Cutout contexts for cleaner edges.

@@ -6,7 +6,10 @@ import UniformTypeIdentifiers
 struct LayoutComposerView: View {
     var store: StudioStore
     @State private var isShowingBackgroundImporter = false
-    @State private var isSourceFramingExpanded = false
+    @SceneStorage("MacStream.LayoutComposerView.inspectorSection")
+    private var selectedInspectorSectionRaw = LayoutInspectorSection.compose.rawValue
+    @SceneStorage("MacStream.LayoutComposerView.framingSource")
+    private var selectedFramingSourceRaw = LayoutFramingSource.screen.rawValue
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -26,54 +29,25 @@ struct LayoutComposerView: View {
                 .accessibilityLabel(Text("Reset layout"))
             }
 
-            VStack(alignment: .leading, spacing: 12) {
-                presenterCompositionControls
+            StudioBadge(
+                title: layoutSummaryTitle,
+                systemImage: layoutSummarySymbol,
+                tint: .secondary
+            )
 
-                if !isPresenterOverlayMode {
-                    presetControls
+            Picker("Layout controls", selection: $selectedInspectorSectionRaw) {
+                ForEach(LayoutInspectorSection.allCases) { section in
+                    Text(section.title).tag(section.rawValue)
                 }
-
-                backgroundControls
-
-                StudioBadge(
-                    title: layoutSummaryTitle,
-                    systemImage: layoutSummarySymbol,
-                    tint: .secondary
-                )
-
-                paddingControl
-
-                DisclosureGroup(isExpanded: $isSourceFramingExpanded) {
-                    VStack(alignment: .leading, spacing: 10) {
-                        if !isPresenterOverlayMode,
-                           store.preferences.layoutSettings.preset.isSplit {
-                            sourceGapControl
-                        }
-                        sourceCornerRadiusControl
-
-                        SourceViewportControls(
-                            title: "Screen",
-                            systemImage: "display",
-                            zoom: screenZoomBinding,
-                            panX: screenPanXBinding,
-                            panY: screenPanYBinding
-                        )
-
-                        SourceViewportControls(
-                            title: "Webcam",
-                            systemImage: "video",
-                            zoom: webcamZoomBinding,
-                            panX: webcamPanXBinding,
-                            panY: webcamPanYBinding
-                        )
-                    }
-                    .padding(.top, 8)
-                } label: {
-                    Label("Source framing", systemImage: "viewfinder")
-                        .font(.caption.weight(.semibold))
-                }
-                .accessibilityLabel(Text("Source framing controls"))
             }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            .accessibilityLabel(Text("Layout controls"))
+
+            Divider()
+                .opacity(0.45)
+
+            inspectorControls
         }
         .studioCard()
         .fileImporter(
@@ -87,6 +61,85 @@ struct LayoutComposerView: View {
                 updateLayout { $0.background = .localImage(path: storedURL.path) }
             }
         }
+    }
+
+    @ViewBuilder
+    private var inspectorControls: some View {
+        switch selectedInspectorSection {
+        case .compose:
+            composeControls
+        case .canvas:
+            canvasControls
+        case .framing:
+            framingControls
+        }
+    }
+
+    private var composeControls: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            presenterCompositionControls
+
+            if !isPresenterOverlayMode {
+                presetControls
+            }
+        }
+    }
+
+    private var canvasControls: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            backgroundControls
+            paddingControl
+
+            if !isPresenterOverlayMode,
+               store.preferences.layoutSettings.preset.isSplit {
+                sourceGapControl
+            }
+
+            sourceCornerRadiusControl
+        }
+    }
+
+    private var framingControls: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            StudioGroupLabel(title: "Source", systemImage: "viewfinder")
+
+            Picker("Framing source", selection: $selectedFramingSourceRaw) {
+                ForEach(LayoutFramingSource.allCases) { source in
+                    Label(source.title, systemImage: source.systemImage)
+                        .tag(source.rawValue)
+                }
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            .accessibilityLabel(Text("Framing source"))
+
+            switch selectedFramingSource {
+            case .screen:
+                SourceViewportControls(
+                    title: "Screen",
+                    systemImage: "display",
+                    zoom: screenZoomBinding,
+                    panX: screenPanXBinding,
+                    panY: screenPanYBinding
+                )
+            case .webcam:
+                SourceViewportControls(
+                    title: "Webcam",
+                    systemImage: "video",
+                    zoom: webcamZoomBinding,
+                    panX: webcamPanXBinding,
+                    panY: webcamPanYBinding
+                )
+            }
+        }
+    }
+
+    private var selectedInspectorSection: LayoutInspectorSection {
+        LayoutInspectorSection(rawValue: selectedInspectorSectionRaw) ?? .compose
+    }
+
+    private var selectedFramingSource: LayoutFramingSource {
+        LayoutFramingSource(rawValue: selectedFramingSourceRaw) ?? .screen
     }
 
     private var presetColumns: [GridItem] {
@@ -558,6 +611,43 @@ struct LayoutComposerView: View {
             return destination
         } catch {
             return nil
+        }
+    }
+}
+
+private enum LayoutInspectorSection: String, CaseIterable, Identifiable {
+    case compose
+    case canvas
+    case framing
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .compose: "Compose"
+        case .canvas: "Canvas"
+        case .framing: "Framing"
+        }
+    }
+}
+
+private enum LayoutFramingSource: String, CaseIterable, Identifiable {
+    case screen
+    case webcam
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .screen: "Screen"
+        case .webcam: "Webcam"
+        }
+    }
+
+    var systemImage: String {
+        switch self {
+        case .screen: "display"
+        case .webcam: "video"
         }
     }
 }

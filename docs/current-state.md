@@ -4,10 +4,9 @@ MacStream is a personal-use macOS 26 prototype focused on Apple Silicon
 streaming performance and reliability.
 
 The current public release is
-[v0.6.0](https://github.com/moinulmoin/macstream/releases/tag/v0.6.0). The
-[v0.7.0 release candidate](releases/v0.7.0.md) is implemented and passing its
-local validation matrix; it becomes current only after signed publication and
-public artifact verification succeed. See the [changelog](../CHANGELOG.md) for
+[v0.7.0](https://github.com/moinulmoin/macstream/releases/tag/v0.7.0). Its
+[release notes](releases/v0.7.0.md), signed and notarized artifacts, checksums,
+and Sparkle appcast are published. See the [changelog](../CHANGELOG.md) for
 release history.
 
 ## Implemented
@@ -89,7 +88,7 @@ Scope can change after each release based on real usage.
 - Optimize CPU, memory, and latency from measured real-session bottlenecks
   instead of speculative micro-optimization.
 
-### v0.7 - Direct Canvas Composition (release candidate)
+### v0.7 - Direct Canvas Composition (shipped)
 
 - Edit screen and webcam placement, framing, and zoom directly in the preview.
 - Keep editor, recording, and streaming geometry identical.

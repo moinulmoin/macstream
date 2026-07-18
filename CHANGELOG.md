@@ -7,6 +7,8 @@ and the project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-07-19
+
 ### Added
 
 - Added direct canvas editing: select screen or webcam in the preview, drag to move a floating presenter or pan a cropped source, pinch or use icon controls to resize and zoom, and reset the selected adjustment. Pinch zoom preserves the content beneath the gesture.
@@ -150,7 +152,8 @@ and the project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Initial OpenCue macOS streaming prototype.
 - SwiftUI studio, capture pipeline, local recording, CI, and packaging support.
 
-[Unreleased]: https://github.com/moinulmoin/macstream/compare/v0.6.0...HEAD
+[Unreleased]: https://github.com/moinulmoin/macstream/compare/v0.7.0...HEAD
+[0.7.0]: https://github.com/moinulmoin/macstream/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/moinulmoin/macstream/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/moinulmoin/macstream/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/moinulmoin/macstream/compare/v0.3.0...v0.4.0

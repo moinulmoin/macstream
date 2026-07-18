@@ -4,9 +4,10 @@ MacStream is a personal-use macOS 26 prototype focused on Apple Silicon
 streaming performance and reliability.
 
 The current public release is
-[v0.6.0](https://github.com/moinulmoin/macstream/releases/tag/v0.6.0). Its
-[release notes](releases/v0.6.0.md), signed and notarized artifacts, checksums,
-and Sparkle appcast are published. See the [changelog](../CHANGELOG.md) for
+[v0.6.0](https://github.com/moinulmoin/macstream/releases/tag/v0.6.0). The
+[v0.7.0 release candidate](releases/v0.7.0.md) is implemented and passing its
+local validation matrix; it becomes current only after signed publication and
+public artifact verification succeed. See the [changelog](../CHANGELOG.md) for
 release history.
 
 ## Implemented
@@ -16,6 +17,8 @@ release history.
 - ScreenCaptureKit display and window capture.
 - Configurable backgrounds, padding, source gap, split presets, corner radius,
   source zoom, and viewport positioning.
+- Persistent Compose, Canvas, and Framing inspector modes with focused screen
+  or webcam controls.
 - Direct preview-canvas editing for selecting, moving, resizing, pointer-anchored
   zooming, panning, and resetting screen or webcam composition without sidebar
   sliders. Editor and program output share aspect-fill math and live source dimensions.
@@ -86,7 +89,15 @@ Scope can change after each release based on real usage.
 - Optimize CPU, memory, and latency from measured real-session bottlenecks
   instead of speculative micro-optimization.
 
-The next milestone will be selected from real streaming evidence after v0.6,
+### v0.7 - Direct Canvas Composition (release candidate)
+
+- Edit screen and webcam placement, framing, and zoom directly in the preview.
+- Keep editor, recording, and streaming geometry identical.
+- Make Cutout a strict presenter-only composition that never reveals the raw
+  camera background.
+- Bound Vision and idle preview work using measured performance evidence.
+
+The next milestone will be selected from real streaming evidence after v0.7,
 rather than stacking speculative roadmap work before this release is used.
 
 ## Deferred
